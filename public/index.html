@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Orchestrator — Supervision</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">Orchestrator <span class="muted">— supervision</span></div>
+    <div class="header-right">
+      <span id="last-updated" class="muted" title="Dernière mise à jour">—</span>
+      <label for="refresh-select" class="muted">Rafraîchissement</label>
+      <select id="refresh-select" title="Intervalle de rafraîchissement automatique">
+        <option value="10">10 s</option>
+        <option value="30">30 s</option>
+        <option value="60">60 s</option>
+        <option value="120">120 s</option>
+        <option value="0">Manuel</option>
+      </select>
+      <button id="refresh-btn" class="ghost" title="Actualiser maintenant">Actualiser</button>
+      <span id="whoami" class="muted"></span>
+      <button id="logout-btn" class="ghost">Déconnexion</button>
+    </div>
+  </header>
+  <nav id="tabs">
+    <button data-tab="overview" class="active">Vue d'ensemble</button>
+    <button data-tab="tasks">Tâches</button>
+    <button data-tab="worktrees">Worktrees</button>
+    <button data-tab="events">Événements</button>
+    <button data-tab="deployments">Déploiements</button>
+    <button data-tab="decisions">Décisions</button>
+    <button data-tab="artifacts">Documents</button>
+    <button data-tab="archives">Archives</button>
+    <button data-tab="ecosystem">Écosystème</button>
+    <button data-tab="users" id="tab-users" hidden>Utilisateurs</button>
+  </nav>
+
+  <main>
+    <section id="pane-overview" class="pane active"></section>
+    <section id="pane-tasks" class="pane"></section>
+    <section id="pane-worktrees" class="pane"></section>
+    <section id="pane-events" class="pane"></section>
+    <section id="pane-deployments" class="pane"></section>
+    <section id="pane-decisions" class="pane"></section>
+    <section id="pane-artifacts" class="pane"></section>
+    <section id="pane-archives" class="pane"></section>
+    <section id="pane-ecosystem" class="pane"></section>
+    <section id="pane-users" class="pane"></section>
+  </main>
+
+  <div id="modal-backdrop" class="modal-backdrop" hidden></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Connexion — Orchestrator</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="login-body">
+  <div class="login-wrap">
+    <div class="login-card">
+      <div class="login-brand">
+        <div class="login-logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="9"></circle>
+            <polyline points="12 7 12 12 15.5 14.5"></polyline>
+          </svg>
+        </div>
+        <h1>Orchestrator</h1>
+        <p class="login-subtitle">Panneau de supervision des tâches</p>
+      </div>
+
+      <form id="login-form" autocomplete="on">
+        <div class="field">
+          <label for="username">Nom d'utilisateur</label>
+          <div class="input-wrap">
+            <span class="input-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                <circle cx="12" cy="7" r="4"></circle>
+              </svg>
+            </span>
+            <input type="text" id="username" autocomplete="username" placeholder="admin" required autofocus>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="password">Mot de passe</label>
+          <div class="input-wrap">
+            <span class="input-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+              </svg>
+            </span>
+            <input type="password" id="password" autocomplete="current-password" placeholder="••••••••" required>
+            <button type="button" id="toggle-pwd" class="pwd-toggle" aria-label="Afficher le mot de passe" title="Afficher le mot de passe">
+              <svg id="eye-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+              <svg id="eye-closed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" hidden>
+                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"></path>
+                <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"></path>
+                <line x1="1" y1="1" x2="23" y2="23"></line>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <p id="login-error" class="login-error" role="alert"></p>
+
+        <button type="submit" class="login-submit">Se connecter</button>
+      </form>
+
+      <p class="login-foot">Accès réservé · Supervision de l'orchestrateur de tâches</p>
+    </div>
+  </div>
+
+  <script>
+    const toggle = document.getElementById('toggle-pwd');
+    const pwd = document.getElementById('password');
+    toggle.addEventListener('click', () => {
+      const show = pwd.type === 'password';
+      pwd.type = show ? 'text' : 'password';
+      document.getElementById('eye-open').hidden = show;
+      document.getElementById('eye-closed').hidden = !show;
+      toggle.setAttribute('aria-label', show ? 'Masquer le mot de passe' : 'Afficher le mot de passe');
+    });
+
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const err = document.getElementById('login-error');
+      const submit = e.target.querySelector('.login-submit');
+      err.textContent = '';
+      submit.disabled = true;
+      submit.textContent = 'Connexion…';
+      try {
+        const r = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: document.getElementById('username').value,
+            password: pwd.value,
+          }),
+        });
+        if (r.ok) { window.location.href = '/'; return; }
+        const d = await r.json().catch(() => ({}));
+        err.textContent = d.error || 'Erreur de connexion';
+        pwd.value = '';
+        pwd.focus();
+      } catch {
+        err.textContent = 'Impossible de contacter le serveur';
+      } finally {
+        submit.disabled = false;
+        submit.textContent = 'Se connecter';
+      }
+    });
+  </script>
+</body>
+</html>

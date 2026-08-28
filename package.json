@@ -1,0 +1,13 @@
+{
+  "name": "orchestrator-panel",
+  "version": "0.1.0",
+  "description": "Panneau web de supervision de l'orchestrateur (lecture seule + auth formulaire).",
+  "type": "module",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0"
+  }
+}

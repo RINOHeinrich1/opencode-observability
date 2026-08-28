@@ -1,0 +1,17 @@
+# Dépendances
+node_modules/
+
+# Base de données runtime du panneau (users/sessions/archives) — ne JAMAIS versionner
+panel.db
+panel.db-shm
+panel.db-wal
+
+# Variables d'environnement / secrets
+.env
+.env.*
+!.env.example
+
+# Logs & fichiers temporaires
+*.log
+npm-debug.log*
+.DS_Store

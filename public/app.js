@@ -61,7 +61,8 @@ function detailsButtons(t) {
     `<button class="icon-btn" title="Événements" data-goto="events" data-task="${esc(t.id)}">Évt</button>` +
     `<button class="icon-btn" title="Worktree" data-goto="worktrees" data-task="${esc(t.id)}">WT</button>` +
     `<button class="icon-btn" title="Déploiements" data-goto="deployments" data-task="${esc(t.id)}">Dép</button>` +
-    `<button class="icon-btn" title="Décisions" data-goto="decisions" data-task="${esc(t.id)}">Déc</button>`;
+    `<button class="icon-btn" title="Décisions" data-goto="decisions" data-task="${esc(t.id)}">Déc</button>` +
+    `<button class="icon-btn" title="Plans" data-goto="plans" data-task="${esc(t.id)}">Plans</button>`;
   if (ME && ME.is_admin) {
     html += `<button class="icon-btn danger-btn" title="Archiver la tâche et tout ce qui lui est rattaché" data-archive="${esc(t.id)}">Archiver</button>`;
   }
@@ -210,12 +211,30 @@ async function renderArtifacts() {
   bindTaskFilter();
 }
 
+// --- Plans (plans d'action, persistance SQLite) ----------------------------
+function progressBar(pct) {
+  const p = Math.max(0, Math.min(100, Number(pct) || 0));
+  return `<div class="progress-bar"><div class="progress-fill" style="width:${p}%"></div></div><span class="muted-sm">${p}%</span>`;
+}
+
+async function renderPlans() {
+  const data = await api('/api/plans' + taskQuery());
+  const plans = data.plans || [];
+  document.getElementById('pane-plans').innerHTML = `
+    <h2>Plans d'action</h2>
+    ${filterBar()}
+    <table><thead><tr><th>Plan</th><th>Tâche</th><th>Objectif</th><th>Avancement</th><th>Livrables</th></tr></thead>
+    <tbody>${plans.map((p) => `<tr><td class="code">${esc(p.planId)}</td><td class="code">${esc(p.task_id || '—')}</td><td>${esc(p.objective)}</td><td>${progressBar(p.pct)}</td><td>${esc((p.deliverables || []).join(', '))}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Aucun plan</td></tr>'}</tbody></table>`;
+  bindTaskFilter();
+}
+
 // --- Archivage / restauration ---------------------------------------------
 function snapshotList(snap) {
   const items = [
     ['Exécutions', snap.executions],
     ['Événements', snap.events],
     ['Documents', snap.artifacts],
+    ['Plans', snap.plans],
     ['Worktrees', snap.worktrees],
     ['Déploiements', snap.deployments],
     ['Décisions', snap.decisions],
@@ -228,6 +247,7 @@ function snapshotSummary(snap) {
   if (snap.executions) parts.push(`${snap.executions} exéc`);
   if (snap.events) parts.push(`${snap.events} évt`);
   if (snap.artifacts) parts.push(`${snap.artifacts} doc`);
+  if (snap.plans) parts.push(`${snap.plans} plans`);
   if (snap.worktrees) parts.push(`${snap.worktrees} WT`);
   if (snap.deployments) parts.push(`${snap.deployments} dép`);
   if (snap.decisions) parts.push(`${snap.decisions} déc`);
@@ -478,7 +498,7 @@ async function renderEcosystem() {
 // --- Navigation ------------------------------------------------------------
 const RENDER = {
   overview: renderOverview, tasks: renderTasks, worktrees: renderWorktrees,
-  events: renderEvents, deployments: renderDeployments, decisions: renderDecisions, artifacts: renderArtifacts, archives: renderArchives, ecosystem: renderEcosystem, users: renderUsers,
+  events: renderEvents, deployments: renderDeployments, decisions: renderDecisions, artifacts: renderArtifacts, plans: renderPlans, archives: renderArchives, ecosystem: renderEcosystem, users: renderUsers,
 };
 
 // --- Rafraîchissement automatique (polling, min 10 s) ----------------------

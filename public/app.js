@@ -702,7 +702,7 @@ async function taskActionsModal(taskId) {
           ${status === 'queued' ? `<button class="launch-btn" id="act-launch">Lancer</button>` : ''}
           ${status === 'aborted' ? `<button class="launch-btn" id="act-relaunch">Relancer</button>` : ''}
           ${(status === 'rejected' || status === 'failed' || (status === 'done' && recette === 'rejected')) ? `<button id="act-rework">Reprendre</button>` : ''}
-          ${['started','planning','in_progress','validating','review','merge_pending','merged','deploy_pending','deploying','deployed','post_deploy_verified','blocked'].includes(status) ? `<button class="danger" id="act-kill">Tuer la session</button>` : ''}
+          ${['started','planning','awaiting_validation','planned','in_progress','blocked'].includes(status) ? `<button class="danger" id="act-kill">Tuer la session</button>` : ''}
           ${ME && ME.is_admin ? `<button class="danger" id="act-archive">Archiver</button>` : ''}
         </div>
       </div>

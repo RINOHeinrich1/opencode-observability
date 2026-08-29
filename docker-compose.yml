@@ -1,0 +1,23 @@
+# PostgreSQL — base du registre de tâches + base du panneau (migration SQLite → PostgreSQL).
+# Usage : docker compose up -d
+#
+# Identifiants par défaut (développement local) : surcharger via les variables
+# d'environnement POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB.
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: orchestrator-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-orchestrator}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-orchestrator}
+      POSTGRES_DB: ${POSTGRES_DB:-task_registry}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/init:/docker-entrypoint-initdb.d:ro
+
+volumes:
+  pgdata:

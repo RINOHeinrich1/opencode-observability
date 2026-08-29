@@ -79,6 +79,8 @@ async function registryStats() {
   const db = registry();
   const byStatus = {};
   let tasks = 0;
+  let worktrees = 0;
+  let openDecisions = 0;
   try {
     const res = await db.query(`SELECT t.id, ${latestStatusSubquery()} AS status FROM tasks t`);
     for (const r of res.rows) {
@@ -87,10 +89,14 @@ async function registryStats() {
       byStatus[st] = (byStatus[st] || 0) + 1;
       tasks++;
     }
+    const wtRes = await db.query("SELECT task_id FROM worktrees");
+    worktrees = wtRes.rows.filter((w) => !archived.has(w.task_id)).length;
+    const decRes = await db.query("SELECT task_id FROM decisions WHERE status = 'awaiting'");
+    openDecisions = decRes.rows.filter((d) => !archived.has(d.task_id)).length;
   } catch {
     /* registre indisponible */
   }
-  return { tasks, byStatus, archived: archived.size };
+  return { tasks, byStatus, worktrees, openDecisions, archived: archived.size };
 }
 
 async function registryTasks(url) {

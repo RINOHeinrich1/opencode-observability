@@ -8,6 +8,6 @@
     "start": "node server.mjs"
   },
   "dependencies": {
-    "better-sqlite3": "^11.10.0"
+    "pg": "^8.23.0"
   }
 }

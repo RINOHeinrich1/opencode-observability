@@ -18,13 +18,13 @@ export function sessionToken(req) {
 }
 
 // Renvoie l'utilisateur courant (ou null si non authentifié / session expirée).
-export function currentUser(req) {
+export async function currentUser(req) {
   const token = sessionToken(req);
   if (!token) return null;
-  const s = getSession(token);
+  const s = await getSession(token);
   if (!s) return null;
   if (new Date(s.expires_at).getTime() < Date.now()) return null;
-  const u = getUserById(s.user_id);
+  const u = await getUserById(s.user_id);
   if (!u) return null;
   return { id: u.id, username: u.username, is_admin: !!u.is_admin };
 }

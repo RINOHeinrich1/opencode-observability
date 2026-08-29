@@ -8,7 +8,7 @@
 </head>
 <body>
   <header>
-    <div class="brand">Orchestrator <span class="muted">— supervision</span></div>
+    <div class="brand">Orchestrator <span class="muted">— supervision &amp; pilotage</span></div>
     <div class="header-right">
       <span id="last-updated" class="muted" title="Dernière mise à jour">—</span>
       <label for="refresh-select" class="muted">Rafraîchissement</label>
@@ -26,8 +26,8 @@
   </header>
   <nav id="tabs">
     <button data-tab="overview" class="active">Vue d'ensemble</button>
+    <button data-tab="projects">Projets</button>
     <button data-tab="tasks">Tâches</button>
-    <button data-tab="worktrees">Worktrees</button>
     <button data-tab="events">Événements</button>
     <button data-tab="deployments">Déploiements</button>
     <button data-tab="decisions">Décisions</button>
@@ -40,8 +40,8 @@
 
   <main>
     <section id="pane-overview" class="pane active"></section>
+    <section id="pane-projects" class="pane"></section>
     <section id="pane-tasks" class="pane"></section>
-    <section id="pane-worktrees" class="pane"></section>
     <section id="pane-events" class="pane"></section>
     <section id="pane-deployments" class="pane"></section>
     <section id="pane-decisions" class="pane"></section>

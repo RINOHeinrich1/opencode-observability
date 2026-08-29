@@ -18,6 +18,12 @@ function badge(status) {
   return `<span class="badge ${status || 'queued'}">${status || 'queued'}</span>`;
 }
 
+function recetteBadge(st) {
+  const map = { approved: ['approved', 'validée'], rejected: ['rejected', 'rejetée'], pending: ['queued', 'en attente'] };
+  const [cls, label] = map[st] || ['queued', st || '—'];
+  return `<span class="badge ${cls}" title="Recette : ${esc(label)}">${esc(label)}</span>`;
+}
+
 function esc(s) {
   return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
@@ -56,18 +62,7 @@ function taskQuery() {
 }
 
 function detailsButtons(t) {
-  let html = `<div class="icon-actions">` +
-    `<button class="icon-btn" title="Documents" data-goto="artifacts" data-task="${esc(t.id)}">Doc</button>` +
-    `<button class="icon-btn" title="Événements" data-goto="events" data-task="${esc(t.id)}">Évt</button>` +
-    `<button class="icon-btn" title="Worktree" data-goto="worktrees" data-task="${esc(t.id)}">WT</button>` +
-    `<button class="icon-btn" title="Déploiements" data-goto="deployments" data-task="${esc(t.id)}">Dép</button>` +
-    `<button class="icon-btn" title="Décisions" data-goto="decisions" data-task="${esc(t.id)}">Déc</button>` +
-    `<button class="icon-btn" title="Plans" data-goto="plans" data-task="${esc(t.id)}">Plans</button>`;
-  if (ME && ME.is_admin) {
-    html += `<button class="icon-btn danger-btn" title="Archiver la tâche et tout ce qui lui est rattaché" data-archive="${esc(t.id)}">Archiver</button>`;
-  }
-  html += `</div>`;
-  return html;
+  return `<button class="icon-btn" title="Actions sur la tâche" data-actions="${esc(t.id)}">Actions</button>`;
 }
 
 function sessionLink(sid) {
@@ -83,7 +78,7 @@ async function renderOverview() {
   const s = await api('/api/stats');
   const cards = [['Tâches', s.tasks]];
   for (const [st, n] of Object.entries(s.byStatus || {})) cards.push([st, n]);
-  cards.push(['Worktrees', s.worktrees], ['Décisions ouvertes', s.openDecisions], ['Archivées', s.archived || 0]);
+  cards.push(['Décisions ouvertes', s.openDecisions], ['Archivées', s.archived || 0]);
   document.getElementById('pane-overview').innerHTML =
     `<div class="cards">${cards.map(([l, n]) => `<div class="card"><div class="num">${n}</div><div class="lbl">${esc(l)}</div></div>`).join('')}</div>` +
     `<div class="muted-sm">Registre : ${s.byStatus && Object.keys(s.byStatus).length ? 'connecté' : 'vide / non initialisé'}</div>`;
@@ -91,44 +86,73 @@ async function renderOverview() {
 
 // --- Tâches ----------------------------------------------------------------
 async function renderTasks() {
-  const data = await api('/api/tasks');
+  const [data, plansData] = await Promise.all([api('/api/tasks'), api('/api/plans')]);
   const tasks = data.tasks || [];
+  const plans = plansData.plans || [];
+  const plansByTask = {};
+  plans.forEach((p) => { if (p.task_id) (plansByTask[p.task_id] = plansByTask[p.task_id] || []).push(p); });
   const projects = [...new Set(tasks.map((t) => t.project).filter(Boolean))];
   document.getElementById('pane-tasks').innerHTML = `
     <h2>Tâches</h2>
     <div class="filters">
       <select id="f-project"><option value="">Tous les projets</option>${projects.map((p) => `<option>${esc(p)}</option>`).join('')}</select>
       <select id="f-status"><option value="">Tous les statuts</option></select>
+      <button id="new-task-btn" class="launch-btn">+ Nouvelle tâche</button>
     </div>
-    <table><thead><tr><th>ID</th><th>Projet</th><th>Type</th><th>Priorité</th><th>Statut</th><th>Demande</th><th>Session</th><th>Détails</th></tr></thead>
+    <table><thead><tr><th></th><th>ID</th><th>Projet</th><th>Type</th><th>Priorité</th><th>Statut</th><th>Recette</th><th>Branche</th><th>Demande</th><th>Session</th><th>Actions</th></tr></thead>
     <tbody id="tasks-body"></tbody></table>`;
   const statuses = [...new Set(tasks.map((t) => t.status || 'queued'))];
   document.getElementById('f-status').innerHTML = `<option value="">Tous les statuts</option>` + statuses.map((s) => `<option>${esc(s)}</option>`).join('');
+  document.getElementById('new-task-btn').addEventListener('click', () => taskCreateModal());
   const apply = () => {
     const p = document.getElementById('f-project').value;
     const st = document.getElementById('f-status').value;
     const rows = tasks.filter((t) => (!p || t.project === p) && (!st || (t.status || 'queued') === st));
-    document.getElementById('tasks-body').innerHTML = rows.map((t) =>
-      `<tr><td class="code">${esc(t.id)}</td><td>${esc(t.project)}</td><td>${esc(t.type)}</td><td>${esc(t.priority)}</td><td>${badge(t.status)}</td><td>${esc((t.request || '').slice(0, 90))}</td><td>${sessionLink(t.session_id)}</td><td>${detailsButtons(t)}</td></tr>`,
-    ).join('') || '<tr><td colspan="8" class="muted">Aucune tâche</td></tr>';
-    document.querySelectorAll('#tasks-body [data-goto]').forEach((b) => b.addEventListener('click', () => goToTab(b.dataset.goto, b.dataset.task)));
-    document.querySelectorAll('#tasks-body [data-archive]').forEach((b) => b.addEventListener('click', () => openArchiveConfirm(b.dataset.archive)));
+    const html = rows.map((t) => {
+      const subs = plansByTask[t.id] || [];
+      const toggle = subs.length ? `<button class="tree-toggle" data-toggle="${esc(t.id)}">▸</button>` : '';
+      const parent = `<tr class="task-row">
+        <td>${toggle}</td>
+        <td class="code">${esc(t.id)}</td>
+        <td>${esc(t.project)}</td>
+        <td>${esc(t.type)}</td>
+        <td>${esc(t.priority)}</td>
+        <td>${badge(t.status)}</td>
+        <td>${recetteBadge(t.recette_status)}</td>
+        <td class="code">${esc((t.branches || []).join(', ') || '—')}</td>
+        <td>${esc((t.request || '').slice(0, 70))}</td>
+        <td>${sessionLink(t.session_id)}</td>
+        <td>${detailsButtons(t)}</td>
+      </tr>`;
+      const children = subs.map((s) => `
+        <tr class="subtask-row" data-child="${esc(t.id)}" hidden>
+          <td></td>
+          <td colspan="10">
+            <div class="subtask">
+              <span class="tree-branch">↳</span>
+              <code>${esc(s.planId)}</code>
+              <span class="muted-sm">${esc(s.objective || '')}</span>
+              ${progressBar(s.pct)}
+              ${s.branch ? `<code class="muted-sm">${esc(s.branch)}</code>` : '<span class="muted-sm">—</span>'}
+              ${badge(s.status)}
+            </div>
+          </td>
+        </tr>`).join('');
+      return parent + children;
+    }).join('') || '<tr><td colspan="11" class="muted">Aucune tâche</td></tr>';
+    document.getElementById('tasks-body').innerHTML = html;
+    document.querySelectorAll('#tasks-body [data-actions]').forEach((b) => b.addEventListener('click', () => taskActionsModal(b.dataset.actions)));
+    document.querySelectorAll('#tasks-body [data-toggle]').forEach((b) => b.addEventListener('click', () => {
+      const id = b.dataset.toggle;
+      const children = document.querySelectorAll(`#tasks-body [data-child="${id}"]`);
+      const expanded = b.textContent === '▾';
+      children.forEach((c) => { c.hidden = expanded; });
+      b.textContent = expanded ? '▸' : '▾';
+    }));
   };
   document.getElementById('f-project').addEventListener('change', apply);
   document.getElementById('f-status').addEventListener('change', apply);
   apply();
-}
-
-// --- Worktrees -------------------------------------------------------------
-async function renderWorktrees() {
-  const data = await api('/api/worktrees' + taskQuery());
-  const wt = data.worktrees || [];
-  document.getElementById('pane-worktrees').innerHTML = `
-    <h2>Worktrees</h2>
-    ${filterBar()}
-    <table><thead><tr><th>ID</th><th>Projet</th><th>Branche</th><th>Statut</th><th>Agent</th><th>Tâche</th><th>Lease jusqu'à</th></tr></thead>
-    <tbody>${wt.map((w) => `<tr><td class="code">${esc(w.worktree_id)}</td><td>${esc(w.project)}</td><td class="code">${esc(w.branch)}</td><td>${badge(w.status)}${w.leaseExpired ? ' <span class="badge crashed">expiré</span>' : ''}</td><td>${esc(w.agent)}</td><td class="code">${esc(w.task_id)}</td><td>${esc((w.lease_until || '').replace('T', ' ').replace('Z', ''))}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">Aucun worktree</td></tr>'}</tbody></table>`;
-  bindTaskFilter();
 }
 
 // --- Événements ------------------------------------------------------------
@@ -495,9 +519,361 @@ async function renderEcosystem() {
   document.querySelectorAll('#pane-ecosystem [data-eco]').forEach((b) => b.addEventListener('click', () => openEcoModal(b.dataset.eco)));
 }
 
+// --- Projets (cartes + CRUD) ----------------------------------------------
+async function renderProjects() {
+  const projs = await api('/api/projects');
+  const projects = projs.projects || [];
+  document.getElementById('pane-projects').innerHTML = `
+    <h2>Projets</h2>
+    <div class="projects-toolbar">
+      <button id="new-project-btn" class="launch-btn">+ Nouveau projet</button>
+    </div>
+    <div class="project-cards">
+      ${projects.map((p) => `
+        <article class="project-card">
+          <div class="project-card-head">
+            <strong>${esc(p.name || p.id)}</strong>
+            <code class="muted-sm">${esc(p.id)}</code>
+          </div>
+          <div class="project-card-body">
+            <div class="project-kv"><span class="lbl">Workspace Coder</span><span>${esc(p.workspace || '—')}</span></div>
+            <div class="project-kv"><span class="lbl">Chemin git</span><code class="muted-sm">${esc(p.gitPath || '—')}</code></div>
+            <div class="project-kv"><span class="lbl">Créé le</span><span class="muted-sm">${esc((p.createdAt || '').replace('T', ' ').slice(0, 19))}</span></div>
+          </div>
+          <div class="project-card-actions">
+            <button class="ghost" data-edit-project="${esc(p.id)}">Modifier</button>
+            <button class="danger" data-del-project="${esc(p.id)}">Supprimer</button>
+          </div>
+        </article>`).join('') || '<p class="muted">Aucun projet enregistré.</p>'}
+    </div>`;
+  document.getElementById('new-project-btn').addEventListener('click', () => projectFormModal(null));
+  document.querySelectorAll('[data-edit-project]').forEach((b) => {
+    b.addEventListener('click', () => projectFormModal(projects.find((x) => x.id === b.dataset.editProject)));
+  });
+  document.querySelectorAll('[data-del-project]').forEach((b) => {
+    b.addEventListener('click', () => projectDeleteModal(b.dataset.delProject));
+  });
+}
+
+async function projectFormModal(project) {
+  let wsNames = [];
+  try { wsNames = ((await api('/api/workspaces')).workspaces || []).map((w) => w.name); } catch {}
+  const editing = !!project;
+  showModal(`
+    <div class="modal">
+      <h2>${editing ? 'Modifier le projet' : 'Nouveau projet'}</h2>
+      <form id="project-modal-form" class="pilot-form">
+        <input id="pm-id" placeholder="identifiant (ex: oniria)" value="${esc(project?.id || '')}" ${editing ? 'readonly' : ''} required>
+        <input id="pm-name" placeholder="nom lisible" value="${esc(project?.name || '')}" required>
+        <select id="pm-workspace">
+          <option value="">— workspace Coder —</option>
+          ${wsNames.map((w) => `<option value="${esc(w)}" ${project?.workspace === w ? 'selected' : ''}>${esc(w)}</option>`).join('')}
+        </select>
+        <input id="pm-gitpath" placeholder="chemin git (ex: /home/coder/oniria)" value="${esc(project?.gitPath || '')}">
+        <div class="modal-actions">
+          <button type="button" class="ghost" id="modal-cancel">Annuler</button>
+          <button type="submit" class="launch-btn">${editing ? 'Enregistrer' : 'Créer'}</button>
+        </div>
+      </form>
+      <div id="project-modal-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('project-modal-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById('project-modal-msg');
+    try {
+      await api('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        id: document.getElementById('pm-id').value.trim(),
+        name: document.getElementById('pm-name').value.trim(),
+        workspace: document.getElementById('pm-workspace').value,
+        gitPath: document.getElementById('pm-gitpath').value.trim() || undefined,
+      }) });
+      closeModal();
+      refreshActive();
+    } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
+  });
+}
+
+function projectDeleteModal(projectId) {
+  showModal(`
+    <div class="modal">
+      <h2>Supprimer le projet</h2>
+      <p class="warn">Supprimer le projet <span class="code">${esc(projectId)}</span> du registre ?</p>
+      <p class="muted-sm">Les tâches existantes conservent leur référence de projet.</p>
+      <div class="modal-actions">
+        <button class="ghost" id="modal-cancel">Annuler</button>
+        <button class="danger" id="modal-confirm">Supprimer</button>
+      </div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('modal-confirm').onclick = async () => {
+    try {
+      await api(`/api/projects/${encodeURIComponent(projectId)}`, { method: 'DELETE' });
+      closeModal();
+      refreshActive();
+    } catch (e) { alert('Échec : ' + (e.message || e)); }
+  };
+}
+
+async function taskCreateModal() {
+  const projs = await api('/api/projects');
+  const projects = projs.projects || [];
+  showModal(`
+    <div class="modal">
+      <h2>Nouvelle tâche</h2>
+      <form id="task-modal-form" class="pilot-form">
+        <select id="tm-project" required>
+          <option value="">— projet —</option>
+          ${projects.map((p) => `<option value="${esc(p.id)}">${esc(p.name || p.id)}</option>`).join('')}
+        </select>
+        <select id="tm-type" required>
+          <option value="feature">feature</option>
+          <option value="debug">debug</option>
+          <option value="audit">audit</option>
+        </select>
+        <textarea id="tm-request" placeholder="description de la tâche" required></textarea>
+        <input id="tm-scope" placeholder="scope (chemins, séparés par des virgules)">
+        <div class="modal-actions">
+          <button type="button" class="ghost" id="modal-cancel">Annuler</button>
+          <button type="submit" class="launch-btn">Créer</button>
+        </div>
+      </form>
+      <div id="task-modal-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('task-modal-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById('task-modal-msg');
+    const scopeRaw = document.getElementById('tm-scope').value.trim();
+    try {
+      await api('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        project: document.getElementById('tm-project').value,
+        type: document.getElementById('tm-type').value,
+        request: document.getElementById('tm-request').value.trim(),
+        scope: scopeRaw ? scopeRaw.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
+      }) });
+      closeModal();
+      refreshActive();
+    } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
+  });
+}
+
+async function taskActionsModal(taskId) {
+  let detail;
+  try { detail = await api(`/api/tasks/${encodeURIComponent(taskId)}`); }
+  catch (e) { alert(e.message); return; }
+  const task = detail.task || {};
+  const execs = detail.executions || [];
+  const status = execs[0]?.status || task.status || 'queued';
+  const recette = task.recette_status || 'pending';
+  const decisions = detail.decisions || [];
+  const awaiting = decisions.filter((d) => d.status === 'awaiting' && d.kind !== 'permission' && d.kind !== 'recette');
+  const branches = (detail.worktree || []).map((w) => w.branch).filter(Boolean);
+
+  showModal(`
+    <div class="modal modal-wide">
+      <h2>Actions — <span class="code">${esc(taskId)}</span></h2>
+      <p class="muted">${esc(task.request || '')}</p>
+      <p class="muted-sm">Projet <span class="code">${esc(task.project)}</span> · Type <span class="code">${esc(task.type)}</span> · ${badge(status)} · Recette ${recetteBadge(recette)}</p>
+      <p class="muted-sm">Branches : <span class="code">${esc(branches.join(', ') || '—')}</span></p>
+
+      ${awaiting.length ? `
+      <div class="actions-section">
+        <h3>Validation (décisions en attente)</h3>
+        ${awaiting.map((d) => `
+          <div class="decision-row">
+            <code class="muted-sm">${esc(d.decision_id)}</code>
+            <span class="muted-sm">${esc(d.kind)} — ${esc(d.detail || '')}</span>
+            <input class="decision-remarks" placeholder="remarques">
+            <button class="approve" data-approve="${esc(d.decision_id)}">Approuver</button>
+            <button class="danger" data-reject="${esc(d.decision_id)}">Rejeter</button>
+          </div>`).join('')}
+      </div>` : ''}
+
+      ${status === 'done' ? `
+      <div class="actions-section">
+        <h3>Recette (acceptation humaine après déploiement)</h3>
+        ${recette === 'pending' ? `
+        <p class="muted-sm">Testez la fonctionnalité/fix sur la plateforme, puis approuvez ou rejetez la recette.</p>
+        <button class="approve" id="act-recette">Valider la recette</button>` : ''}
+        ${recette === 'approved' ? `<p class="muted-sm">Recette <strong>validée</strong>. La tâche est clôturée.</p>` : ''}
+        ${recette === 'rejected' ? `<p class="muted-sm">Recette <strong>rejetée</strong>. Utilisez « Reprendre » pour relancer une correction (nouvelle session ou continuer).</p>` : ''}
+      </div>` : ''}
+
+      <div class="actions-section">
+        <h3>Opérations</h3>
+        <div class="actions-buttons">
+          ${status === 'queued' ? `<button class="launch-btn" id="act-launch">Lancer</button>` : ''}
+          ${status === 'aborted' ? `<button class="launch-btn" id="act-relaunch">Relancer</button>` : ''}
+          ${(status === 'rejected' || status === 'failed' || (status === 'done' && recette === 'rejected')) ? `<button id="act-rework">Reprendre</button>` : ''}
+          ${['started','planning','in_progress','validating','review','merge_pending','merged','deploy_pending','deploying','deployed','post_deploy_verified','blocked'].includes(status) ? `<button class="danger" id="act-kill">Tuer la session</button>` : ''}
+          ${ME && ME.is_admin ? `<button class="danger" id="act-archive">Archiver</button>` : ''}
+        </div>
+      </div>
+
+      <div class="actions-section">
+        <h3>Consulter</h3>
+        <div class="actions-buttons">
+          <button class="ghost" data-goto="artifacts">Documents</button>
+          <button class="ghost" data-goto="events">Événements</button>
+          <button class="ghost" data-goto="deployments">Déploiements</button>
+          <button class="ghost" data-goto="decisions">Décisions</button>
+          <button class="ghost" data-goto="plans">Plans</button>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button class="ghost" id="modal-cancel">Fermer</button>
+      </div>
+    </div>`);
+
+  document.getElementById('modal-cancel').onclick = closeModal;
+  const launch = document.getElementById('act-launch');
+  if (launch) launch.onclick = () => { closeModal(); launchTaskModal(taskId); };
+  const rework = document.getElementById('act-rework');
+  if (rework) rework.onclick = () => { closeModal(); reworkTaskModal(taskId); };
+  const recetteBtn = document.getElementById('act-recette');
+  if (recetteBtn) recetteBtn.onclick = () => { closeModal(); recetteTaskModal(taskId); };
+  const archive = document.getElementById('act-archive');
+  if (archive) archive.onclick = () => { closeModal(); openArchiveConfirm(taskId); };
+  const kill = document.getElementById('act-kill');
+  if (kill) kill.onclick = () => {
+    if (!confirm('Arrêter la session ? (process tué + session supprimée + tâche abandonnée + worktree libéré)')) return;
+    closeModal();
+    api(`/api/tasks/${encodeURIComponent(taskId)}/kill-session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
+      .then((r) => { alert('Session arrêtée.' + (r.aborted ? ' Tâche abandonnée.' : '')); refreshActive(); })
+      .catch((e) => alert('Échec : ' + (e.message || e)));
+  };
+  const relaunch = document.getElementById('act-relaunch');
+  if (relaunch) relaunch.onclick = () => {
+    if (!confirm('Relancer la tâche ? (réinitialisation + nouvelle session orchestrateur)')) return;
+    closeModal();
+    api(`/api/tasks/${encodeURIComponent(taskId)}/relaunch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
+      .then((r) => { alert('Tâche relancée : ' + (r.sessionId || '—')); refreshActive(); })
+      .catch((e) => alert('Échec : ' + (e.message || e)));
+  };
+  document.querySelectorAll('[data-goto]').forEach((b) => b.addEventListener('click', () => { closeModal(); goToTab(b.dataset.goto, taskId); }));
+  document.querySelectorAll('[data-approve], [data-reject]').forEach((b) => {
+    b.addEventListener('click', async () => {
+      const decisionId = b.dataset.approve || b.dataset.reject;
+      const st = b.dataset.approve ? 'approved' : 'rejected';
+      const input = b.closest('.decision-row').querySelector('.decision-remarks');
+      const resolution = input ? input.value.trim() : '';
+      try {
+        await api(`/api/decisions/${encodeURIComponent(decisionId)}/resolve`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: st, resolution }),
+        });
+        closeModal();
+        refreshActive();
+      } catch (err) { alert('Échec : ' + (err.message || err)); }
+    });
+  });
+}
+
+async function launchTaskModal(taskId) {
+  showModal(`
+    <div class="modal">
+      <h2>Lancer la tâche</h2>
+      <p class="muted">Tâche <span class="code">${esc(taskId)}</span></p>
+      <p>Une session de l'agent orchestrateur sera ouverte (mission + cadre). Le worktree et la branche sont gérés en interne par l'orchestrateur.</p>
+      <div class="modal-actions">
+        <button class="ghost" id="modal-cancel">Annuler</button>
+        <button class="launch-btn" id="modal-confirm">Lancer</button>
+      </div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('modal-confirm').onclick = async () => {
+    try {
+      const r = await api(`/api/tasks/${encodeURIComponent(taskId)}/launch`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      closeModal();
+      alert('Session lancée : ' + (r.sessionId || '—'));
+      refreshActive();
+    } catch (e) { alert('Échec du lancement : ' + (e.message || e)); }
+  };
+}
+
+async function reworkTaskModal(taskId) {
+  showModal(`
+    <div class="modal">
+      <h2>Reprendre la tâche</h2>
+      <p class="muted">Tâche <span class="code">${esc(taskId)}</span></p>
+      <textarea id="rework-remarks" class="modal-textarea" placeholder="remarques de reprise"></textarea>
+      <label class="modal-field">Mode
+        <select id="rework-mode">
+          <option value="fresh">Nouvelle session vierge (choix 3)</option>
+          <option value="continue">Continuer la session courante (choix 1)</option>
+        </select>
+      </label>
+      <div id="rework-session-wrap" hidden>
+        <label class="modal-field">Session courante
+          <input id="rework-session" placeholder="ses_…">
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button class="ghost" id="modal-cancel">Annuler</button>
+        <button class="launch-btn" id="modal-confirm">Reprendre</button>
+      </div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  const modeSel = document.getElementById('rework-mode');
+  modeSel.addEventListener('change', () => {
+    document.getElementById('rework-session-wrap').hidden = modeSel.value !== 'continue';
+  });
+  document.getElementById('modal-confirm').onclick = async () => {
+    try {
+      const mode = modeSel.value;
+      const remarks = document.getElementById('rework-remarks').value.trim();
+      const sessionId = document.getElementById('rework-session').value.trim();
+      const r = await api(`/api/tasks/${encodeURIComponent(taskId)}/rework`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode, remarks, sessionId: mode === 'continue' ? sessionId : undefined }),
+      });
+      closeModal();
+      alert(mode === 'continue' ? 'Remarques injectées dans la session.' : 'Nouvelle session lancée : ' + (r.sessionId || '—'));
+      refreshActive();
+    } catch (e) { alert('Échec de la reprise : ' + (e.message || e)); }
+  };
+}
+
+async function recetteTaskModal(taskId) {
+  showModal(`
+    <div class="modal">
+      <h2>Valider la recette</h2>
+      <p class="muted">Tâche <span class="code">${esc(taskId)}</span></p>
+      <p class="muted-sm">Après test sur la plateforme : approuvez la recette, ou rejetez-la en précisant ce qui manque (la tâche pourra alors être reprise).</p>
+      <textarea id="recette-remarks" class="modal-textarea" placeholder="remarques (ce qui manque en cas de rejet)"></textarea>
+      <div class="modal-actions">
+        <button class="ghost" id="modal-cancel">Annuler</button>
+        <button class="approve" id="recette-approve">Approuver la recette</button>
+        <button class="danger" id="recette-reject">Rejeter la recette</button>
+      </div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  const submit = async (status) => {
+    const resolution = document.getElementById('recette-remarks').value.trim();
+    if (status === 'rejected' && !resolution) {
+      if (!confirm('Rejeter la recette sans préciser ce qui manque ?')) return;
+    }
+    try {
+      await api(`/api/tasks/${encodeURIComponent(taskId)}/recette`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, resolution }),
+      });
+      closeModal();
+      refreshActive();
+    } catch (e) { alert('Échec : ' + (e.message || e)); }
+  };
+  document.getElementById('recette-approve').onclick = () => submit('approved');
+  document.getElementById('recette-reject').onclick = () => submit('rejected');
+}
+
 // --- Navigation ------------------------------------------------------------
 const RENDER = {
-  overview: renderOverview, tasks: renderTasks, worktrees: renderWorktrees,
+  overview: renderOverview, projects: renderProjects, tasks: renderTasks,
   events: renderEvents, deployments: renderDeployments, decisions: renderDecisions, artifacts: renderArtifacts, plans: renderPlans, archives: renderArchives, ecosystem: renderEcosystem, users: renderUsers,
 };
 
@@ -534,7 +910,7 @@ async function refreshActive() {
 function startPolling() {
   if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
   if (!REFRESH_S || REFRESH_S < 10) return; // manuel / intervalle désactivé
-  refreshTimer = setInterval(() => { if (!document.hidden) refreshActive(); }, REFRESH_S * 1000);
+  refreshTimer = setInterval(() => { if (!document.hidden && activeTab !== 'pilot') refreshActive(); }, REFRESH_S * 1000);
 }
 
 async function init() {
@@ -572,7 +948,7 @@ async function init() {
   document.getElementById('refresh-btn').addEventListener('click', refreshActive);
 
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) refreshActive();
+    if (!document.hidden && activeTab !== 'pilot') refreshActive();
   });
 
   document.getElementById('logout-btn').addEventListener('click', async () => {

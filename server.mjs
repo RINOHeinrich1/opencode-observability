@@ -11,6 +11,7 @@ import { openDb, getUserByUsername, verifyPassword, createUser, listUsers, updat
 import { currentUser, sessionToken, cookieHeader, clearCookieHeader } from "./auth.mjs";
 import { scanEcosystem } from "./ecosystem.mjs";
 import { loadEnv } from "./env.mjs";
+import * as pilot from "./pilot.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "public");
@@ -108,13 +109,16 @@ function registryTasks(url) {
   const project = url.searchParams.get("project");
   const status = url.searchParams.get("status");
   let rows = db.prepare(
-    `SELECT t.id, t.project, t.type, t.priority, t.request, t.created_at, t.session_id,
+    `SELECT t.id, t.project, t.type, t.priority, t.request, t.created_at, t.session_id, t.recette_status,
        ${latestStatusSubquery()} AS status,
        (SELECT attempt FROM executions e WHERE e.task_id = t.id ORDER BY attempt DESC LIMIT 1) AS attempt,
-       (SELECT rework_count FROM executions e WHERE e.task_id = t.id ORDER BY attempt DESC LIMIT 1) AS rework_count
+       (SELECT rework_count FROM executions e WHERE e.task_id = t.id ORDER BY attempt DESC LIMIT 1) AS rework_count,
+       (SELECT group_concat(w.branch, ',') FROM worktrees w WHERE w.task_id = t.id) AS branches
      FROM tasks t ORDER BY t.created_at DESC`,
   ).all();
-  rows = rows.filter((r) => !archived.has(r.id));
+  rows = rows
+    .filter((r) => !archived.has(r.id))
+    .map((r) => ({ ...r, branches: r.branches ? r.branches.split(",") : [] }));
   if (project) rows = rows.filter((r) => r.project === project);
   if (status) rows = rows.filter((r) => (r.status || "queued") === status);
   return { tasks: rows };
@@ -220,7 +224,7 @@ function registryPlans(url) {
   if (!hasTable(db, "plans")) return { plans: [] };
   const archived = archivedTaskIds();
   const taskId = url.searchParams.get("taskId");
-  const rows = db.prepare("SELECT id, task_id, objective, deliverables, status, created_at FROM plans ORDER BY created_at DESC").all();
+  const rows = db.prepare("SELECT id, task_id, objective, deliverables, status, branch, created_at FROM plans ORDER BY created_at DESC").all();
   const stepStmt = db.prepare("SELECT step_id, status FROM plan_steps WHERE plan_id = ?");
   const plans = rows
     .filter((p) => !isArchivedTaskId(archived, p.task_id))
@@ -236,6 +240,7 @@ function registryPlans(url) {
         task_id: p.task_id,
         objective: p.objective,
         status: p.status,
+        branch: p.branch,
         pct,
         deliverables: p.deliverables ? JSON.parse(p.deliverables) : [],
         created_at: p.created_at,
@@ -302,53 +307,19 @@ async function handleRestore(req, res, user, taskId) {
   return sendJson(res, 200, { ok: true, taskId, snapshot: a.snapshot });
 }
 
-// Suppression DEFINITIVE d'une tâche (et de tout ce qui lui est rattaché).
-// Contrairement à l'archivage (soft-hide), on écrit réellement dans registry.db.
-function deleteTaskPermanently(taskId) {
-  if (!existsSync(REGISTRY_DB)) return null;
-  const db = new Database(REGISTRY_DB);
-  db.pragma("foreign_keys = ON");
-  db.pragma("busy_timeout = 5000");
-  try {
-    return db.transaction(() => {
-      const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
-      if (!task) return null;
-      const snapshot = snapshotForTask(db, taskId);
-      // Suppression EXPLICITE de tous les éléments rattachés (défense en
-      // profondeur) : certaines tables (events, worktrees) peuvent avoir été
-      // créées sans contrainte FK ON DELETE CASCADE dans des registres existants.
-      db.prepare("DELETE FROM events WHERE task_id = ?").run(taskId);
-      db.prepare("DELETE FROM executions WHERE task_id = ?").run(taskId);
-      db.prepare("DELETE FROM deployments WHERE task_id = ?").run(taskId);
-      db.prepare("DELETE FROM decisions WHERE task_id = ?").run(taskId);
-      db.prepare("DELETE FROM artifacts WHERE task_id = ?").run(taskId);
-      db.prepare("DELETE FROM worktrees WHERE task_id = ?").run(taskId);
-      // Purge des plans rattachés (défense en profondeur : la FK plans.task_id
-      // → tasks(id) ON DELETE CASCADE couvre déjà le cas, mais les tables
-      // enfants plan_steps/incidents/inconsistencies sont supprimées
-      // explicitement pour rester robuste aux anciens schémas).
-      if (hasTable(db, "plans")) {
-        db.prepare("DELETE FROM plan_steps WHERE plan_id IN (SELECT id FROM plans WHERE task_id = ?)").run(taskId);
-        db.prepare("DELETE FROM plan_incidents WHERE plan_id IN (SELECT id FROM plans WHERE task_id = ?)").run(taskId);
-        db.prepare("DELETE FROM plan_inconsistencies WHERE plan_id IN (SELECT id FROM plans WHERE task_id = ?)").run(taskId);
-        db.prepare("DELETE FROM plans WHERE task_id = ?").run(taskId);
-      }
-      db.prepare("DELETE FROM tasks WHERE id = ?").run(taskId);
-      return { task, snapshot };
-    })();
-  } finally {
-    db.close();
-  }
-}
-
+// Suppression DEFINITIVE d'une tâche et de tout son rattaché — via l'outil MCP
+// `task_delete` (source de vérité unique). Plus d'écriture directe dans registry.db.
 async function handleDelete(req, res, user, taskId) {
   if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
   const archive = getArchive(taskId);
   if (!archive) return sendJson(res, 409, { error: "tâche non archivée : archiver avant de supprimer" });
-  const result = deleteTaskPermanently(taskId);
-  removeArchive(taskId);
-  if (!result) return sendJson(res, 200, { ok: true, taskId, note: "tâche absente du registre (archive nettoyée)" });
-  return sendJson(res, 200, { ok: true, taskId, snapshot: result.snapshot });
+  try {
+    const r = await pilot.deleteTask(taskId);
+    removeArchive(taskId);
+    return sendJson(res, 200, { ok: true, taskId, deleted: !!(r && r.deleted) });
+  } catch (e) {
+    return sendJson(res, 400, { error: String((e && e.message) || e) });
+  }
 }
 
 // --- Auth / utilisateurs ---------------------------------------------------
@@ -432,6 +403,58 @@ const server = createServer(async (req, res) => {
     if (path === "/api/ecosystem") return sendJson(res, 200, scanEcosystem());
     if (path === "/api/config") return sendJson(res, 200, { refreshSeconds: REFRESH_S, sessionBaseUrl: SESSION_BASE_URL });
     if (path === "/api/stats") return sendJson(res, 200, registryStats());
+
+    // --- Centre de pilotage (écriture contrôlée via MCP, source de vérité unique) ---
+    if (path === "/api/workspaces" && req.method === "GET") {
+      return sendJson(res, 200, await pilot.listWorkspaces());
+    }
+    if (path === "/api/projects" && req.method === "GET") {
+      return sendJson(res, 200, await pilot.listProjects());
+    }
+    if (path === "/api/projects" && req.method === "POST") {
+      const b = await readBody(req);
+      return sendJson(res, 200, await pilot.createProject({ ...b, createdBy: user.username }));
+    }
+    const projDelMatch = path.match(/^\/api\/projects\/([^/]+)$/);
+    if (projDelMatch && req.method === "DELETE") {
+      return sendJson(res, 200, await pilot.deleteProject(projDelMatch[1]));
+    }
+    if (path === "/api/tasks" && req.method === "POST") {
+      const b = await readBody(req);
+      return sendJson(res, 200, await pilot.createTask(b));
+    }
+    if (path === "/api/scope-conflict" && req.method === "POST") {
+      const b = await readBody(req);
+      return sendJson(res, 200, await pilot.scopeConflict(b.project, b.scope));
+    }
+    const launchMatch = path.match(/^\/api\/tasks\/([^/]+)\/launch$/);
+    if (launchMatch && req.method === "POST") {
+      return sendJson(res, 200, await pilot.launchTask({ taskId: launchMatch[1] }));
+    }
+    const reworkMatch = path.match(/^\/api\/tasks\/([^/]+)\/rework$/);
+    if (reworkMatch && req.method === "POST") {
+      const b = await readBody(req);
+      return sendJson(res, 200, await pilot.reworkTask({ taskId: reworkMatch[1], mode: b.mode, remarks: b.remarks, by: user.username, sessionId: b.sessionId }));
+    }
+    const killMatch = path.match(/^\/api\/tasks\/([^/]+)\/kill-session$/);
+    if (killMatch && req.method === "POST") {
+      return sendJson(res, 200, await pilot.killTaskSession({ taskId: killMatch[1] }));
+    }
+    const relaunchMatch = path.match(/^\/api\/tasks\/([^/]+)\/relaunch$/);
+    if (relaunchMatch && req.method === "POST") {
+      return sendJson(res, 200, await pilot.relaunchTask({ taskId: relaunchMatch[1] }));
+    }
+    const recetteMatch = path.match(/^\/api\/tasks\/([^/]+)\/recette$/);
+    if (recetteMatch && req.method === "POST") {
+      const b = await readBody(req);
+      return sendJson(res, 200, await pilot.resolveRecette({ taskId: recetteMatch[1], status: b.status, resolution: b.resolution, by: user.username }));
+    }
+    const resolveMatch = path.match(/^\/api\/decisions\/([^/]+)\/resolve$/);
+    if (resolveMatch && req.method === "POST") {
+      const b = await readBody(req);
+      return sendJson(res, 200, await pilot.resolveDecision({ decisionId: resolveMatch[1], status: b.status, resolution: b.resolution, by: user.username }));
+    }
+
     if (path === "/api/artifacts") return sendJson(res, 200, registryArtifacts(url));
     const artDownload = path.match(/^\/api\/tasks\/([^/]+)\/artifacts\/([^/]+)\/download$/);
     if (artDownload) return downloadArtifact(res, artDownload[1], artDownload[2]);
@@ -462,7 +485,12 @@ const server = createServer(async (req, res) => {
     if (path === "/") return serveFile(res, "index.html");
     return serveFile(res, path.slice(1));
   } catch (e) {
-    sendJson(res, 500, { error: e.message });
+    const msg = String((e && e.message) || e);
+    let status = 500;
+    if (/timeout/i.test(msg)) status = 504;
+    else if (/projet inconnu/i.test(msg)) status = 409;
+    else if (/requis|invalide|transition refusée|non disponible/i.test(msg)) status = 400;
+    sendJson(res, status, { error: msg });
   }
 });
 

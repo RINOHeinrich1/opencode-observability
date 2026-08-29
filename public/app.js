@@ -133,6 +133,7 @@ async function renderTasks() {
               <span class="muted-sm">${esc(s.objective || '')}</span>
               ${progressBar(s.pct)}
               ${s.branch ? `<code class="muted-sm">${esc(s.branch)}</code>` : '<span class="muted-sm">—</span>'}
+              ${s.execution_status ? badge(s.execution_status) : '<span class="muted-sm">non exécuté</span>'}
               ${badge(s.status)}
             </div>
           </td>

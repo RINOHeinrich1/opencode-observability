@@ -217,7 +217,11 @@ async function registryPlans(url) {
   const taskId = url.searchParams.get("taskId");
   let rows = [];
   try {
-    const res = await db.query("SELECT id, task_id, objective, deliverables, status, branch, created_at FROM plans ORDER BY created_at DESC");
+    const res = await db.query(
+      `SELECT p.id, p.task_id, p.objective, p.deliverables, p.status, p.branch, p.created_at,
+              (SELECT pe.status FROM plan_executions pe WHERE pe.plan_id = p.id ORDER BY pe.id DESC LIMIT 1) AS execution_status
+       FROM plans p ORDER BY p.created_at DESC`,
+    );
     rows = res.rows;
   } catch { rows = []; }
   let stepStmt = async (planId) => (await db.query("SELECT step_id, status FROM plan_steps WHERE plan_id = $1", [planId]).catch(() => ({ rows: [] }))).rows;
@@ -234,6 +238,7 @@ async function registryPlans(url) {
       task_id: p.task_id,
       objective: p.objective,
       status: p.status,
+      execution_status: p.execution_status || null,
       branch: p.branch,
       pct,
       deliverables: p.deliverables ? JSON.parse(p.deliverables) : [],

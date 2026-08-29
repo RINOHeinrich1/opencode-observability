@@ -72,3 +72,42 @@ plan-manager, audit-manager, coder-workspaces, oniria-arch, react-arch) et les p
 | Worktree | Checkout git isolé, créé/supprimé par l'agent exécutant. |
 | État / State | Statut d'exécution (tâche ou plan). |
 | Agrégation | Transition de tâche déclenchée quand toutes les décisions d'un type sont résolues. |
+
+---
+
+## English version
+
+**1. Data model (PostgreSQL)** — database `task_registry`:
+
+| Table | Role | Key columns |
+|---|---|---|
+| `tasks` | Task (the "what") | `id`, `request`, `project`, `type`, `priority`, `scope`, `recette_status`, `version` |
+| `projects` | Registered project | `id`, `name`, `workspace`, `git_path` |
+| `executions` | Task execution (coarse status) | `execution_id`, `task_id`, `attempt`, `status` |
+| `plan_executions` | Plan execution (full cycle) | `plan_id`, `attempt`, `status` |
+| `events` | Append-only journal | `event_id`, `task_id`, `type`, `by`, `detail` |
+| `deployments` | CI/CD tracking | `deployment_id`, `task_id`, `status` |
+| `decisions` | Human decisions | `decision_id`, `task_id`, `kind`, `status`, `plan_id`, `resolution` |
+| `participants` | Participating agents | `task_id`, `agent`, `role` |
+| `artifacts` | Linked documents | `artifact_id`, `task_id`, `kind`, `path` |
+| `worktrees` | Worktrees (legacy) | `worktree_id`, `project`, `status` |
+| `plans` | Action plans | `id`, `task_id`, `objective`, `branch` |
+| `plan_steps` | Plan steps | `plan_id`, `step_id`, `status` |
+| `plan_incidents` / `plan_inconsistencies` | Incidents / inconsistencies | `plan_id`, `status` |
+| `plan_counters` | INC-/INCO- counters | `name`, `value` |
+
+Database `panel`: `users`, `sessions`, `archives`.
+
+**2. State machines** — **Task** (coarse): `queued → started → planning →
+awaiting_validation → planned → in_progress → done` (+ `blocked`/`failed`/`aborted`/
+`crashed`; `done → rework`). **Plan** (full): `planned → in_progress → validating →
+review → approved → merge_pending → merged → deploy_pending → deploying → deployed →
+post_deploy_verified → done` (+ `rejected → rework`). **Acceptance**
+(`recette_status`): `pending → approved/rejected`, independent of execution status.
+
+**3. Configuration** — `~/.config/opencode/.env` (`DATABASE_URL`, `PANEL_DATABASE_URL`,
+`OPENCODE_SERVER_PASSWORD`), `opencode.jsonc` (MCP servers + plugins), `docker-compose.yml`
+(PostgreSQL).
+
+**4. Glossary** — Task, Plan/sub-task, Decision, Acceptance (recette), Session,
+Worktree, State, Aggregation.

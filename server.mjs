@@ -11,6 +11,7 @@ import { currentUser, sessionToken, cookieHeader, clearCookieHeader } from "./au
 import { scanEcosystem } from "./ecosystem.mjs";
 import { loadEnv } from "./env.mjs";
 import * as pilot from "./pilot.mjs";
+import { marked } from "marked";
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -60,6 +61,40 @@ function serveFile(res, rel) {
   }
   res.writeHead(200, { "Content-Type": MIME[extname(file).toLowerCase()] || "application/octet-stream" });
   res.end(readFileSync(file));
+}
+
+// Rendu d'un fichier markdown de la documentation (`/docs/*.md`) en HTML.
+function serveDoc(res, rel) {
+  const safe = normalize(rel).replace(/^(\.\.[/\\])+/, "");
+  const file = join(PUBLIC_DIR, safe);
+  if (!file.startsWith(PUBLIC_DIR) || !existsSync(file) || statSync(file).isDirectory() || extname(file).toLowerCase() !== ".md") {
+    res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+    return res.end("Not found");
+  }
+  const md = readFileSync(file, "utf8");
+  const html = marked.parse(md);
+  const title = basename(file, ".md");
+  const page = `<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${title} — Framework docs</title>
+<style>
+body{font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;max-width:920px;margin:0 auto;padding:24px;line-height:1.65;color:#1f2328;}
+h1,h2,h3,h4{line-height:1.3;margin-top:1.6em;} h1{border-bottom:1px solid #d0d7de;padding-bottom:.3em;}
+code{background:#f0f2f4;padding:2px 5px;border-radius:4px;font-size:.92em;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
+pre{background:#f6f8fa;padding:14px;border-radius:6px;overflow:auto;} pre code{background:none;padding:0;}
+table{border-collapse:collapse;width:100%;margin:1em 0;display:block;overflow-x:auto;}
+th,td{border:1px solid #d0d7de;padding:8px 11px;text-align:left;font-size:.95em;}
+th{background:#f6f8fa;font-weight:600;}
+a{color:#0969da;text-decoration:none;} a:hover{text-decoration:underline;}
+blockquote{border-left:4px solid #d0d7de;margin:1em 0;padding:.1em 1em;color:#57606a;}
+.docs-nav{margin-bottom:1.6em;font-size:.95em;padding:8px 12px;background:#f6f8fa;border-radius:6px;}
+hr{border:none;border-top:1px solid #d0d7de;margin:2em 0;}
+</style></head><body>
+<div class="docs-nav"><a href="/docs/README.md">← Index / Table des matières</a></div>
+${html}
+</body></html>`;
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  res.end(page);
 }
 
 // --- Registre de tâches (lecture seule PostgreSQL) --------------------------
@@ -387,7 +422,9 @@ const server = createServer(async (req, res) => {
 
     // Documentation publique (markdown) — accessible sans authentification.
     if (path === "/docs") return redirect(res, "/docs/README.md");
-    if (path.startsWith("/docs/")) return serveFile(res, path.slice(1));
+    if (path.startsWith("/docs/")) {
+      return path.endsWith(".md") ? serveDoc(res, path.slice(1)) : serveFile(res, path.slice(1));
+    }
 
     const user = await currentUser(req);
     if (path === "/api/logout" && req.method === "POST") return handleLogout(req, res);

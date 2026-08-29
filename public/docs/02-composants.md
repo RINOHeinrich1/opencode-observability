@@ -108,3 +108,53 @@ Git.
 - Isolation des sessions concurrentes via `session-guard` (worktree dédié).
 - **Déploiement** : uniquement via pipeline CI/CD (`gh workflow run` ou skill
   `oniria-package-deploiement`) — jamais manuel.
+
+---
+
+## English version
+
+**1. Web panel (control center)** — web interface (`orchestrator.madatalk.fr`) to
+supervise and pilot tasks, never writing directly to the registry. PM2 process, port
+4000, behind a reverse proxy. Auth (users/sessions), dedicated `panel` database
+(PostgreSQL). Read-only access to the registry (`task_registry`, via `pg`); writes go
+through the MCP `task-orchestrator`. Tabs: Overview, Projects, Tasks, Events,
+Deployments, Decisions, Documents, Plans, Archives, Ecosystem, Users. Pilot functions:
+`createTask`, `launchTask` (`queued → started` + orchestrator session), `reworkTask`,
+`killTaskSession`, `relaunchTask`, `resolveRecette`, `resolveDecision`. The session
+bridge (`session-bridge.mjs`) launches a detached opencode session
+(`opencode run --agent orchestrator --attach http://127.0.0.1:4096`).
+
+**2. Orchestrator agent** — the **single owner of task state transitions**; it
+coordinates agents and never edits project code. Pipeline: register task → resolve
+Coder workspace → detect scope conflicts → delegate to `atomic-plan` → human validation
+→ delegate to `build-notify` (per plan) → human review → merge + CI/CD deploy (per
+plan) → closure + acceptance. Principles: mission ≠ method; it decides transitions,
+agents publish events; it pilots **per plan** (`plan_transition`).
+
+**3. Sub-agents** — `atomic-plan` (atomic-grained planning, read-only),
+`build-notify` (executes plans + email notifications), `hexagonal-architecture-auditor`
+(backend audit), `clean-arch-detector-react` (frontend audit). Read-only agents have
+restricted `bash` permissions (read-only commands + git read-only).
+
+**4. Task registry** (MCP `task-orchestrator` + PostgreSQL) — logical source of truth.
+Tables: `tasks`, `projects`, `executions`, `worktrees`, `events`, `deployments`,
+`decisions`, `participants`, `artifacts`, `plans`, `plan_steps`, `plan_incidents`,
+`plan_inconsistencies`, `plan_counters`, `plan_executions`. Two state machines: task
+(coarse phases) + plan (full cycle). Key tools: `task_register`, `task_transition`,
+`plan_transition`, `task_event`, `decision_request`, `decision_resolve`, `task_recette`,
+`task_get`.
+
+**5. Business MCP & Skills** — `plan-manager` (plans persistence/tracking),
+`audit-manager` (audit reports treatment, file-based), `coder-workspaces` (Coder
+discovery + non-root exec), `oniria-arch`/`react-arch` (architecture audits) + skills
+(`task-execution`, `plan-manager`, `audit-manager`, `coder-workspace-locations`,
+`oniria-package-deploiement`, `customize-opencode`).
+
+**6. Coder workspace** — one workspace per project, Docker volume mounted on the host.
+Agents read via `workspace_resolve` (host path) and execute via `workspace_exec`
+(non-root, user `coder`). Never run project code on the host.
+
+**7. Git & CI/CD** — one repo per component, `feature/*` branches, merge to `main`
+only after human validation, session isolation via `session-guard` (dedicated
+worktree), deployment only via CI/CD pipeline (`gh workflow run` or
+`oniria-package-deploiement`) — never manual.

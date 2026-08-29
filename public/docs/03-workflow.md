@@ -76,3 +76,37 @@ orchestrator ──▶ merge_pending → merged → deploy… → done (par plan
 orchestrator ──▶ task done (tous les plans done)
 humain ──Valider la recette──▶ recette approved/rejected
 ```
+
+---
+
+## English version
+
+**1. Task lifecycle** — `queued → started → planning → awaiting_validation → planned →
+in_progress → done`, then acceptance (`recette`: `pending → approved/rejected`).
+Who sets each state: `queued` (panel/orchestrator), `started` (panel "Launch"),
+`planning` (orchestrator delegates to atomic-plan), `awaiting_validation`
+(orchestrator), `planned` (automatic via `decision_resolve` aggregation),
+`in_progress` (orchestrator), `done` (orchestrator when all plans are done), recette
+(human via "Validate acceptance").
+
+**2. Plan (sub-task) lifecycle** — each plan follows its own cycle, in parallel:
+`planned → in_progress → validating → review → approved/rejected → merge_pending →
+merged → deploy_pending → deploying → deployed → post_deploy_verified → done`.
+Approval is **independent per plan** (one can be `approved` while another is
+`rejected → rework`). `decision_resolve` (review) transitions the **plan**, not the
+task; the task stays `in_progress` until all plans are `done`.
+
+**3. Human decisions** — `validation` (after planning → task `planned`/`aborted`),
+`review` (before merge → plan `approved`/`rejected`), `recette` (after `done` →
+`recette_status` column), `permission` (opencode permission, traced only). Each
+decision has `kind`, `detail`, `planId`, `status`, `resolution`.
+
+**4. Notifications** — mandatory emails (`send-mail.mjs`): before any human
+question/decision, before a permission-requiring action, at task completion (report
+attached). Always check exit code `0`.
+
+**5. Example sequence (2 plans)** — human creates task → panel launches (`started`) →
+orchestrator plans (`planning`) → atomic-plan produces 2 plans → `awaiting_validation`
+→ human validates both → `planned` (auto) → `in_progress` → build-notify executes 2
+parallel sub-tasks → `validating` → `review` → human approves/rejects each plan
+(independently) → merge/deploy per plan → task `done` → human validates acceptance.

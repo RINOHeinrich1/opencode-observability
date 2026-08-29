@@ -385,6 +385,10 @@ const server = createServer(async (req, res) => {
 
     if (isPublicAsset(path)) return serveFile(res, path.slice(1));
 
+    // Documentation publique (markdown) — accessible sans authentification.
+    if (path === "/docs") return redirect(res, "/docs/README.md");
+    if (path.startsWith("/docs/")) return serveFile(res, path.slice(1));
+
     const user = await currentUser(req);
     if (path === "/api/logout" && req.method === "POST") return handleLogout(req, res);
 

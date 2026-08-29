@@ -14,6 +14,7 @@ Base `task_registry` :
 | `projects` | Projet enregistré | `id`, `name`, `workspace`, `git_path` |
 | `executions` | Exécution de la tâche (statut grossier) | `execution_id`, `task_id`, `attempt`, `status` |
 | `plan_executions` | Exécution d'un plan (cycle complet) | `plan_id`, `attempt`, `status` |
+| `plan_commits` | Commits d'un plan (trace append-only, fichiers + diff) | `plan_id`, `sha`, `message`, `files`, `created_at` |
 | `events` | Journal append-only | `event_id`, `task_id`, `type`, `by`, `detail` |
 | `deployments` | Suivi CI/CD | `deployment_id`, `task_id`, `status` |
 | `decisions` | Décisions humaines | `decision_id`, `task_id`, `kind`, `status`, `plan_id`, `resolution` |
@@ -85,6 +86,7 @@ plan-manager, audit-manager, coder-workspaces, oniria-arch, react-arch) et les p
 | `projects` | Registered project | `id`, `name`, `workspace`, `git_path` |
 | `executions` | Task execution (coarse status) | `execution_id`, `task_id`, `attempt`, `status` |
 | `plan_executions` | Plan execution (full cycle) | `plan_id`, `attempt`, `status` |
+| `plan_commits` | Plan commits (append-only trace, files + diff) | `plan_id`, `sha`, `message`, `files`, `created_at` |
 | `events` | Append-only journal | `event_id`, `task_id`, `type`, `by`, `detail` |
 | `deployments` | CI/CD tracking | `deployment_id`, `task_id`, `status` |
 | `decisions` | Human decisions | `decision_id`, `task_id`, `kind`, `status`, `plan_id`, `resolution` |

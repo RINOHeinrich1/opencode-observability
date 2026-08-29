@@ -135,6 +135,7 @@ async function renderTasks() {
               ${s.branch ? `<code class="muted-sm">${esc(s.branch)}</code>` : '<span class="muted-sm">—</span>'}
               ${s.execution_status ? badge(s.execution_status) : '<span class="muted-sm">non exécuté</span>'}
               ${badge(s.status)}
+              ${s.commit_count ? `<button class="commit-btn" data-commits="${esc(s.planId)}" title="Voir les commits et leurs diffs">commits (${s.commit_count})</button>` : ''}
             </div>
           </td>
         </tr>`).join('');
@@ -142,6 +143,7 @@ async function renderTasks() {
     }).join('') || '<tr><td colspan="11" class="muted">Aucune tâche</td></tr>';
     document.getElementById('tasks-body').innerHTML = html;
     document.querySelectorAll('#tasks-body [data-actions]').forEach((b) => b.addEventListener('click', () => taskActionsModal(b.dataset.actions)));
+    document.querySelectorAll('#tasks-body [data-commits]').forEach((b) => b.addEventListener('click', () => renderPlanCommitsModal(b.dataset.commits)));
     document.querySelectorAll('#tasks-body [data-toggle]').forEach((b) => b.addEventListener('click', () => {
       const id = b.dataset.toggle;
       const children = document.querySelectorAll(`#tasks-body [data-child="${id}"]`);
@@ -247,9 +249,83 @@ async function renderPlans() {
   document.getElementById('pane-plans').innerHTML = `
     <h2>Plans d'action</h2>
     ${filterBar()}
-    <table><thead><tr><th>Plan</th><th>Tâche</th><th>Objectif</th><th>Avancement</th><th>Livrables</th></tr></thead>
-    <tbody>${plans.map((p) => `<tr><td class="code">${esc(p.planId)}</td><td class="code">${esc(p.task_id || '—')}</td><td>${esc(p.objective)}</td><td>${progressBar(p.pct)}</td><td>${esc((p.deliverables || []).join(', '))}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Aucun plan</td></tr>'}</tbody></table>`;
+    <table><thead><tr><th>Plan</th><th>Tâche</th><th>Objectif</th><th>Avancement</th><th>Commits</th><th>Livrables</th></tr></thead>
+    <tbody>${plans.map((p) => `<tr><td class="code">${esc(p.planId)}</td><td class="code">${esc(p.task_id || '—')}</td><td>${esc(p.objective)}</td><td>${progressBar(p.pct)}</td><td>${p.commit_count ? `<button class="commit-btn" data-commits="${esc(p.planId)}" title="Voir les commits et leurs diffs">${p.commit_count}</button>` : '<span class="muted-sm">0</span>'}</td><td>${esc((p.deliverables || []).join(', '))}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Aucun plan</td></tr>'}</tbody></table>`;
   bindTaskFilter();
+  document.querySelectorAll('#pane-plans [data-commits]').forEach((b) => b.addEventListener('click', () => renderPlanCommitsModal(b.dataset.commits)));
+}
+
+// --- Commits (trace par sous-tâche, avec fichiers + diff) -------------------
+function fileStatusBadge(status) {
+  const map = { added: ['approved', 'ajouté'], modified: ['in_progress', 'modifié'], deleted: ['rejected', 'supprimé'], renamed: ['awaiting', 'renommé'] };
+  const [cls, label] = map[status] || ['queued', status || '—'];
+  return `<span class="badge ${cls}">${esc(label)}</span>`;
+}
+
+function fileStatLabel(f) {
+  const a = Number(f.additions) || 0;
+  const d = Number(f.deletions) || 0;
+  return `<span class="stat-add">+${a}</span> <span class="stat-del">−${d}</span>`;
+}
+
+function renderDiff(diffText) {
+  if (!diffText) return '<div class="diff"><div class="diff-line muted">(pas de diff)</div></div>';
+  const lines = String(diffText).split('\n');
+  const html = lines.map((ln) => {
+    if (ln.startsWith('+++') || ln.startsWith('---') || ln.startsWith('diff ')) return `<div class="diff-line diff-hdr">${esc(ln)}</div>`;
+    if (ln.startsWith('@@')) return `<div class="diff-line diff-hunk">${esc(ln)}</div>`;
+    if (ln.startsWith('+')) return `<div class="diff-line diff-add">${esc(ln)}</div>`;
+    if (ln.startsWith('-')) return `<div class="diff-line diff-del">${esc(ln)}</div>`;
+    return `<div class="diff-line">${esc(ln)}</div>`;
+  }).join('');
+  return `<div class="diff">${html}</div>`;
+}
+
+function commitCard(c) {
+  const files = c.files || [];
+  const date = (c.committedAt || c.createdAt || '').replace('T', ' ').slice(0, 19);
+  return `<div class="commit-card">
+    <div class="commit-head">
+      <code class="commit-sha">${esc((c.sha || '').slice(0, 8))}</code>
+      <span class="commit-msg">${esc(c.message || '')}</span>
+      ${c.author ? `<span class="muted-sm">${esc(c.author)}</span>` : ''}
+      ${date ? `<span class="muted-sm">${esc(date)}</span>` : ''}
+      ${c.branch ? `<code class="muted-sm">${esc(c.branch)}</code>` : ''}
+    </div>
+    <div class="commit-files">
+      ${files.map((f, i) => `
+        <div class="commit-file">
+          <div class="file-head">
+            <button class="file-toggle" data-file-toggle="diff-${c.id}-${i}">▸</button>
+            ${fileStatusBadge(f.status)}
+            <code class="file-path">${esc(f.path)}</code>
+            ${fileStatLabel(f)}
+          </div>
+          <div id="diff-${c.id}-${i}" hidden>${renderDiff(f.diff)}</div>
+        </div>`).join('') || '<div class="muted-sm commit-file">Aucun fichier référencé</div>'}
+    </div>
+  </div>`;
+}
+
+async function renderPlanCommitsModal(planId) {
+  let data;
+  try { data = await api(`/api/plans/${encodeURIComponent(planId)}/commits`); }
+  catch (e) { alert('Impossible de charger les commits : ' + (e.message || e)); return; }
+  const commits = data.commits || [];
+  showModal(`
+    <div class="modal modal-wide">
+      <h2>Commits — <span class="code">${esc(planId)}</span></h2>
+      <p class="muted-sm">${commits.length} commit(s) — trace intégrale conservée (y compris les reworks).</p>
+      <div class="commit-list">${commits.length ? commits.map(commitCard).join('') : '<p class="muted">Aucun commit enregistré pour ce plan.</p>'}</div>
+      <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.querySelectorAll('[data-file-toggle]').forEach((b) => b.addEventListener('click', () => {
+    const el = document.getElementById(b.dataset.fileToggle);
+    if (!el) return;
+    el.hidden = !el.hidden;
+    b.textContent = el.hidden ? '▸' : '▾';
+  }));
 }
 
 // --- Archivage / restauration ---------------------------------------------

@@ -471,3 +471,26 @@ button.launch-btn, button.approve { background: var(--green); }
 .subtask-row td { background: rgba(255, 255, 255, 0.02); }
 .subtask { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding-left: 10px; }
 .tree-branch { color: var(--muted); }
+
+/* ===== Commits (trace par sous-tâche) ===== */
+.commit-btn { background: transparent; color: var(--accent); border: 1px solid var(--border); padding: 2px 9px; font-size: 12px; }
+.commit-btn:hover { background: rgba(79, 140, 255, 0.12); }
+.commit-list { max-height: 70vh; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+.commit-card { border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+.commit-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.commit-sha { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent); font-weight: 600; }
+.commit-msg { color: var(--text); font-weight: 600; flex: 1; min-width: 200px; }
+.commit-files { padding: 6px 0; }
+.commit-file { padding: 4px 12px; }
+.commit-file .file-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.file-toggle { background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: 12px; padding: 0 4px; }
+.file-toggle:hover { color: var(--accent); }
+.file-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
+.stat-add { color: var(--green); font-weight: 600; }
+.stat-del { color: var(--red); font-weight: 600; }
+.diff { margin: 6px 0 6px 20px; background: #0d1117; border: 1px solid var(--border); border-radius: 6px; overflow: auto; max-height: 360px; }
+.diff-line { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.45; white-space: pre; padding: 0 10px; }
+.diff-add { background: rgba(47, 191, 113, 0.12); color: #a5e8c3; }
+.diff-del { background: rgba(229, 83, 75, 0.12); color: #f0b3ae; }
+.diff-hunk { color: var(--accent); }
+.diff-hdr { color: var(--muted); }

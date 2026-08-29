@@ -254,7 +254,8 @@ async function registryPlans(url) {
   try {
     const res = await db.query(
       `SELECT p.id, p.task_id, p.objective, p.deliverables, p.status, p.branch, p.created_at,
-              (SELECT pe.status FROM plan_executions pe WHERE pe.plan_id = p.id ORDER BY pe.id DESC LIMIT 1) AS execution_status
+              (SELECT pe.status FROM plan_executions pe WHERE pe.plan_id = p.id ORDER BY pe.id DESC LIMIT 1) AS execution_status,
+              (SELECT COUNT(*) FROM plan_commits pc WHERE pc.plan_id = p.id) AS commit_count
        FROM plans p ORDER BY p.created_at DESC`,
     );
     rows = res.rows;
@@ -274,6 +275,7 @@ async function registryPlans(url) {
       objective: p.objective,
       status: p.status,
       execution_status: p.execution_status || null,
+      commit_count: Number(p.commit_count) || 0,
       branch: p.branch,
       pct,
       deliverables: p.deliverables ? JSON.parse(p.deliverables) : [],
@@ -281,6 +283,35 @@ async function registryPlans(url) {
     });
   }
   return { plans };
+}
+
+async function registryPlanCommits(planId) {
+  const db = registry();
+  let rows = [];
+  try {
+    const res = await db.query(
+      "SELECT * FROM plan_commits WHERE plan_id = $1 ORDER BY id ASC",
+      [planId],
+    );
+    rows = res.rows;
+  } catch { rows = []; }
+  return {
+    planId,
+    commits: rows.map((r) => {
+      let files = [];
+      try { files = r.files ? JSON.parse(r.files) : []; } catch { files = []; }
+      return {
+        id: r.id,
+        sha: r.sha,
+        message: r.message,
+        author: r.author,
+        branch: r.branch,
+        committedAt: r.committed_at,
+        createdAt: r.created_at,
+        files,
+      };
+    }),
+  };
 }
 
 async function downloadArtifact(res, taskId, artifactId) {
@@ -511,6 +542,10 @@ const server = createServer(async (req, res) => {
     if (path === "/api/events") return sendJson(res, 200, await registryEvents(url));
     if (path === "/api/deployments") return sendJson(res, 200, await registryDeployments(url));
     if (path === "/api/decisions") return sendJson(res, 200, await registryDecisions(url));
+    const planCommitsMatch = path.match(/^\/api\/plans\/([^/]+)\/commits$/);
+    if (planCommitsMatch && req.method === "GET") {
+      return sendJson(res, 200, await registryPlanCommits(planCommitsMatch[1]));
+    }
     if (path === "/api/plans") return sendJson(res, 200, await registryPlans(url));
     if (path === "/api/users") return handleUsers(req, res, user);
     if (path.startsWith("/api/users/")) return handleUserAction(req, res, user, path);

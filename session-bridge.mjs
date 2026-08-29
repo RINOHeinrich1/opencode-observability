@@ -225,14 +225,12 @@ export function killSession({ taskId, sessionId }) {
  * Prompt de lancement d'une session orchestrateur : mission + cadre.
  * Aucune consigne de méthode d'exécution (règle « mission ≠ méthode »).
  */
-export function buildLaunchPrompt({ taskId, executionId, project, workspace, worktree, branch, scope, request }) {
+export function buildLaunchPrompt({ taskId, executionId, project, workspace, scope, request }) {
   const lines = ["Traite la tâche orchestrée suivante.", ""];
   if (taskId) lines.push(`- taskId : ${taskId}`);
   if (executionId) lines.push(`- executionId : ${executionId}`);
   if (project) lines.push(`- projet : ${project}`);
   if (workspace) lines.push(`- workspace Coder : ${workspace}`);
-  if (worktree) lines.push(`- worktree : ${worktree}`);
-  if (branch) lines.push(`- branche : ${branch}`);
   if (scope && scope.length) lines.push(`- scope : ${scope.join(", ")}`);
   lines.push("", "Demande :", request || "");
   lines.push("", "La tâche est déjà enregistrée (statut `started`) : récupère son état via `task_get`, ne la ré-enregistre pas (pas de `task_register`).");

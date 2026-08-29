@@ -158,14 +158,14 @@ export async function reworkTask({ taskId, mode, remarks, by, sessionId }) {
 }
 
 // Arrêt d'une session de tâche : tue le process opencode + supprime la session
-// + abandonne la tâche + libère le worktree (bouton « Tuer la session »).
+// + abandonne la tâche (bouton « Tuer la session »). Le worktree est géré en
+// interne par l'agent orchestrateur (session-guard), pas par le panneau.
 export async function killTaskSession({ taskId }) {
   if (!taskId) throw new Error("taskId requis");
 
   const t = await taskOrchestrator("task_get", { taskId });
   const task = t && t.task;
   const sessionId = task && task.sessionId;
-  const wt = t && t.worktree;
 
   const killed = killSession({ taskId, sessionId });
 
@@ -178,15 +178,7 @@ export async function killTaskSession({ taskId }) {
   // Vider la session (ne plus pointer vers la session supprimée).
   try { await taskOrchestrator("task_clear_session", { taskId }); } catch {}
 
-  let worktreeReleased = false;
-  if (wt && ["RESERVED", "IN_USE"].includes(wt.status)) {
-    try {
-      await taskOrchestrator("worktree_release", { worktreeId: wt.worktreeId });
-      worktreeReleased = true;
-    } catch {}
-  }
-
-  return { taskId, sessionId, killed, aborted, worktreeReleased };
+  return { taskId, sessionId, killed, aborted };
 }
 
 // Relance une tâche abandonnée (kill) : vide la session, repasse en queued, puis lance.

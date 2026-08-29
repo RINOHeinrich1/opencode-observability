@@ -79,7 +79,6 @@ async function registryStats() {
   const db = registry();
   const byStatus = {};
   let tasks = 0;
-  let worktrees = 0;
   let openDecisions = 0;
   try {
     const res = await db.query(`SELECT t.id, ${latestStatusSubquery()} AS status FROM tasks t`);
@@ -89,14 +88,12 @@ async function registryStats() {
       byStatus[st] = (byStatus[st] || 0) + 1;
       tasks++;
     }
-    const wtRes = await db.query("SELECT task_id FROM worktrees");
-    worktrees = wtRes.rows.filter((w) => !archived.has(w.task_id)).length;
     const decRes = await db.query("SELECT task_id FROM decisions WHERE status = 'awaiting'");
     openDecisions = decRes.rows.filter((d) => !archived.has(d.task_id)).length;
   } catch {
     /* registre indisponible */
   }
-  return { tasks, byStatus, worktrees, openDecisions, archived: archived.size };
+  return { tasks, byStatus, openDecisions, archived: archived.size };
 }
 
 async function registryTasks(url) {
@@ -110,13 +107,10 @@ async function registryTasks(url) {
       `SELECT t.id, t.project, t.type, t.priority, t.request, t.created_at, t.session_id, t.recette_status,
          ${latestStatusSubquery()} AS status,
          (SELECT attempt FROM executions e WHERE e.task_id = t.id ORDER BY attempt DESC LIMIT 1) AS attempt,
-         (SELECT rework_count FROM executions e WHERE e.task_id = t.id ORDER BY attempt DESC LIMIT 1) AS rework_count,
-         (SELECT STRING_AGG(w.branch, ',') FROM worktrees w WHERE w.task_id = t.id) AS branches
+         (SELECT rework_count FROM executions e WHERE e.task_id = t.id ORDER BY attempt DESC LIMIT 1) AS rework_count
        FROM tasks t ORDER BY t.created_at DESC`,
     );
-    rows = res.rows
-      .filter((r) => !archived.has(r.id))
-      .map((r) => ({ ...r, branches: r.branches ? r.branches.split(",") : [] }));
+    rows = res.rows.filter((r) => !archived.has(r.id));
   } catch {
     rows = [];
   }
@@ -131,12 +125,11 @@ async function registryTaskDetail(id) {
   if (!task) return { error: "tâche inconnue" };
   const q = async (sql, params = []) => (await db.query(sql, params).catch(() => ({ rows: [] }))).rows;
   const executions = await q("SELECT * FROM executions WHERE task_id = $1 ORDER BY attempt DESC", [id]);
-  const worktree = await q("SELECT * FROM worktrees WHERE task_id = $1", [id]);
   const events = await q("SELECT * FROM events WHERE task_id = $1 ORDER BY seq DESC LIMIT 200", [id]);
   const deployments = await q("SELECT * FROM deployments WHERE task_id = $1 ORDER BY id DESC", [id]);
   const decisions = await q("SELECT * FROM decisions WHERE task_id = $1 ORDER BY id DESC", [id]);
   const artifacts = await q("SELECT * FROM artifacts WHERE task_id = $1 ORDER BY id DESC", [id]);
-  return { task, executions, worktree, events, deployments, decisions, artifacts, archived: (await archivedTaskIds()).has(id) };
+  return { task, executions, events, deployments, decisions, artifacts, archived: (await archivedTaskIds()).has(id) };
 }
 
 async function snapshotForTask(taskId) {
@@ -154,29 +147,11 @@ async function snapshotForTask(taskId) {
   return {
     executions: await cnt("SELECT COUNT(*) AS n FROM executions WHERE task_id = $1"),
     events: await cnt("SELECT COUNT(*) AS n FROM events WHERE task_id = $1"),
-    worktrees: await cnt("SELECT COUNT(*) AS n FROM worktrees WHERE task_id = $1"),
     deployments: await cnt("SELECT COUNT(*) AS n FROM deployments WHERE task_id = $1"),
     decisions: await cnt("SELECT COUNT(*) AS n FROM decisions WHERE task_id = $1"),
     artifacts: await cnt("SELECT COUNT(*) AS n FROM artifacts WHERE task_id = $1"),
     plans: await plans(),
   };
-}
-
-async function registryWorktrees(url) {
-  const db = registry();
-  const archived = await archivedTaskIds();
-  const project = url.searchParams.get("project");
-  const taskId = url.searchParams.get("taskId");
-  let rows = [];
-  try {
-    const res = await db.query("SELECT * FROM worktrees ORDER BY status, project");
-    rows = res.rows.filter((w) => !archived.has(w.task_id));
-  } catch { rows = []; }
-  if (project) rows = rows.filter((r) => r.project === project);
-  if (taskId) rows = rows.filter((r) => r.task_id === taskId);
-  const now = Date.now();
-  rows = rows.map((w) => ({ ...w, leaseExpired: ["RESERVED", "IN_USE"].includes(w.status) && w.lease_until && new Date(w.lease_until).getTime() < now }));
-  return { worktrees: rows };
 }
 
 async function registryEvents(url) {
@@ -487,7 +462,6 @@ const server = createServer(async (req, res) => {
       }
       return sendJson(res, 200, await registryTaskDetail(taskId));
     }
-    if (path === "/api/worktrees") return sendJson(res, 200, await registryWorktrees(url));
     if (path === "/api/events") return sendJson(res, 200, await registryEvents(url));
     if (path === "/api/deployments") return sendJson(res, 200, await registryDeployments(url));
     if (path === "/api/decisions") return sendJson(res, 200, await registryDecisions(url));

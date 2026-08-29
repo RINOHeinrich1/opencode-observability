@@ -99,7 +99,7 @@ async function renderTasks() {
       <select id="f-status"><option value="">Tous les statuts</option></select>
       <button id="new-task-btn" class="launch-btn">+ Nouvelle tâche</button>
     </div>
-    <table><thead><tr><th></th><th>ID</th><th>Projet</th><th>Type</th><th>Priorité</th><th>Statut</th><th>Recette</th><th>Branche</th><th>Demande</th><th>Session</th><th>Actions</th></tr></thead>
+    <table><thead><tr><th></th><th>ID</th><th>Projet</th><th>Type</th><th>Priorité</th><th>Statut</th><th>Recette</th><th>Demande</th><th>Session</th><th>Actions</th></tr></thead>
     <tbody id="tasks-body"></tbody></table>`;
   const statuses = [...new Set(tasks.map((t) => t.status || 'queued'))];
   document.getElementById('f-status').innerHTML = `<option value="">Tous les statuts</option>` + statuses.map((s) => `<option>${esc(s)}</option>`).join('');
@@ -119,7 +119,6 @@ async function renderTasks() {
         <td>${esc(t.priority)}</td>
         <td>${badge(t.status)}</td>
         <td>${recetteBadge(t.recette_status)}</td>
-        <td class="code">${esc((t.branches || []).join(', ') || '—')}</td>
         <td>${esc((t.request || '').slice(0, 70))}</td>
         <td>${sessionLink(t.session_id)}</td>
         <td>${detailsButtons(t)}</td>
@@ -127,7 +126,7 @@ async function renderTasks() {
       const children = subs.map((s) => `
         <tr class="subtask-row" data-child="${esc(t.id)}" hidden>
           <td></td>
-          <td colspan="10">
+          <td colspan="9">
             <div class="subtask">
               <span class="tree-branch">↳</span>
               <code>${esc(s.planId)}</code>
@@ -259,7 +258,6 @@ function snapshotList(snap) {
     ['Événements', snap.events],
     ['Documents', snap.artifacts],
     ['Plans', snap.plans],
-    ['Worktrees', snap.worktrees],
     ['Déploiements', snap.deployments],
     ['Décisions', snap.decisions],
   ];
@@ -272,7 +270,6 @@ function snapshotSummary(snap) {
   if (snap.events) parts.push(`${snap.events} évt`);
   if (snap.artifacts) parts.push(`${snap.artifacts} doc`);
   if (snap.plans) parts.push(`${snap.plans} plans`);
-  if (snap.worktrees) parts.push(`${snap.worktrees} WT`);
   if (snap.deployments) parts.push(`${snap.deployments} dép`);
   if (snap.decisions) parts.push(`${snap.decisions} déc`);
   return parts.join(' · ') || '—';
@@ -383,7 +380,7 @@ async function renderArchives() {
   const archives = data.archives || [];
   document.getElementById('pane-archives').innerHTML = `
     <h2>Archives</h2>
-    <p class="muted-sm">Une tâche archivée masque aussi tous les éléments qui lui sont rattachés (événements, documents, worktrees, déploiements, décisions).</p>
+    <p class="muted-sm">Une tâche archivée masque aussi tous les éléments qui lui sont rattachés (événements, documents, déploiements, décisions).</p>
     <table><thead><tr><th>Tâche</th><th>Projet</th><th>Type</th><th>Demande</th><th>Contenu archivé</th><th>Archivée le</th><th>Par</th><th></th></tr></thead>
     <tbody>${archives.map((a) => `<tr><td class="code">${esc(a.task_id)}</td><td>${esc(a.task?.project || '—')}</td><td>${esc(a.task?.type || '—')}</td><td>${esc((a.task?.request || '').slice(0, 70))}</td><td class="muted-sm">${esc(snapshotSummary(a.snapshot))}</td><td class="code">${esc((a.archived_at || '').replace('T', ' ').slice(0, 19))}</td><td>${esc(a.archived_by || '—')}</td><td>${ME && ME.is_admin ? `<div class="icon-actions"><button class="icon-btn" data-restore="${esc(a.task_id)}">Restaurer</button><button class="icon-btn danger-btn" data-delete="${esc(a.task_id)}">Supprimer</button></div>` : ''}</td></tr>`).join('') || '<tr><td colspan="8" class="muted">Aucune tâche archivée</td></tr>'}</tbody></table>`;
   document.querySelectorAll('[data-restore]').forEach((b) => b.addEventListener('click', () => openRestoreConfirm(b.dataset.restore, archives.find((a) => a.task_id === b.dataset.restore))));
@@ -668,14 +665,12 @@ async function taskActionsModal(taskId) {
   const recette = task.recette_status || 'pending';
   const decisions = detail.decisions || [];
   const awaiting = decisions.filter((d) => d.status === 'awaiting' && d.kind !== 'permission' && d.kind !== 'recette');
-  const branches = (detail.worktree || []).map((w) => w.branch).filter(Boolean);
 
   showModal(`
     <div class="modal modal-wide">
       <h2>Actions — <span class="code">${esc(taskId)}</span></h2>
       <p class="muted">${esc(task.request || '')}</p>
       <p class="muted-sm">Projet <span class="code">${esc(task.project)}</span> · Type <span class="code">${esc(task.type)}</span> · ${badge(status)} · Recette ${recetteBadge(recette)}</p>
-      <p class="muted-sm">Branches : <span class="code">${esc(branches.join(', ') || '—')}</span></p>
 
       ${awaiting.length ? `
       <div class="actions-section">
@@ -738,7 +733,7 @@ async function taskActionsModal(taskId) {
   if (archive) archive.onclick = () => { closeModal(); openArchiveConfirm(taskId); };
   const kill = document.getElementById('act-kill');
   if (kill) kill.onclick = () => {
-    if (!confirm('Arrêter la session ? (process tué + session supprimée + tâche abandonnée + worktree libéré)')) return;
+    if (!confirm('Arrêter la session ? (process tué + session supprimée + tâche abandonnée)')) return;
     closeModal();
     api(`/api/tasks/${encodeURIComponent(taskId)}/kill-session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
       .then((r) => { alert('Session arrêtée.' + (r.aborted ? ' Tâche abandonnée.' : '')); refreshActive(); })
@@ -776,7 +771,7 @@ async function launchTaskModal(taskId) {
     <div class="modal">
       <h2>Lancer la tâche</h2>
       <p class="muted">Tâche <span class="code">${esc(taskId)}</span></p>
-      <p>Une session de l'agent orchestrateur sera ouverte (mission + cadre). Le worktree et la branche sont gérés en interne par l'orchestrateur.</p>
+      <p>Une session de l'agent orchestrateur sera ouverte (mission + cadre).</p>
       <div class="modal-actions">
         <button class="ghost" id="modal-cancel">Annuler</button>
         <button class="launch-btn" id="modal-confirm">Lancer</button>

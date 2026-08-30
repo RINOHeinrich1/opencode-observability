@@ -7,6 +7,22 @@ let lastUpdated = null;
 let taskFilter = '';     // tâche sélectionnée comme filtre ('' = aucune)
 let SESSION_BASE_URL = 'https://dev.madatalk.fr'; // base des liens de session opencode
 
+// Agents mobilisés par type de tâche (affichage read-only au lancement).
+const AGENTS_BY_TYPE = {
+  feature: [
+    { name: 'atomic-plan', role: 'Planner — planification' },
+    { name: 'build-notify', role: 'Executor — exécution' },
+  ],
+  debug: [
+    { name: 'atomic-plan', role: 'Planner — planification' },
+    { name: 'build-notify', role: 'Executor — exécution' },
+  ],
+  audit: [
+    { name: 'hexagonal-architecture-auditor', role: 'Audit backend (hexagonal)' },
+    { name: 'clean-arch-detector-react', role: 'Audit frontend (React)' },
+  ],
+};
+
 async function api(path, opts) {
   const r = await fetch(path, opts);
   if (r.status === 401) { window.location.href = '/login'; throw new Error('unauthorized'); }
@@ -543,12 +559,17 @@ function agentCard(a) {
   const perms = (a.permission || []).map((p) => `<span class="perm" title="${esc(p.value)}">${esc(p.tool)} ${permBadge(p.value)}</span>`).join('');
   const meta = [
     a.mode ? `<span class="badge">${esc(a.mode)}</span>` : '',
-    a.model ? `<span class="code muted-sm">${esc(a.model)}</span>` : '',
   ].filter(Boolean).join(' ');
   const full = [a.description, a.body].filter(Boolean).join('\n\n');
+  const modelRow = `<div class="eco-model-row">
+    <span class="muted-sm">Modèle</span>
+    <code class="muted-sm">${esc(a.model || '—')}</code>
+    <button class="ghost eco-model-btn" data-edit-model="${esc(a.name)}" data-model="${esc(a.model || '')}">Modifier</button>
+  </div>`;
   return `<article class="eco-card">
     <div class="eco-card-head"><strong>${esc(a.name)}</strong>${meta}</div>
     ${descBlock(a.name, a.description, full)}
+    ${modelRow}
     ${perms ? `<div class="eco-perms">${perms}</div>` : ''}
   </article>`;
 }
@@ -591,6 +612,38 @@ async function renderEcosystem() {
     ${section('Skills', e.skills.length, e.skills.map(skillCard).join('') || '<p class="muted">Aucun skill</p>')}
     ${section('Plugins', e.plugins.length, e.plugins.map(pluginCard).join('') || '<p class="muted">Aucun plugin</p>')}`;
   document.querySelectorAll('#pane-ecosystem [data-eco]').forEach((b) => b.addEventListener('click', () => openEcoModal(b.dataset.eco)));
+  document.querySelectorAll('#pane-ecosystem [data-edit-model]').forEach((b) => b.addEventListener('click', () => editAgentModelModal(b.dataset.editModel, b.dataset.model)));
+}
+
+// --- Édition globale du modèle d'un agent (Écosystème) ----------------------
+async function editAgentModelModal(name, currentModel) {
+  let models = [];
+  try { models = (await api('/api/models')).models || []; } catch {}
+  let opts = models.map((m) => `<option value="${esc(m)}" ${m === currentModel ? 'selected' : ''}>${esc(m)}</option>`).join('');
+  if (currentModel && !models.includes(currentModel)) {
+    opts = `<option value="${esc(currentModel)}" selected>${esc(currentModel)}</option>` + opts;
+  }
+  showModal(`
+    <div class="modal">
+      <h2>Modèle — <span class="code">${esc(name)}</span></h2>
+      <p class="muted-sm">Modification <strong>globale</strong> du modèle de cet agent (s'applique à toutes les tâches futures).</p>
+      <select id="agent-model-select" class="model-select">${opts}</select>
+      <div class="modal-actions">
+        <button class="ghost" id="modal-cancel">Annuler</button>
+        <button class="launch-btn" id="modal-confirm">Enregistrer</button>
+      </div>
+      <div id="model-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('modal-confirm').onclick = async () => {
+    const model = document.getElementById('agent-model-select').value;
+    const msg = document.getElementById('model-msg');
+    try {
+      await api(`/api/agents/${encodeURIComponent(name)}/model`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model }) });
+      closeModal();
+      refreshActive();
+    } catch (e) { msg.textContent = e.message; msg.className = 'msg error'; }
+  };
 }
 
 // --- Projets (cartes + CRUD) ----------------------------------------------
@@ -843,11 +896,37 @@ async function taskActionsModal(taskId) {
   });
 }
 
+async function launchAgents(type) {
+  let eco = { agents: [] };
+  try { eco = await api('/api/ecosystem'); } catch {}
+  const byName = {};
+  (eco.agents || []).forEach((a) => { byName[a.name] = a; });
+  const list = [{ name: 'orchestrator', role: 'Coordinateur (orchestration)' }, ...(AGENTS_BY_TYPE[type] || [])];
+  return list.map((n) => ({ name: n.name, role: n.role, model: byName[n.name] ? byName[n.name].model : null }));
+}
+
 async function launchTaskModal(taskId) {
+  let task = {}, agents = [];
+  try {
+    const d = await api(`/api/tasks/${encodeURIComponent(taskId)}`);
+    task = d.task || {};
+    agents = await launchAgents(task.type);
+  } catch {}
+  const rows = agents.map((a) => `
+    <div class="agent-model-row">
+      <code>${esc(a.name)}</code>
+      <span class="muted-sm">${esc(a.role || '')}</span>
+      <span class="muted-sm">→</span>
+      <code class="muted-sm">${esc(a.model || '—')}</code>
+    </div>`).join('') || '<p class="muted-sm">Aucun agent identifié pour ce type.</p>';
   showModal(`
     <div class="modal">
       <h2>Lancer la tâche</h2>
-      <p class="muted">Tâche <span class="code">${esc(taskId)}</span></p>
+      <p class="muted">Tâche <span class="code">${esc(taskId)}</span> · type <span class="code">${esc(task.type || '—')}</span></p>
+      <div class="actions-section">
+        <h3>Agents mobilisés et modèles (read-only)</h3>
+        ${rows}
+      </div>
       <p>Une session de l'agent orchestrateur sera ouverte (mission + cadre).</p>
       <div class="modal-actions">
         <button class="ghost" id="modal-cancel">Annuler</button>

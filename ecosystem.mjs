@@ -1,7 +1,7 @@
 // ecosystem.mjs — Découverte DYNAMIQUE de l'écosystème OpenCode.
 // Analyse à la demande le répertoire de configuration OpenCode (agents, MCP,
 // skills, plugins) sans rien coder en dur : le panneau reflète l'état réel.
-import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { join, basename, dirname } from "node:path";
 import { homedir } from "node:os";
 
@@ -203,6 +203,7 @@ export function scanEcosystem() {
     const fm = parseFrontmatter(raw);
     result.agents.push({
       name,
+      file,
       description: typeof fm.description === "string" ? fm.description : "",
       body: bodyAfterFrontmatter(raw),
       mode: typeof fm.mode === "string" ? fm.mode : null,
@@ -261,4 +262,39 @@ export function scanEcosystem() {
   }
 
   return result;
+}
+
+// --- Édition globale du modèle d'un agent -----------------------------------
+
+// Retrouve le chemin du fichier frontmatter d'un agent à partir de son nom.
+export function findAgentFile(name) {
+  const agentDir = join(OPENCODE_DIR, "agent");
+  for (const file of listMdFiles(agentDir, true)) {
+    const n = basename(file, ".md") === "agent" ? basename(dirname(file)) : basename(file, ".md");
+    if (n === name) return file;
+  }
+  return null;
+}
+
+// Remplace (ou insère) une clé scalaire dans le frontmatter YAML d'un fichier.
+function setFrontmatterField(text, key, value) {
+  const m = /^---\s*\r?\n([\s\S]*?)\r?\n---/.exec(text);
+  if (!m) return text;
+  const fm = m[1];
+  const lineRe = new RegExp(`^([ \\t]*)${key}:[ \\t]*[^\\r\\n]*$`, "m");
+  const newFm = lineRe.test(fm)
+    ? fm.replace(lineRe, `$1${key}: ${value}`)
+    : `${key}: ${value}\n` + fm;
+  return text.replace(fm, newFm);
+}
+
+// Met à jour globalement le modèle d'un agent (réécrit `model:` dans son frontmatter).
+export function updateAgentModel(name, model) {
+  const file = findAgentFile(name);
+  if (!file) throw new Error(`agent inconnu : ${name}`);
+  const raw = readFileSync(file, "utf8");
+  const updated = setFrontmatterField(raw, "model", model);
+  if (updated === raw) throw new Error(`frontmatter introuvable pour l'agent : ${name}`);
+  writeFileSync(file, updated);
+  return { name, model, file };
 }

@@ -5,10 +5,11 @@ import { createServer } from "node:http";
 import { readFileSync, existsSync, statSync, createReadStream } from "node:fs";
 import { join, dirname, extname, normalize, basename } from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 import pg from "pg";
 import { openDb, getUserByUsername, verifyPassword, createUser, listUsers, updatePassword, deleteUser, createSession, deleteSession, pruneSessions, listArchives, archivedTaskIds, archiveTask, restoreTask, getArchive, removeArchive } from "./panel-db.mjs";
 import { currentUser, sessionToken, cookieHeader, clearCookieHeader } from "./auth.mjs";
-import { scanEcosystem } from "./ecosystem.mjs";
+import { scanEcosystem, updateAgentModel } from "./ecosystem.mjs";
 import { loadEnv } from "./env.mjs";
 import * as pilot from "./pilot.mjs";
 import { marked } from "marked";
@@ -22,6 +23,23 @@ loadEnv();
 const DATABASE_URL = process.env.DATABASE_URL || "postgres://orchestrator:orchestrator@localhost:5432/task_registry";
 const REFRESH_S = Math.max(10, Number(process.env.PANEL_REFRESH_S) || 10);
 const SESSION_BASE_URL = process.env.SESSION_BASE_URL || "https://dev.madatalk.fr";
+const OPENCODE_BIN = process.env.OPENCODE_BIN || "/root/.opencode/bin/opencode";
+
+// Liste des modèles disponibles (fournisseur/modèle), depuis `opencode models`,
+// mise en cache 5 minutes.
+let _modelsCache = { at: 0, models: [] };
+function listModels() {
+  const now = Date.now();
+  if (_modelsCache.models.length && now - _modelsCache.at < 5 * 60 * 1000) return _modelsCache.models;
+  try {
+    const out = execFileSync(OPENCODE_BIN, ["models"], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024, timeout: 15000 });
+    const models = out.split("\n").map((l) => l.trim()).filter((l) => l && l.includes("/"));
+    _modelsCache = { at: now, models };
+  } catch {
+    /* conserve le cache précédent (éventuellement vide) */
+  }
+  return _modelsCache.models;
+}
 
 // --- helpers HTTP ----------------------------------------------------------
 function sendJson(res, code, obj) {
@@ -467,6 +485,21 @@ const server = createServer(async (req, res) => {
 
     if (path === "/api/me") return sendJson(res, 200, { user });
     if (path === "/api/ecosystem") return sendJson(res, 200, scanEcosystem());
+    if (path === "/api/models" && req.method === "GET") return sendJson(res, 200, { models: listModels() });
+    const agentModelMatch = path.match(/^\/api\/agents\/([^/]+)\/model$/);
+    if (agentModelMatch && req.method === "POST") {
+      const b = await readBody(req);
+      const model = String(b.model || "").trim();
+      if (!model || model.length > 200 || !model.includes("/")) {
+        return sendJson(res, 400, { error: "modèle invalide (format fournisseur/modèle)" });
+      }
+      try {
+        const r = updateAgentModel(agentModelMatch[1], model);
+        return sendJson(res, 200, { ok: true, ...r });
+      } catch (e) {
+        return sendJson(res, 400, { error: String((e && e.message) || e) });
+      }
+    }
     if (path === "/api/config") return sendJson(res, 200, { refreshSeconds: REFRESH_S, sessionBaseUrl: SESSION_BASE_URL });
     if (path === "/api/stats") return sendJson(res, 200, await registryStats());
 

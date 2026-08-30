@@ -494,3 +494,10 @@ button.launch-btn, button.approve { background: var(--green); }
 .diff-del { background: rgba(229, 83, 75, 0.12); color: #f0b3ae; }
 .diff-hunk { color: var(--accent); }
 .diff-hdr { color: var(--muted); }
+
+/* ===== Écosystème : modèle d'agent ===== */
+.eco-model-row { display: flex; gap: 8px; align-items: center; margin: 6px 0; flex-wrap: wrap; }
+button.eco-model-btn { color: var(--accent); padding: 2px 8px; font-size: 11px; }
+.agent-model-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 6px 0; border-bottom: 1px dashed var(--border); }
+.agent-model-row:last-child { border-bottom: 0; }
+select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }

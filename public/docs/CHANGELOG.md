@@ -5,6 +5,40 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.2.0 — 2026-08-30 · Dashboard Observabilité (KPI Phase 1)
+
+**Objectif** : répondre en quelques secondes à « combien de tâches ? À quelle
+vitesse ? Avec quelle qualité ? Quels agents posent problème ? Quel coût ? »
+via un dashboard système **Flow + Orchestration + Agents + Quality**.
+
+### Changements (panneau `opencode-observability`)
+
+- **Nouvel onglet « Observabilité »** dans le panneau :
+  - **9 KPI cards** : tâches, terminées, en cours, Lead Time moyen / P95,
+    Cycle Time moyen, **Success Rate** (définition : `done` **ET** recette
+    approuvée), Throughput (tâches done / jour), Rework Rate.
+  - **4 graphiques Chart.js** : évolution du Lead Time (P50 / moyen / P95),
+    histogramme de répartition du Lead Time, statut des tâches (bar chart
+    horizontal), Throughput (aire).
+  - **Table de performance des agents** : tâches, succès %, durée moyenne / P95,
+    retries, blocages, échecs (attribution via `events.by`, partielle sur
+    l'historique — événements génériques regroupés « non attribué »).
+  - **Coûts & tokens** : totaux + coût/tokens par tâche et par agent
+    (via `opencode export`, déjà utilisé par le panneau).
+- **Backend** : module `metrics.mjs` (agrégations SQL sur `task_registry`) +
+  endpoints `GET /api/metrics/{summary,status,throughput,leadtime,agents,costs}` ;
+  refactor du calcul d'usage dans `usage.mjs` (réutilisé par `server.mjs`).
+- **Chart.js v4.4.3 vendu localement** (`public/vendor/chart.umd.js`) — aucune
+  dépendance CDN.
+- Critères : `Success = done ET recette approved` ; tâches `done` sans recette
+  = « non évaluées ».
+
+### Dépôts impactés
+
+`opencode-observability` (panneau + docs). Aucune migration de schéma requise.
+
+---
+
 ## v0.1.0 — 2026-08-30 · Notification centralisée par changements d'état
 
 **Objectif** : les agents et sous-agents n'envoient **plus d'email directement**

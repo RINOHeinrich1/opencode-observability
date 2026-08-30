@@ -27,6 +27,7 @@
   </header>
   <nav id="tabs">
     <button data-tab="overview" class="active">Vue d'ensemble</button>
+    <button data-tab="observability">Observabilité</button>
     <button data-tab="projects">Projets</button>
     <button data-tab="tasks">Tâches</button>
     <button data-tab="events">Événements</button>
@@ -41,6 +42,7 @@
 
   <main>
     <section id="pane-overview" class="pane active"></section>
+    <section id="pane-observability" class="pane"></section>
     <section id="pane-projects" class="pane"></section>
     <section id="pane-tasks" class="pane"></section>
     <section id="pane-events" class="pane"></section>
@@ -55,6 +57,7 @@
 
   <div id="modal-backdrop" class="modal-backdrop" hidden></div>
 
+  <script src="/vendor/chart.umd.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

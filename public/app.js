@@ -1082,8 +1082,164 @@ async function recetteTaskModal(taskId) {
 }
 
 // --- Navigation ------------------------------------------------------------
+// --- Observabilité / KPI (v0.2.0) --------------------------------------------
+const obsCharts = {}; // instances Chart.js à détruire avant re-rendu
+
+function fmtMin(m) {
+  if (m == null || isNaN(m)) return '—';
+  if (m < 60) return Math.round(m) + ' min';
+  return (m / 60).toFixed(1).replace('.', ',') + ' h';
+}
+
+function fmtMoney(v) {
+  if (v == null || isNaN(v)) return '—';
+  return v.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 });
+}
+
+function fmtTokens(v) {
+  if (v == null || isNaN(v)) return '—';
+  if (v >= 1e6) return (v / 1e6).toFixed(1).replace('.', ',') + ' M';
+  if (v >= 1e3) return (v / 1e3).toFixed(0) + ' K';
+  return String(v);
+}
+
+function destroyObsCharts() {
+  for (const k of Object.keys(obsCharts)) {
+    try { obsCharts[k].destroy(); } catch {}
+    delete obsCharts[k];
+  }
+}
+
+function obsCanvas(id) {
+  return `<div class="chart-box"><canvas id="${id}" height="220"></canvas></div>`;
+}
+
+function kpiCard(label, value, sub, cls) {
+  return `<div class="kpi-card${cls ? ' ' + cls : ''}"><div class="kpi-label">${esc(label)}</div><div class="kpi-value">${esc(String(value))}</div>${sub ? `<div class="kpi-sub">${esc(String(sub))}</div>` : ''}</div>`;
+}
+
+async function renderObservability() {
+  const pane = document.getElementById('pane-observability');
+  pane.innerHTML = `<h2>Observabilité — KPI du système</h2><p class="muted">Flow · Orchestration · Agents · Quality (Phase 1 — v0.2.0)</p><p class="muted">Chargement…</p>`;
+  try {
+    const [summary, statusData, throughputData, leadtimeData, agentsData, costsData] = await Promise.all([
+      api('/api/metrics/summary'),
+      api('/api/metrics/status'),
+      api('/api/metrics/throughput?days=14'),
+      api('/api/metrics/leadtime?days=14'),
+      api('/api/metrics/agents'),
+      api('/api/metrics/costs'),
+    ]);
+
+    destroyObsCharts();
+    pane.innerHTML = `
+      <h2>Observabilité — KPI du système</h2>
+
+      <div class="kpi-grid">
+        ${kpiCard('Tâches', summary.total, 'au total')}
+        ${kpiCard('Terminées', summary.completed, 'statut done')}
+        ${kpiCard('En cours', summary.inProgress, summary.blocked ? `dont ${summary.blocked} bloquée(s)` : 'aucune bloquée')}
+        ${kpiCard('Lead Time moyen', fmtMin(summary.leadTimeAvg), 'demande → terminé')}
+        ${kpiCard('Lead Time P95', fmtMin(summary.leadTimeP95), 'expérience des tâches lentes')}
+        ${kpiCard('Cycle Time moyen', fmtMin(summary.cycleTimeAvg), 'exécution → terminé')}
+        ${kpiCard('Success Rate', (summary.successRate ?? 0) + ' %', `${summary.successCount}/${summary.completed} done + recette approuvée`)}
+        ${kpiCard('Throughput', summary.throughput, 'tâches / jour (7 j)')}
+        ${kpiCard('Rework Rate', (summary.reworkRate ?? 0) + ' %', 'reprises / rejets')}
+      </div>
+
+      <div class="obs-row">
+        <div class="obs-panel">
+          <h3>Évolution du Lead Time (P50 / moyen / P95, min)</h3>
+          ${obsCanvas('obs-leadtime')}
+        </div>
+        <div class="obs-panel">
+          <h3>Répartition du Lead Time</h3>
+          ${obsCanvas('obs-hist')}
+        </div>
+      </div>
+
+      <div class="obs-row">
+        <div class="obs-panel">
+          <h3>Statut des tâches</h3>
+          ${obsCanvas('obs-status')}
+        </div>
+        <div class="obs-panel">
+          <h3>Throughput (tâches done / jour)</h3>
+          ${obsCanvas('obs-throughput')}
+        </div>
+      </div>
+
+      <div class="obs-panel">
+        <h3>Performance des agents</h3>
+        <div class="table-scroll">
+        <table>
+          <thead><tr><th>Agent</th><th>Tâches</th><th>Succès</th><th>Durée moy.</th><th>P95</th><th>Retries</th><th>Blocages</th><th>Échecs</th></tr></thead>
+          <tbody>${agentsData.map((a) => `<tr>
+            <td>${esc(a.agent)}</td><td>${a.tasks}</td>
+            <td>${a.successRate} %</td>
+            <td>${fmtMin(a.avgDuration)}</td>
+            <td>${fmtMin(a.p95Duration)}</td>
+            <td>${a.retry}</td><td>${a.blocks}</td><td>${a.failed}</td>
+          </tr>`).join('') || '<tr><td colspan="8" class="muted">Aucune donnée</td></tr>'}</tbody>
+        </table>
+        </div>
+        <p class="muted">Attribution partielle sur l'historique (événements génériques regroupés sous « agent (non attribué) »). Durée = intervalle entre le 1er et le dernier événement de l'agent sur la tâche.</p>
+      </div>
+
+      <div class="obs-panel">
+        <h3>Coûts &amp; tokens</h3>
+        <div class="kpi-grid">
+          ${kpiCard('Tokens consommés', fmtTokens((costsData.total?.tokens?.input || 0) + (costsData.total?.tokens?.output || 0)), 'entrée + sortie')}
+          ${kpiCard('Coût total', fmtMoney(costsData.total?.cost), '')}
+          ${kpiCard('Coût / tâche', fmtMoney(costsData.avgPerTask?.cost), `${costsData.perTask?.length || 0} tâche(s)`) }
+          ${kpiCard('Tokens / tâche', fmtTokens(costsData.avgPerTask?.tokens), '')}
+        </div>
+        ${(costsData.byAgent || []).length ? `<div class="table-scroll"><table>
+          <thead><tr><th>Agent</th><th>Tokens</th><th>Coût</th></tr></thead>
+          <tbody>${costsData.byAgent.map((a) => `<tr><td>${esc(a.agent)}</td><td>${fmtTokens(a.input + a.output)}</td><td>${fmtMoney(a.cost)}</td></tr>`).join('')}</tbody>
+        </table></div>` : '<p class="muted">Aucun coût mesuré (opencode export indisponible).</p>'}
+      </div>
+    `;
+
+    // --- Graphiques Chart.js ---
+    if (window.Chart) {
+      const labels = leadtimeData.series.map((d) => d.day.slice(5));
+      obsCharts.leadtime = new Chart(document.getElementById('obs-leadtime'), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            { label: 'P50', data: leadtimeData.series.map((d) => d.p50), borderColor: '#2f9e44', tension: 0.3 },
+            { label: 'Moyenne', data: leadtimeData.series.map((d) => d.avg), borderColor: '#1971c2', tension: 0.3 },
+            { label: 'P95', data: leadtimeData.series.map((d) => d.p95), borderColor: '#e8590c', tension: 0.3 },
+          ],
+        },
+        options: { plugins: { legend: { labels: { boxWidth: 12 } } }, scales: { y: { title: { display: true, text: 'minutes' } } } },
+      });
+      obsCharts.hist = new Chart(document.getElementById('obs-hist'), {
+        type: 'bar',
+        data: { labels: leadtimeData.histogram.map((h) => h.label), datasets: [{ label: 'Tâches', data: leadtimeData.histogram.map((h) => h.count), backgroundColor: '#4dabf7' }] },
+        options: { plugins: { legend: { display: false } } },
+      });
+      obsCharts.status = new Chart(document.getElementById('obs-status'), {
+        type: 'bar',
+        data: { labels: statusData.map((s) => s.status), datasets: [{ label: 'Tâches', data: statusData.map((s) => s.count), backgroundColor: '#40c057' }] },
+        options: { indexAxis: 'y', plugins: { legend: { display: false } } },
+      });
+      obsCharts.throughput = new Chart(document.getElementById('obs-throughput'), {
+        type: 'line',
+        data: { labels: throughputData.map((d) => d.day.slice(5)), datasets: [{ label: 'done / jour', data: throughputData.map((d) => d.done), borderColor: '#7048e8', backgroundColor: 'rgba(112,72,232,0.15)', fill: true, tension: 0.3 }] },
+        options: { plugins: { legend: { display: false } } },
+      });
+    }
+  } catch (e) {
+    if (e && e.message === 'unauthorized') return;
+    pane.innerHTML = `<h2>Observabilité — KPI du système</h2><p class="danger">Erreur de chargement : ${esc(e.message || e)}</p>`;
+  }
+}
+
 const RENDER = {
-  overview: renderOverview, projects: renderProjects, tasks: renderTasks,
+  overview: renderOverview, observability: renderObservability, projects: renderProjects, tasks: renderTasks,
   events: renderEvents, deployments: renderDeployments, decisions: renderDecisions, artifacts: renderArtifacts, plans: renderPlans, archives: renderArchives, ecosystem: renderEcosystem, users: renderUsers,
 };
 

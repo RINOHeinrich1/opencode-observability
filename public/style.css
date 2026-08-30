@@ -514,3 +514,15 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 .metric.cost .val { color: var(--yellow); }
 .cons-models { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
 .cons-model-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* ===== Observabilité / KPI (v0.2.0) ===== */
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 14px 0; }
+.kpi-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
+.kpi-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
+.kpi-value { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.kpi-sub { color: var(--muted); font-size: 11px; }
+.obs-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 14px 0; }
+.obs-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin: 14px 0; }
+.obs-panel h3 { margin: 0 0 10px; font-size: 14px; }
+.chart-box { position: relative; min-height: 220px; }
+@media (max-width: 900px) { .obs-row { grid-template-columns: 1fr; } }

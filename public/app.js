@@ -344,6 +344,50 @@ async function renderPlanCommitsModal(planId) {
   }));
 }
 
+// --- Consommation (usage par session et par modèle) -------------------------
+const KIND_LABEL = { launch: 'Lancement', rework: 'Reprise (nouvelle session)', relaunch: 'Relance' };
+
+function fmtNum(n) {
+  return Number(n || 0).toLocaleString('fr-FR');
+}
+function fmtCost(n) {
+  return '$' + Number(n || 0).toFixed(2);
+}
+function tokenChips(t, cost) {
+  const t_ = t || {};
+  const chip = (lbl, v, cls) => `<span class="metric ${cls || ''}"><span class="lbl">${lbl}</span><span class="val">${v}</span></span>`;
+  return chip('input', fmtNum(t_.input)) + chip('output', fmtNum(t_.output)) + chip('reasoning', fmtNum(t_.reasoning)) + chip('cache', fmtNum(t_.cacheRead)) + chip('coût', fmtCost(cost), 'cost');
+}
+
+async function renderConsumptionModal(taskId) {
+  let data;
+  try { data = await api(`/api/tasks/${encodeURIComponent(taskId)}/consumption`); }
+  catch (e) { alert('Impossible de charger la consommation : ' + (e.message || e)); return; }
+  const total = data.total || { tokens: {}, cost: 0 };
+  const sessions = data.sessions || [];
+  const sessionRows = sessions.map((s) => `
+    <div class="cons-session">
+      <div class="cons-head">
+        <strong>${esc(KIND_LABEL[s.kind] || s.kind || 'Session')}</strong>
+        <code class="muted-sm">${esc(s.sessionId || '—')}</code>
+        ${s.createdAt ? `<span class="muted-sm">${esc((s.createdAt || '').replace('T', ' ').slice(0, 19))}</span>` : ''}
+      </div>
+      <div class="cons-chips">${tokenChips(s.tokens, s.cost)}</div>
+      ${(s.models && s.models.length) ? `<div class="cons-models">${s.models.map((m) => `<div class="cons-model-row"><code>${esc(m.model)}</code><span class="muted-sm">in ${fmtNum(m.input)} · out ${fmtNum(m.output)} · reason ${fmtNum(m.reasoning)} · cache ${fmtNum(m.cacheRead)} · ${fmtCost(m.cost)}</span></div>`).join('')}</div>` : '<div class="muted-sm">aucune donnée de modèle</div>'}
+    </div>`).join('') || '<p class="muted">Aucune session enregistrée pour cette tâche.</p>';
+  showModal(`
+    <div class="modal modal-wide">
+      <h2>Consommation — <span class="code">${esc(taskId)}</span></h2>
+      <div class="cons-total">
+        <strong>Total (toutes sessions)</strong>
+        <div class="cons-chips">${tokenChips(total.tokens, total.cost)}</div>
+      </div>
+      <div class="commit-list">${sessionRows}</div>
+      <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+}
+
 // --- Archivage / restauration ---------------------------------------------
 function snapshotList(snap) {
   const items = [
@@ -844,6 +888,7 @@ async function taskActionsModal(taskId) {
           <button class="ghost" data-goto="deployments">Déploiements</button>
           <button class="ghost" data-goto="decisions">Décisions</button>
           <button class="ghost" data-goto="plans">Plans</button>
+          <button class="ghost" id="act-consumption">Consommation</button>
         </div>
       </div>
 
@@ -861,6 +906,8 @@ async function taskActionsModal(taskId) {
   if (recetteBtn) recetteBtn.onclick = () => { closeModal(); recetteTaskModal(taskId); };
   const archive = document.getElementById('act-archive');
   if (archive) archive.onclick = () => { closeModal(); openArchiveConfirm(taskId); };
+  const consumption = document.getElementById('act-consumption');
+  if (consumption) consumption.onclick = () => { closeModal(); renderConsumptionModal(taskId); };
   const kill = document.getElementById('act-kill');
   if (kill) kill.onclick = () => {
     if (!confirm('Arrêter la session ? (process tué + session supprimée + tâche abandonnée)')) return;

@@ -88,7 +88,7 @@ async function projectGitPath(projectId) {
 
 // Lancement d'une tâche : garde atomique anti double-lancement + session orchestrateur.
 // Le worktree/branche sont gérés en interne par l'orchestrateur (pas de sélection ici).
-export async function launchTask({ taskId }) {
+export async function launchTask({ taskId, kind = "launch" }) {
   if (!taskId) throw new Error("taskId requis");
 
   // 1. Lire l'état courant.
@@ -124,7 +124,7 @@ export async function launchTask({ taskId }) {
   const dir = await projectGitPath(task && task.project);
   const { sessionId } = await launchSession({ dir, agent: "orchestrator", prompt, title: `Tâche ${taskId}` });
   if (sessionId) {
-    await taskOrchestrator("task_link_session", { taskId, sessionId });
+    await taskOrchestrator("task_link_session", { taskId, sessionId, kind });
   }
   return { taskId, sessionId };
 }
@@ -153,7 +153,7 @@ export async function reworkTask({ taskId, mode, remarks, by, sessionId }) {
   }
   // choix 3 : nouvelle session vierge
   const { sessionId: newSid } = await launchSession({ dir, agent: "orchestrator", prompt, title: `Reprise ${taskId}` });
-  if (newSid) await taskOrchestrator("task_link_session", { taskId, sessionId: newSid });
+  if (newSid) await taskOrchestrator("task_link_session", { taskId, sessionId: newSid, kind: "rework" });
   return { taskId, sessionId: newSid };
 }
 
@@ -186,5 +186,5 @@ export async function relaunchTask({ taskId }) {
   if (!taskId) throw new Error("taskId requis");
   await taskOrchestrator("task_clear_session", { taskId });
   await taskOrchestrator("task_transition", { taskId, to: "queued", by: "human" });
-  return launchTask({ taskId });
+  return launchTask({ taskId, kind: "relaunch" });
 }

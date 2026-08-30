@@ -501,3 +501,16 @@ button.eco-model-btn { color: var(--accent); padding: 2px 8px; font-size: 11px; 
 .agent-model-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 6px 0; border-bottom: 1px dashed var(--border); }
 .agent-model-row:last-child { border-bottom: 0; }
 select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
+
+/* ===== Consommation (usage par session/modèle) ===== */
+.cons-total { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; background: var(--panel); }
+.cons-total > strong { display: block; margin-bottom: 6px; }
+.cons-session { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+.cons-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+.cons-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.metric { display: inline-flex; align-items: baseline; gap: 4px; background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 5px; padding: 2px 8px; font-size: 12px; }
+.metric .lbl { color: var(--muted); font-size: 11px; text-transform: uppercase; }
+.metric .val { font-variant-numeric: tabular-nums; }
+.metric.cost .val { color: var(--yellow); }
+.cons-models { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.cons-model-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

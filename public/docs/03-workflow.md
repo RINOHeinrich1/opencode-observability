@@ -77,6 +77,16 @@ orchestrator ──▶ task done (tous les plans done)
 humain ──Valider la recette──▶ recette approved/rejected
 ```
 
+## 6. Traçabilité fine : commits + sessions
+
+- **Commits par sous-tâche** : à la fin de chaque plan, `build-notify` publie la trace
+  de ses commits (`plan_commit_add` : sha, branche, message, auteur, fichiers + diff).
+  Le panneau affiche le nombre de commits par plan et leur diff (bouton « commits »).
+  La trace est append-only (les commits d'un rework s'ajoutent, rien n'est effacé).
+- **Sessions par tâche** : chaque session opencode lancée (`launch`/`rework`/`relaunch`)
+  est liée à la tâche (`task_link_session`). La consommation (tokens + coût) est
+  calculée via `opencode export <sessionId>` et affichée dans l'onglet Tâches.
+
 ---
 
 ## English version
@@ -110,3 +120,11 @@ orchestrator plans (`planning`) → atomic-plan produces 2 plans → `awaiting_v
 → human validates both → `planned` (auto) → `in_progress` → build-notify executes 2
 parallel sub-tasks → `validating` → `review` → human approves/rejects each plan
 (independently) → merge/deploy per plan → task `done` → human validates acceptance.
+
+**6. Fine-grained traceability: commits + sessions** — at the end of each plan,
+`build-notify` publishes its commit trace (`plan_commit_add`: sha, branch, message,
+author, files + diff); the panel shows the commit count per plan and their diff
+("commits" button); the trace is append-only (rework commits are added, never erased).
+Each opencode session (`launch`/`rework`/`relaunch`) is linked to the task
+(`task_link_session`); consumption (tokens + cost) is computed via
+`opencode export <sessionId>` and shown in the Tasks tab.

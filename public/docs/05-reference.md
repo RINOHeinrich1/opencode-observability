@@ -10,9 +10,10 @@ Base `task_registry` :
 
 | Table | Rôle | Colonnes clés |
 |---|---|---|
-| `tasks` | Tâche (le « quoi ») | `id`, `request`, `project`, `type`, `priority`, `scope`, `recette_status`, `version` |
+| `tasks` | Tâche (le « quoi ») | `id`, `request`, `project`, `type`, `audit_target`, `priority`, `scope`, `recette_status`, `version` |
 | `projects` | Projet enregistré | `id`, `name`, `workspace`, `git_path` |
 | `executions` | Exécution de la tâche (statut grossier) | `execution_id`, `task_id`, `attempt`, `status` |
+| `task_sessions` | Sessions opencode liées à une tâche (append-only) | `task_id`, `session_id`, `kind`, `created_at` |
 | `plan_executions` | Exécution d'un plan (cycle complet) | `plan_id`, `attempt`, `status` |
 | `plan_commits` | Commits d'un plan (trace append-only, fichiers + diff) | `plan_id`, `sha`, `message`, `files`, `created_at` |
 | `events` | Journal append-only | `event_id`, `task_id`, `type`, `by`, `detail` |
@@ -59,6 +60,11 @@ OPENCODE_SERVER_PASSWORD=…
 plan-manager, audit-manager, coder-workspaces, oniria-arch, react-arch) et les plugins
 (permission-hook, session-env).
 
+**Agents (`~/.config/opencode/agent/*.md`)** : chaque agent déclare `model`, `mode`,
+`permission`. Le modèle peut être surchargé depuis l'onglet **Écosystème** du panneau ;
+au lancement, `session-bridge` force `--model` (opencode met les définitions d'agents
+en cache au démarrage, le `--model` explicite garantit la prise en compte).
+
 **`docker-compose.yml`** : PostgreSQL (voir `04-reproduction.md`).
 
 ## 4. Glossaire
@@ -82,9 +88,10 @@ plan-manager, audit-manager, coder-workspaces, oniria-arch, react-arch) et les p
 
 | Table | Role | Key columns |
 |---|---|---|
-| `tasks` | Task (the "what") | `id`, `request`, `project`, `type`, `priority`, `scope`, `recette_status`, `version` |
+| `tasks` | Task (the "what") | `id`, `request`, `project`, `type`, `audit_target`, `priority`, `scope`, `recette_status`, `version` |
 | `projects` | Registered project | `id`, `name`, `workspace`, `git_path` |
 | `executions` | Task execution (coarse status) | `execution_id`, `task_id`, `attempt`, `status` |
+| `task_sessions` | opencode sessions linked to a task (append-only) | `task_id`, `session_id`, `kind`, `created_at` |
 | `plan_executions` | Plan execution (full cycle) | `plan_id`, `attempt`, `status` |
 | `plan_commits` | Plan commits (append-only trace, files + diff) | `plan_id`, `sha`, `message`, `files`, `created_at` |
 | `events` | Append-only journal | `event_id`, `task_id`, `type`, `by`, `detail` |
@@ -108,8 +115,10 @@ post_deploy_verified → done` (+ `rejected → rework`). **Acceptance**
 (`recette_status`): `pending → approved/rejected`, independent of execution status.
 
 **3. Configuration** — `~/.config/opencode/.env` (`DATABASE_URL`, `PANEL_DATABASE_URL`,
-`OPENCODE_SERVER_PASSWORD`), `opencode.jsonc` (MCP servers + plugins), `docker-compose.yml`
-(PostgreSQL).
+`OPENCODE_SERVER_PASSWORD`), `opencode.jsonc` (MCP servers + plugins), agent `.md` files
+(each declares `model`/`mode`/`permission`; the model can be overridden from the panel's
+**Ecosystem** tab, and `session-bridge` forces `--model` at launch since opencode caches
+agent definitions at startup), `docker-compose.yml` (PostgreSQL).
 
 **4. Glossary** — Task, Plan/sub-task, Decision, Acceptance (recette), Session,
 Worktree, State, Aggregation.

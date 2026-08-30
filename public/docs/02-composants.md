@@ -15,6 +15,8 @@ les tâches, sans jamais écrire directement dans le registre.
 - Authentification (users/sessions, admin), base dédiée `panel` (PostgreSQL).
 - **Lecture seule** du registre (`task_registry`), via `pg` directement.
 - **Écritures** via le MCP `task-orchestrator` (spawn d'un process par appel).
+- **Écosystème** : l'onglet Écosystème liste les agents et permet d'éditer leur `model`
+  globalement (relu au lancement de session via `--model`).
 
 **Onglets** : Vue d'ensemble, Projets, Tâches, Événements, Déploiements, Décisions,
 Documents, Plans, Archives, Écosystème, Utilisateurs.
@@ -31,8 +33,9 @@ Documents, Plans, Archives, Écosystème, Utilisateurs.
 | `resolveDecision` | Approuver/rejeter une décision |
 
 **Session bridge** (`session-bridge.mjs`) : lance une session opencode détachée
-(`opencode run --agent orchestrator --attach http://127.0.0.1:4096`) et capture son
-`sessionId`.
+(`opencode run --agent <agent> --model <model> --attach http://127.0.0.1:4096`) et
+capture son `sessionId`. Le `--model` est relu depuis la définition de l'agent (pour
+forcer le modèle malgré la mise en cache des définitions par opencode).
 
 ## 2. L'agent orchestrator
 
@@ -65,20 +68,27 @@ les agents, ne modifie jamais le code du projet lui-même.
 Les agents read-only ont des permissions `bash` restreintes (commandes de lecture +
 `git` read-only) et n'écrivent jamais dans le code.
 
+Les auditeurs sont délégués selon la **cible** de la tâche (`audit_target`) :
+`backend` → hexagonal-architecture-auditor, `frontend` → clean-arch-detector-react,
+`both` → les deux. `build-notify` publie en fin de sous-tâche la trace de ses commits
+via `plan_commit_add` (sha + fichiers + diff).
+
 ## 4. Le registre de tâches (MCP task-orchestrator + PostgreSQL)
 
 **Rôle** : source de vérité **logique** de l'orchestration. L'état **physique** reste
 Git.
 
 - Base PostgreSQL `task_registry` (migrée depuis SQLite).
-- Tables : `tasks`, `projects`, `executions`, `worktrees`, `events`, `deployments`,
-  `decisions`, `participants`, `artifacts`, `plans`, `plan_steps`, `plan_incidents`,
-  `plan_inconsistencies`, `plan_counters`, `plan_executions`.
+- Tables : `tasks`, `projects`, `executions`, `task_sessions`, `worktrees`, `events`,
+  `deployments`, `decisions`, `participants`, `artifacts`, `plans`, `plan_steps`,
+  `plan_incidents`, `plan_inconsistencies`, `plan_counters`, `plan_executions`,
+  `plan_commits`.
 - **Machines à états** : tâche (phases grossières) + plan (cycle complet) — voir
   `05-reference.md`.
 
 **Outils MCP clés** : `task_register`, `task_transition`, `plan_transition`,
-`task_event`, `decision_request`, `decision_resolve`, `task_recette`, `task_get`, …
+`task_event`, `decision_request`, `decision_resolve`, `task_recette`, `task_get`,
+`task_link_session`, `plan_commit_add`, `plan_commits_list`, …
 
 ## 5. MCP métier & Skills
 
@@ -118,11 +128,13 @@ supervise and pilot tasks, never writing directly to the registry. PM2 process, 
 4000, behind a reverse proxy. Auth (users/sessions), dedicated `panel` database
 (PostgreSQL). Read-only access to the registry (`task_registry`, via `pg`); writes go
 through the MCP `task-orchestrator`. Tabs: Overview, Projects, Tasks, Events,
-Deployments, Decisions, Documents, Plans, Archives, Ecosystem, Users. Pilot functions:
+Deployments, Decisions, Documents, Plans, Archives, Ecosystem, Users. The **Ecosystem**
+tab lists agents and lets you edit their `model` globally. Pilot functions:
 `createTask`, `launchTask` (`queued → started` + orchestrator session), `reworkTask`,
 `killTaskSession`, `relaunchTask`, `resolveRecette`, `resolveDecision`. The session
 bridge (`session-bridge.mjs`) launches a detached opencode session
-(`opencode run --agent orchestrator --attach http://127.0.0.1:4096`).
+(`opencode run --agent <agent> --model <model> --attach http://127.0.0.1:4096`), forcing
+`--model` from the agent definition (opencode caches agent definitions at startup).
 
 **2. Orchestrator agent** — the **single owner of task state transitions**; it
 coordinates agents and never edits project code. Pipeline: register task → resolve
@@ -132,17 +144,20 @@ plan) → closure + acceptance. Principles: mission ≠ method; it decides trans
 agents publish events; it pilots **per plan** (`plan_transition`).
 
 **3. Sub-agents** — `atomic-plan` (atomic-grained planning, read-only),
-`build-notify` (executes plans + email notifications), `hexagonal-architecture-auditor`
-(backend audit), `clean-arch-detector-react` (frontend audit). Read-only agents have
-restricted `bash` permissions (read-only commands + git read-only).
+`build-notify` (executes plans + email notifications; publishes its commit trace via
+`plan_commit_add`), `hexagonal-architecture-auditor` (backend audit),
+`clean-arch-detector-react` (frontend audit). Auditors are delegated according to the
+task's `audit_target` (`backend`/`frontend`/`both`). Read-only agents have restricted
+`bash` permissions (read-only commands + git read-only).
 
 **4. Task registry** (MCP `task-orchestrator` + PostgreSQL) — logical source of truth.
-Tables: `tasks`, `projects`, `executions`, `worktrees`, `events`, `deployments`,
-`decisions`, `participants`, `artifacts`, `plans`, `plan_steps`, `plan_incidents`,
-`plan_inconsistencies`, `plan_counters`, `plan_executions`. Two state machines: task
-(coarse phases) + plan (full cycle). Key tools: `task_register`, `task_transition`,
-`plan_transition`, `task_event`, `decision_request`, `decision_resolve`, `task_recette`,
-`task_get`.
+Tables: `tasks`, `projects`, `executions`, `task_sessions`, `worktrees`, `events`,
+`deployments`, `decisions`, `participants`, `artifacts`, `plans`, `plan_steps`,
+`plan_incidents`, `plan_inconsistencies`, `plan_counters`, `plan_executions`,
+`plan_commits`. Two state machines: task (coarse phases) + plan (full cycle). Key
+tools: `task_register`, `task_transition`, `plan_transition`, `task_event`,
+`decision_request`, `decision_resolve`, `task_recette`, `task_get`, `task_link_session`,
+`plan_commit_add`, `plan_commits_list`.
 
 **5. Business MCP & Skills** — `plan-manager` (plans persistence/tracking),
 `audit-manager` (audit reports treatment, file-based), `coder-workspaces` (Coder

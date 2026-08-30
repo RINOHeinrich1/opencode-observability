@@ -11,7 +11,8 @@
 **FR** — Le framework orchestre des **agents IA** (planification, exécution, audit)
 pour traiter des **tâches** sur des **projets**, avec des garanties fortes :
 
-- **Traçabilité** : chaque tâche, plan, décision, événement est persisté en base.
+- **Traçabilité** : chaque tâche, plan, décision, événement, commit (fichiers + diff)
+  et session (consommation tokens/coût) est persisté en base.
 - **Validation humaine** : des points de contrôle obligatoires (validation de plan,
   review avant merge, recette après déploiement, permissions).
 - **Isolation** : les agents exécutent dans un *workspace Coder* (jamais l'hôte),
@@ -22,7 +23,8 @@ pour traiter des **tâches** sur des **projets**, avec des garanties fortes :
 
 **EN** — The framework orchestrates **AI agents** (planning, execution, audit) to
 process **tasks** on **projects**, with strong guarantees: traceability (everything
-persisted), human validation (mandatory checkpoints), isolation (Coder workspace,
+persisted: tasks, plans, decisions, events, commits with files+diff, sessions with
+consumption), human validation (mandatory checkpoints), isolation (Coder workspace,
 non-root, worktrees), CI/CD (pipeline-only deploys), concurrency (a task can split
 into several **plans** executed in parallel, each with its own lifecycle).
 

@@ -74,10 +74,11 @@ Composants : `schema.sql` (tables), `statemachine.mjs` (machines à états), `db
 > Crée un MCP `task-orchestrator` (Node, MCP SDK, PostgreSQL via `pg`) exposant :
 > task_register, task_get, task_list, task_transition, plan_transition,
 > task_event, events_list, decision_request, decision_resolve, task_recette,
-> participant_add, artifact_add, project_register/list/delete, task_delete.
-> Tables : tasks, projects, executions, worktrees, events, deployments, decisions,
-> participants, artifacts, plans, plan_steps, plan_incidents, plan_inconsistencies,
-> plan_counters, plan_executions.
+> participant_add, artifact_add, project_register/list/delete, task_delete,
+> task_link_session, plan_commit_add, plan_commits_list.
+> Tables : tasks (avec audit_target), projects, executions, task_sessions, worktrees,
+> events, deployments, decisions, participants, artifacts, plans, plan_steps,
+> plan_incidents, plan_inconsistencies, plan_counters, plan_executions, plan_commits.
 > Deux machines à états : tâche (queued→started→planning→awaiting_validation→planned
 > →in_progress→done) et plan (planned→in_progress→validating→review→approved→
 > merge_pending→merged→deploy…→done).
@@ -116,14 +117,16 @@ Node (`server.mjs` + `pilot.mjs` + `session-bridge.mjs` + `public/`), PM2.
 > ```
 > Crée un panneau web Node de supervision d'orchestrateur : lecture seule du registre
 > PostgreSQL, endpoints REST (tasks, plans, decisions, deployments, events, artifacts,
-> archives), auth par cookie, et pilotage (lancer/rework/kill/relaunch/recette) via MCP.
+> archives, consommation par session, modèles d'agents), auth par cookie, et pilotage
+> (lancer/rework/kill/relaunch/recette) via MCP.
 > ```
 
 ## 7. Étape 6 — Workspace Coder + scripts/plugins
 
 - Workspace Coder par projet ; `workspace_exec` en non-root.
 - Scripts : `session-guard.mjs` (verrou + worktree par session), `send-mail.mjs`,
-  `load-env.mjs`, `record-permission.mjs`, `resolve-permission.mjs`.
+  `load-env.mjs`, `record-permission.mjs`, `resolve-permission.mjs`,
+  `collect-git-commits.mjs` (trace des commits d'un plan).
 - Plugins : `permission-hook.mjs`, `session-env.mjs`.
 
 ## 8. Étape 7 — Vérification de bout en bout

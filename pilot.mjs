@@ -8,8 +8,16 @@ import { taskOrchestrator, coderWorkspaces } from "./mcp-client.mjs";
 import { launchSession, injectMessage, buildLaunchPrompt, buildReworkPrompt, killSession } from "./session-bridge.mjs";
 
 // Décision n°7 : agents contraints par type de tâche.
-export function agentsForType(type) {
+export function agentsForType(type, auditTarget) {
   if (type === "audit") {
+    const target = auditTarget || "backend";
+    if (target === "frontend") return [{ agent: "clean-arch-detector-react", role: "auditor" }];
+    if (target === "both") {
+      return [
+        { agent: "hexagonal-architecture-auditor", role: "auditor" },
+        { agent: "clean-arch-detector-react", role: "auditor" },
+      ];
+    }
     return [{ agent: "hexagonal-architecture-auditor", role: "auditor" }];
   }
   // feature / debug → planner + executor
@@ -42,17 +50,18 @@ export async function deleteTask(taskId) {
   return taskOrchestrator("task_delete", { taskId });
 }
 
-export async function createTask({ request, project, type, scope, priority, agents }) {
+export async function createTask({ request, project, type, scope, priority, auditTarget, agents }) {
   if (!request || !project || !type) throw new Error("request, project et type requis");
   const reg = await taskOrchestrator("task_register", {
     request,
     project,
     type,
+    auditTarget: auditTarget || undefined,
     scope: scope || undefined,
     priority: priority || "normal",
   });
   const taskId = reg && (reg.taskId || (reg.task && reg.task.id));
-  const list = agents && agents.length ? agents : agentsForType(type);
+  const list = agents && agents.length ? agents : agentsForType(type, auditTarget);
   for (const a of list) {
     await taskOrchestrator("participant_add", { taskId, agent: a.agent, role: a.role });
   }
@@ -120,6 +129,7 @@ export async function launchTask({ taskId, kind = "launch" }) {
     workspace: task && task.workspace,
     scope: task && task.scope,
     request: task && task.request,
+    auditTarget: task && task.auditTarget,
   });
   const dir = await projectGitPath(task && task.project);
   const { sessionId } = await launchSession({ dir, agent: "orchestrator", prompt, title: `Tâche ${taskId}` });

@@ -802,6 +802,11 @@ async function taskCreateModal() {
           <option value="debug">debug</option>
           <option value="audit">audit</option>
         </select>
+        <select id="tm-audit-target" hidden>
+          <option value="backend">Audit backend (hexagonal/DDD)</option>
+          <option value="frontend">Audit frontend (React)</option>
+          <option value="both">Les deux (backend + frontend)</option>
+        </select>
         <textarea id="tm-request" placeholder="description de la tâche" required></textarea>
         <input id="tm-scope" placeholder="scope (chemins, séparés par des virgules)">
         <div class="modal-actions">
@@ -812,14 +817,21 @@ async function taskCreateModal() {
       <div id="task-modal-msg" class="msg"></div>
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
+  const typeSel = document.getElementById('tm-type');
+  const targetSel = document.getElementById('tm-audit-target');
+  const syncTarget = () => { targetSel.hidden = typeSel.value !== 'audit'; };
+  typeSel.addEventListener('change', syncTarget);
+  syncTarget();
   document.getElementById('task-modal-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const msg = document.getElementById('task-modal-msg');
     const scopeRaw = document.getElementById('tm-scope').value.trim();
+    const type = typeSel.value;
     try {
       await api('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         project: document.getElementById('tm-project').value,
-        type: document.getElementById('tm-type').value,
+        type,
+        auditTarget: type === 'audit' ? targetSel.value : undefined,
         request: document.getElementById('tm-request').value.trim(),
         scope: scopeRaw ? scopeRaw.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
       }) });

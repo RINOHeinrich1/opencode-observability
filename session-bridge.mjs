@@ -18,16 +18,38 @@
 // SUPPRIMÉ. Aucune fonction de compaction n'est fournie ici, volontairement.
 
 import { spawn, execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 
 const OPENCODE_BIN = "/root/.opencode/bin/opencode";
 // Serveur opencode auquel attacher les sessions (pour qu'elles soient streamées
 // dans le web et que les permissions y soient résolues). Surchargeable via env.
 const OPENCODE_SERVER_URL = process.env.OPENCODE_SERVER_URL || "http://127.0.0.1:4096";
+const AGENT_DIR = process.env.OPENCODE_AGENT_DIR || join(homedir(), ".config", "opencode", "agent");
 
 function assertBinary() {
   if (!existsSync(OPENCODE_BIN)) {
     throw new Error(`binaire opencode introuvable : ${OPENCODE_BIN}`);
+  }
+}
+
+// Lit le modèle déclaré par un agent (`model:` de son frontmatter), ou null.
+// Permet de forcer `--model` au lancement : opencode met en cache la définition
+// des agents au démarrage du serveur, donc une édition de `model:` ne serait pas
+// prise en compte sans redémarrage si on s'en remettait au seul `--agent`.
+function readAgentModel(agent) {
+  if (!agent) return null;
+  const file = join(AGENT_DIR, `${agent}.md`);
+  try {
+    if (!existsSync(file)) return null;
+    const raw = readFileSync(file, "utf8");
+    const m = /^---\s*\r?\n([\s\S]*?)\r?\n---/.exec(raw);
+    if (!m) return null;
+    const line = /^[ \t]*model:[ \t]*([^\r\n]+)$/m.exec(m[1]);
+    return line ? line[1].trim() : null;
+  } catch {
+    return null;
   }
 }
 
@@ -86,6 +108,8 @@ export function launchSession({ dir, agent = "orchestrator", prompt, title }) {
     }
 
     const args = ["run", prompt, "--agent", agent, "--format", "json", "--attach", OPENCODE_SERVER_URL];
+    const model = readAgentModel(agent);
+    if (model) args.push("--model", model);
     if (dir) args.push("--dir", dir);
     if (title) args.push("--title", title);
 

@@ -151,7 +151,7 @@ async function renderTasks() {
               ${s.branch ? `<code class="muted-sm">${esc(s.branch)}</code>` : '<span class="muted-sm">—</span>'}
               ${s.execution_status ? badge(s.execution_status) : '<span class="muted-sm">non exécuté</span>'}
               ${badge(s.status)}
-              ${s.commit_count ? `<button class="commit-btn" data-commits="${esc(s.planId)}" title="Voir les commits et leurs diffs">commits (${s.commit_count})</button>` : ''}
+              <button class="commit-btn" data-commits="${esc(s.planId)}" title="Voir les commits et leurs diffs">commits (${s.commit_count || 0})</button>
             </div>
           </td>
         </tr>`).join('');
@@ -266,7 +266,7 @@ async function renderPlans() {
     <h2>Plans d'action</h2>
     ${filterBar()}
     <table><thead><tr><th>Plan</th><th>Tâche</th><th>Objectif</th><th>Avancement</th><th>Commits</th><th>Livrables</th></tr></thead>
-    <tbody>${plans.map((p) => `<tr><td class="code">${esc(p.planId)}</td><td class="code">${esc(p.task_id || '—')}</td><td>${esc(p.objective)}</td><td>${progressBar(p.pct)}</td><td>${p.commit_count ? `<button class="commit-btn" data-commits="${esc(p.planId)}" title="Voir les commits et leurs diffs">${p.commit_count}</button>` : '<span class="muted-sm">0</span>'}</td><td>${esc((p.deliverables || []).join(', '))}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Aucun plan</td></tr>'}</tbody></table>`;
+    <tbody>${plans.map((p) => `<tr><td class="code">${esc(p.planId)}</td><td class="code">${esc(p.task_id || '—')}</td><td>${esc(p.objective)}</td><td>${progressBar(p.pct)}</td><td><button class="commit-btn" data-commits="${esc(p.planId)}" title="Voir les commits et leurs diffs">${p.commit_count || 0}</button></td><td>${esc((p.deliverables || []).join(', '))}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Aucun plan</td></tr>'}</tbody></table>`;
   bindTaskFilter();
   document.querySelectorAll('#pane-plans [data-commits]').forEach((b) => b.addEventListener('click', () => renderPlanCommitsModal(b.dataset.commits)));
 }

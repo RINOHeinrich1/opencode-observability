@@ -72,6 +72,17 @@ export async function summary(pool) {
   const success = tasks.filter((t) => t.status === "done" && t.recetteStatus === "approved").length;
   const rework = tasks.filter((t) => t.recetteStatus === "rejected").length;
   const reworkCount = (await pool.query("SELECT COUNT(*)::int AS n FROM (SELECT task_id FROM executions WHERE rework_count > 0 GROUP BY task_id) x")).rows[0].n;
+  // Phase 4 — durcissement
+  const nowIso = new Date().toISOString();
+  const expiredDecisions = (await pool.query(
+    "SELECT COUNT(*)::int AS n FROM decisions WHERE status = 'awaiting' AND expires_at IS NOT NULL AND expires_at < $1",
+    [nowIso],
+  )).rows[0].n;
+  let scopeConflicts = { total: 0, open: 0 };
+  try {
+    const c = (await pool.query("SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status='open')::int AS open FROM scope_conflicts")).rows[0];
+    scopeConflicts = { total: c.total, open: c.open };
+  } catch {}
   const now = new Date();
   const done7 = tasks.filter((t) => t.doneAt && now - new Date(t.doneAt) <= 7 * 86400000).length;
   return {
@@ -86,6 +97,8 @@ export async function summary(pool) {
     successCount: success,
     throughput: Math.round((done7 / 7) * 10) / 10,
     reworkRate: total ? Math.round(((reworkCount + rework) / total) * 1000) / 10 : 0,
+    expiredDecisions,
+    scopeConflicts,
   };
 }
 
@@ -226,4 +239,176 @@ export async function agents(pool) {
 // --- 6. Coûts / tokens -------------------------------------------------------
 export async function costs(pool) {
   return globalUsage(pool);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 — où passe le temps, où sont les blocages
+// ---------------------------------------------------------------------------
+
+// Regroupement des statuts en phases pour le waterfall.
+const PHASE_OF_STATE = {
+  queued: "attente",
+  started: "planning",
+  planning: "planning",
+  awaiting_validation: "attente-validation",
+  planned: "planning",
+  in_progress: "execution",
+  validating: "execution",
+  review: "attente-review",
+  approved: "finalisation",
+  merge_pending: "finalisation",
+  merged: "finalisation",
+  deploy_pending: "deploiement",
+  deploying: "deploiement",
+  deployed: "deploiement",
+  post_deploy_verified: "deploiement",
+  blocked: "bloque",
+  aborted: "echec",
+  failed: "echec",
+  crashed: "echec",
+};
+
+const PHASE_LABEL = {
+  attente: "Attente (queue)",
+  planning: "Planification",
+  "attente-validation": "Attente validation",
+  execution: "Exécution",
+  "attente-review": "Attente review",
+  finalisation: "Finalisation",
+  deploiement: "Déploiement",
+  bloque: "Bloqué",
+  echec: "Échec / abandon",
+  autre: "Autre",
+};
+
+async function taskTransitions(pool, taskId) {
+  const rows = (await pool.query(
+    `SELECT ts, by, detail FROM events
+     WHERE task_id = $1 AND type = 'TRANSITION' AND detail IS NOT NULL ORDER BY seq ASC`,
+    [taskId],
+  )).rows;
+  return rows.map((r) => {
+    const d = JSON.parse(r.detail);
+    return { ts: r.ts, from: d.from, to: d.to, note: d.note || null };
+  });
+}
+
+/** Waterfall d'une tâche : durée par phase. */
+export async function timeline(pool, taskId) {
+  const t = (await pool.query("SELECT id, created_at FROM tasks WHERE id = $1", [taskId])).rows[0];
+  if (!t) return { error: "tâche inconnue", taskId };
+  const transitions = await taskTransitions(pool, taskId);
+  const leadStart = t.created_at;
+  const phases = {};
+  let current = "queued";
+  let t0 = leadStart;
+  const add = (state, from, to) => {
+    if (!from || !to) return;
+    const phase = PHASE_OF_STATE[state] || "autre";
+    phases[phase] = (phases[phase] || 0) + Math.round((new Date(to) - new Date(from)) / 60000);
+  };
+  for (const tr of transitions) {
+    add(current, t0, tr.ts);
+    current = tr.to;
+    t0 = tr.ts;
+  }
+  // Queue jusqu'au dernier événement (tâches non terminées).
+  const nowIso = new Date().toISOString();
+  if (current && !["done", "aborted", "failed", "crashed", "blocked"].includes(current)) {
+    add(current, t0, nowIso);
+  }
+  const ordered = Object.entries(phases)
+    .map(([phase, minutes]) => ({ phase, label: PHASE_LABEL[phase] || phase, minutes }))
+    .sort((a, b) => b.minutes - a.minutes);
+  const total = ordered.reduce((a, b) => a + b.minutes, 0);
+  return { taskId, total, phases: ordered, transitions: transitions.length };
+}
+
+/** Répartition moyenne du temps par phase (toutes tâches terminées). */
+export async function phases(pool) {
+  const tasks = await baseTasks(pool);
+  const done = tasks.filter((t) => t.doneAt && t.status === "done");
+  const agg = {};
+  let grandTotal = 0;
+  for (const t of done) {
+    const w = await timeline(pool, t.id);
+    for (const p of w.phases || []) {
+      agg[p.label] = (agg[p.label] || 0) + p.minutes;
+      grandTotal += p.minutes;
+    }
+  }
+  return {
+    total: done.length,
+    phases: Object.entries(agg)
+      .map(([label, minutes]) => ({ label, minutes, pct: grandTotal ? Math.round((minutes / grandTotal) * 1000) / 10 : 0 }))
+      .sort((a, b) => b.minutes - a.minutes),
+  };
+}
+
+/** Blocages par raison catégorisée. */
+export async function blocked(pool, days = 14) {
+  const rows = (await pool.query(`
+    SELECT task_id, ts, type, by, detail FROM events
+    WHERE (type = 'BLOCKED' OR (type = 'TRANSITION' AND (detail::jsonb->>'to') = 'blocked'))
+      AND ts::timestamptz >= now() - ($1 || ' days')::interval
+    ORDER BY ts DESC
+  `, [days])).rows;
+  const categorize = (text) => {
+    const s = String(text || "").toLowerCase();
+    if (/mcp|serveur mcp/.test(s)) return "MCP / outil";
+    if (/permission|autorisation/.test(s)) return "Permission";
+    if (/worktree|conflit de scope|scope/.test(s)) return "Worktree / scope";
+    if (/build|échec|fail|compile|test/.test(s)) return "Build / tests";
+    if (/github|pipeline|ci\/cd|réseau|network/.test(s)) return "Externe / CI";
+    if (/agent/.test(s)) return "Agent";
+    return "Autre";
+  };
+  const out = {};
+  for (const r of rows) {
+    const detail = r.detail ? JSON.parse(r.detail) : {};
+    const text = detail.cause || detail.reason || detail.note || detail.agent || "";
+    const cat = categorize(text);
+    out[cat] = (out[cat] || 0) + 1;
+  }
+  return Object.entries(out).map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count);
+}
+
+/** Success / Failure par jour (done vs blocked/failed/aborted/crashed). */
+export async function successfailure(pool, days = 14) {
+  const rows = (await pool.query(`
+    SELECT to_char(date_trunc('day', ts::timestamptz)::date, 'YYYY-MM-DD') AS day,
+           (detail::jsonb->>'to') AS to_state, COUNT(*) AS n
+    FROM events
+    WHERE type = 'TRANSITION' AND ts::timestamptz >= now() - ($1 || ' days')::interval
+    GROUP BY 1, 2 ORDER BY 1
+  `, [days])).rows;
+  const map = {};
+  const BAD = new Set(["blocked", "failed", "aborted", "crashed"]);
+  for (const r of rows) {
+    const day = map[r.day] || (map[r.day] = { day: r.day, success: 0, failure: 0 });
+    if (r.to_state === "done") day.success += Number(r.n);
+    else if (BAD.has(r.to_state)) day.failure += Number(r.n);
+  }
+  return Object.values(map).sort((a, b) => a.day.localeCompare(b.day));
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 — durcissement : décisions expirées + conflits de scope
+// ---------------------------------------------------------------------------
+export async function hardening(pool) {
+  const nowIso = new Date().toISOString();
+  const expired = (await pool.query(
+    "SELECT COUNT(*)::int AS n FROM decisions WHERE status = 'awaiting' AND expires_at IS NOT NULL AND expires_at < $1",
+    [nowIso],
+  )).rows[0].n;
+  let conflicts = { total: 0, open: 0 };
+  try {
+    const c = (await pool.query("SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status='open')::int AS open FROM scope_conflicts")).rows[0];
+    conflicts = { total: c.total, open: c.open };
+  } catch {}
+  let transitionErrors = 0;
+  try {
+    transitionErrors = (await pool.query("SELECT COUNT(*)::int AS n FROM events WHERE type = 'TRANSITION_ERROR'")).rows[0].n;
+  } catch {}
+  return { expiredDecisions: expired, scopeConflicts: conflicts, transitionErrors };
 }

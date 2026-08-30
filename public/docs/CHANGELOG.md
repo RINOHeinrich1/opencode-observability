@@ -5,6 +5,47 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.3.0 — 2026-08-30 · Observabilité Phase 2 + durcissement (Phase 4)
+
+**Objectif** : enrichir le dashboard avec « où passe le temps » et « où sont
+les blocages », et durcir la qualité des données (conflits de scope, erreurs de
+transition, attribution des agents).
+
+### Dashboard (panneau `opencode-observability`)
+
+- **Répartition du temps par phase** (waterfall) : moyenne par phase sur toutes
+  les tâches terminées (attente queue, planification, attente validation,
+  exécution, attente review, finalisation, déploiement, bloqué, échec) +
+  détail par tâche (`GET /api/metrics/timeline?taskId=`).
+- **Blocages par raison catégorisée** (30 j) : MCP/outil, permission,
+  worktree/scope, build/tests, externe/CI, agent, autre.
+- **Success / Failure par jour** : barres empilées (done vs
+  blocked/failed/aborted/crashed).
+- **Durcissement** : cartes « Décisions expirées », « Conflits de scope »,
+  « Erreurs de transition ».
+- Endpoints : `/api/metrics/{phases,timeline,blocked,successfailure,hardening}`.
+
+### Durcissement des données (MCP `task-orchestrator` v0.2.0, prompts)
+
+- **Conflits de scope persistés** : nouvelle table `scope_conflicts` ; le tool
+  `scope_conflict` enregistre désormais les conflits détectés (tâches actives +
+  worktrees réservés).
+- **Erreurs de transition tracées** : `task_transition` et `plan_transition`
+  enregistrent un événement `TRANSITION_ERROR` (from/to/raison) quand la machine
+  à états refuse.
+- **Attribution stricte des agents** : les prompts (`build-notify`,
+  `atomic-plan`, `orchestrator`, auditeurs) renseignent désormais explicitement
+  `by="<nom agent>"` dans `task_event` et `by`/`requestedBy` dans
+  `decision_request` — fiabilise les métriques par agent.
+- Les KPI **worktree / ressources** sont abandonnés (usage peu fiable).
+
+### Dépôts impactés
+
+`opencode-observability` (v0.3.0) · `opencode-mcp-task-orchestrator` (v0.2.0) ·
+`opencode-agents` (attribution).
+
+---
+
 ## v0.2.0 — 2026-08-30 · Dashboard Observabilité (KPI Phase 1)
 
 **Objectif** : répondre en quelques secondes à « combien de tâches ? À quelle

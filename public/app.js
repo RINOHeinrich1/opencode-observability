@@ -1122,13 +1122,17 @@ async function renderObservability() {
   const pane = document.getElementById('pane-observability');
   pane.innerHTML = `<h2>Observabilité — KPI du système</h2><p class="muted">Flow · Orchestration · Agents · Quality (Phase 1 — v0.2.0)</p><p class="muted">Chargement…</p>`;
   try {
-    const [summary, statusData, throughputData, leadtimeData, agentsData, costsData] = await Promise.all([
+    const [summary, statusData, throughputData, leadtimeData, agentsData, costsData, phasesData, blockedData, successfailureData, hardeningData] = await Promise.all([
       api('/api/metrics/summary'),
       api('/api/metrics/status'),
       api('/api/metrics/throughput?days=14'),
       api('/api/metrics/leadtime?days=14'),
       api('/api/metrics/agents'),
       api('/api/metrics/costs'),
+      api('/api/metrics/phases'),
+      api('/api/metrics/blocked?days=30'),
+      api('/api/metrics/successfailure?days=14'),
+      api('/api/metrics/hardening'),
     ]);
 
     destroyObsCharts();
@@ -1166,6 +1170,34 @@ async function renderObservability() {
         <div class="obs-panel">
           <h3>Throughput (tâches done / jour)</h3>
           ${obsCanvas('obs-throughput')}
+        </div>
+      </div>
+
+      <div class="obs-row">
+        <div class="obs-panel">
+          <h3>Où passe le temps ? (moyenne par phase, toutes tâches)</h3>
+          ${obsCanvas('obs-phases')}
+          <p class="muted">Phase 2 — l'attente (validation/review) et la planification dominent souvent le Lead Time.</p>
+        </div>
+        <div class="obs-panel">
+          <h3>Blocages par raison (30 j)</h3>
+          ${obsCanvas('obs-blocked')}
+        </div>
+      </div>
+
+      <div class="obs-row">
+        <div class="obs-panel">
+          <h3>Success / Failure par jour</h3>
+          ${obsCanvas('obs-sf')}
+        </div>
+        <div class="obs-panel">
+          <h3>Durcissement — traçabilité</h3>
+          <div class="kpi-grid">
+            ${kpiCard('Décisions expirées', hardeningData.expiredDecisions, 'sans réponse')}
+            ${kpiCard('Conflits de scope', hardeningData.scopeConflicts?.total || 0, `${hardeningData.scopeConflicts?.open || 0} ouverts`)}
+            ${kpiCard('Erreurs de transition', hardeningData.transitionErrors || 0, 'machine à états refusée')}
+          </div>
+          <p class="muted">Phase 4 — conflits de scope persistés (scope_conflicts) et erreurs de transition tracées (TRANSITION_ERROR) par le MCP task-orchestrator.</p>
         </div>
       </div>
 
@@ -1230,6 +1262,30 @@ async function renderObservability() {
         type: 'line',
         data: { labels: throughputData.map((d) => d.day.slice(5)), datasets: [{ label: 'done / jour', data: throughputData.map((d) => d.done), borderColor: '#7048e8', backgroundColor: 'rgba(112,72,232,0.15)', fill: true, tension: 0.3 }] },
         options: { plugins: { legend: { display: false } } },
+      });
+      // Phase 2 : répartition du temps par phase (waterfall horizontal).
+      obsCharts.phases = new Chart(document.getElementById('obs-phases'), {
+        type: 'bar',
+        data: { labels: phasesData.phases.map((p) => p.label), datasets: [{ label: 'minutes', data: phasesData.phases.map((p) => p.minutes), backgroundColor: '#f76707' }] },
+        options: { indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { title: { display: true, text: 'minutes' } } } },
+      });
+      // Phase 2 : blocages par raison.
+      obsCharts.blocked = new Chart(document.getElementById('obs-blocked'), {
+        type: 'bar',
+        data: { labels: blockedData.map((b) => b.reason), datasets: [{ label: 'blocages', data: blockedData.map((b) => b.count), backgroundColor: '#e03131' }] },
+        options: { indexAxis: 'y', plugins: { legend: { display: false } } },
+      });
+      // Phase 2 : success/failure empilés par jour.
+      obsCharts.sf = new Chart(document.getElementById('obs-sf'), {
+        type: 'bar',
+        data: {
+          labels: successfailureData.map((d) => d.day.slice(5)),
+          datasets: [
+            { label: 'Succès', data: successfailureData.map((d) => d.success), backgroundColor: '#2f9e44' },
+            { label: 'Échecs', data: successfailureData.map((d) => d.failure), backgroundColor: '#e03131' },
+          ],
+        },
+        options: { scales: { x: { stacked: true }, y: { stacked: true } } },
       });
     }
   } catch (e) {

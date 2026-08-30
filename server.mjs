@@ -602,6 +602,19 @@ const server = createServer(async (req, res) => {
     }
     if (path === "/api/metrics/agents" && req.method === "GET") return sendJson(res, 200, await metrics.agents(registry()));
     if (path === "/api/metrics/costs" && req.method === "GET") return sendJson(res, 200, await metrics.costs(registry()));
+    // Phase 2 — où passe le temps, blocages, succès/échec
+    if (path === "/api/metrics/phases" && req.method === "GET") return sendJson(res, 200, await metrics.phases(registry()));
+    if (path === "/api/metrics/timeline" && req.method === "GET") {
+      return sendJson(res, 200, await metrics.timeline(registry(), url.searchParams.get("taskId") || ""));
+    }
+    if (path === "/api/metrics/blocked" && req.method === "GET") {
+      return sendJson(res, 200, await metrics.blocked(registry(), Number(url.searchParams.get("days") || 14)));
+    }
+    if (path === "/api/metrics/successfailure" && req.method === "GET") {
+      return sendJson(res, 200, await metrics.successfailure(registry(), Number(url.searchParams.get("days") || 14)));
+    }
+    // Phase 4 — durcissement (décisions expirées, conflits de scope)
+    if (path === "/api/metrics/hardening" && req.method === "GET") return sendJson(res, 200, await metrics.hardening(registry()));
 
     if (path === "/") return serveFile(res, "index.html");
     return serveFile(res, path.slice(1));

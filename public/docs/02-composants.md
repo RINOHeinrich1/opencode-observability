@@ -61,7 +61,7 @@ les agents, ne modifie jamais le code du projet lui-même.
 | Agent | Rôle | Permissions |
 |---|---|---|
 | `atomic-plan` | Planification à granularité atomique (produit des `Plan-*.md`) | read-only (édition restreinte à plans/reports) |
-| `build-notify` | Exécution des plans + notifications email | pleine (isolation Coder + worktree) |
+| `build-notify` | Exécution des plans + traçabilité (événements, artefacts, commits) | pleine (isolation Coder + worktree) |
 | `hexagonal-architecture-auditor` | Audit architecture backend (hexagonale/DDD) | read-only |
 | `clean-arch-detector-react` | Audit architecture frontend (feature-based) | read-only |
 
@@ -144,13 +144,21 @@ plan) → closure + acceptance. Principles: mission ≠ method; it decides trans
 agents publish events; it pilots **per plan** (`plan_transition`).
 
 **3. Sub-agents** — `atomic-plan` (atomic-grained planning, read-only),
-`build-notify` (executes plans + email notifications; publishes its commit trace via
+`build-notify` (executes plans, publishes events/artifacts/commit trace via
 `plan_commit_add`), `hexagonal-architecture-auditor` (backend audit),
 `clean-arch-detector-react` (frontend audit). Auditors are delegated according to the
 task's `audit_target` (`backend`/`frontend`/`both`). Read-only agents have restricted
-`bash` permissions (read-only commands + git read-only).
+`bash` permissions (read-only commands + git read-only). Sub-agents never send emails:
+notifications are centralized in the `opencode-notifier` daemon (see §8).
 
-**4. Task registry** (MCP `task-orchestrator` + PostgreSQL) — logical source of truth.
+**4. Notifier daemon (`opencode-notifier`, v0.1.0)** — the **only** component that
+sends emails. It watches the registry (events, decisions, deployments,
+`plan_incidents`, `plan_inconsistencies`, `audit_notifications`) via hybrid
+LISTEN/NOTIFY + polling (high-water marks in `notifier_state`, dedup in
+`notifier_dedup`) and emails the user with database data via
+`scripts/send-mail.mjs`. The MCP `notify` tools were removed.
+
+**5. Task registry** (MCP `task-orchestrator` + PostgreSQL) — logical source of truth.
 Tables: `tasks`, `projects`, `executions`, `task_sessions`, `worktrees`, `events`,
 `deployments`, `decisions`, `participants`, `artifacts`, `plans`, `plan_steps`,
 `plan_incidents`, `plan_inconsistencies`, `plan_counters`, `plan_executions`,
@@ -159,17 +167,17 @@ tools: `task_register`, `task_transition`, `plan_transition`, `task_event`,
 `decision_request`, `decision_resolve`, `task_recette`, `task_get`, `task_link_session`,
 `plan_commit_add`, `plan_commits_list`.
 
-**5. Business MCP & Skills** — `plan-manager` (plans persistence/tracking),
+**6. Business MCP & Skills** — `plan-manager` (plans persistence/tracking),
 `audit-manager` (audit reports treatment, file-based), `coder-workspaces` (Coder
 discovery + non-root exec), `oniria-arch`/`react-arch` (architecture audits) + skills
 (`task-execution`, `plan-manager`, `audit-manager`, `coder-workspace-locations`,
 `oniria-package-deploiement`, `customize-opencode`).
 
-**6. Coder workspace** — one workspace per project, Docker volume mounted on the host.
+**7. Coder workspace** — one workspace per project, Docker volume mounted on the host.
 Agents read via `workspace_resolve` (host path) and execute via `workspace_exec`
 (non-root, user `coder`). Never run project code on the host.
 
-**7. Git & CI/CD** — one repo per component, `feature/*` branches, merge to `main`
+**8. Git & CI/CD** — one repo per component, `feature/*` branches, merge to `main`
 only after human validation, session isolation via `session-guard` (dedicated
 worktree), deployment only via CI/CD pipeline (`gh workflow run` or
 `oniria-package-deploiement`) — never manual.

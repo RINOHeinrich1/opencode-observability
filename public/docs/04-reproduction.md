@@ -25,7 +25,7 @@
 > 3) un MCP plan-manager, un MCP audit-manager, un MCP coder-workspaces ;
 > 4) des agents : orchestrator, atomic-plan, build-notify, et deux auditeurs d'architecture ;
 > 5) un panneau web de supervision (Node) qui lit le registre et pilote les sessions.
-> Respecte : source de vérité unique (registre), isolation Coder (non-root), traçabilité (emails).
+> Respecte : source de vérité unique (registre), isolation Coder (non-root), traçabilité (événements + notifications centralisées).
 > ```
 
 ## 1. Prérequis
@@ -102,7 +102,7 @@ Fichiers `.md` dans `~/.config/opencode/agent/` avec `mode`, `model`, `permissio
 > Crée les agents opencode suivants (fichiers .md) :
 > - orchestrator (mode primary) : seul propriétaire des transitions, coordonne les agents ;
 > - atomic-plan : planification atomique, read-only ;
-> - build-notify : exécution des plans + notifications email ;
+> - build-notify : exécution des plans + traçabilité (événements, artefacts, commits) ;
 > - hexagonal-architecture-auditor, clean-arch-detector-react : audits read-only.
 > ```
 
@@ -121,20 +121,26 @@ Node (`server.mjs` + `pilot.mjs` + `session-bridge.mjs` + `public/`), PM2.
 > (lancer/rework/kill/relaunch/recette) via MCP.
 > ```
 
-## 7. Étape 6 — Workspace Coder + scripts/plugins
+## 7. Étape 6 — Workspace Coder + scripts/plugins + notifier
 
 - Workspace Coder par projet ; `workspace_exec` en non-root.
-- Scripts : `session-guard.mjs` (verrou + worktree par session), `send-mail.mjs`,
-  `load-env.mjs`, `record-permission.mjs`, `resolve-permission.mjs`,
-  `collect-git-commits.mjs` (trace des commits d'un plan).
+- Scripts : `session-guard.mjs` (verrou + worktree par session), `send-mail.mjs`
+  (unique primitives SMTP, appelée **uniquement** par le notifier), `load-env.mjs`,
+  `record-permission.mjs`, `resolve-permission.mjs`, `collect-git-commits.mjs`
+  (trace des commits d'un plan).
 - Plugins : `permission-hook.mjs`, `session-env.mjs`.
+- **Daemon `opencode-notifier`** (v0.1.0) : observe le registre (events,
+  decisions, deployments, plan_incidents, plan_inconsistencies,
+  audit_notifications) en hybride LISTEN/NOTIFY + polling, et envoie les
+  notifications email via `send-mail.mjs`. PM2 : `pm2 start ecosystem.config.cjs`.
 
 ## 8. Étape 7 — Vérification de bout en bout
 
-1. Démarrer PostgreSQL, le registre, le panneau.
+1. Démarrer PostgreSQL, le registre, le panneau, le notifier.
 2. Créer un projet + une tâche, lancer : `queued → started → planning → …`.
 3. Vérifier la validation/review par plan, le déploiement, la recette.
-4. Vérifier les emails + la traçabilité (événements, décisions).
+4. Vérifier la traçabilité (événements, décisions) et les notifications
+   (le notifier signale l'utilisateur à chaque changement d'état pertinent).
 
 ---
 

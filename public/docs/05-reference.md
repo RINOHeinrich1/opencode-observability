@@ -26,6 +26,9 @@ Base `task_registry` :
 | `plan_steps` | Étapes d'un plan | `plan_id`, `step_id`, `status` |
 | `plan_incidents` / `plan_inconsistencies` | Incidents / incohérences | `plan_id`, `status` |
 | `plan_counters` | Compteurs INC-/INCO- | `name`, `value` |
+| `notifier_state` | High-water marks du notifier (v0.1.0) | `stream`, `last_id`, `last_ts` |
+| `notifier_dedup` | Déduplication des envois (v0.1.0) | `stream`, `key`, `sent_at` |
+| `audit_notifications` | Miroir des incidents/incohérences d'audit (v0.1.0) | `id`, `kind`, `audit_id`, `status`, `resolved_at` |
 
 Base `panel` : `users`, `sessions`, `archives`.
 

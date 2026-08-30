@@ -53,14 +53,29 @@ planned → in_progress → validating → review → approved/rejected
 Chaque décision a : `kind`, `detail`, `planId` (si lié à un plan), `status`
 (`awaiting` → `approved`/`rejected`), `resolution` (remarques).
 
-## 4. Notifications (emails)
+## 4. Notifications (v0.1.0 — centralisées, sans email des agents)
 
-Moments obligatoires (script `send-mail.mjs`) :
-1. Avant toute question/décision humaine.
-2. Avant une action nécessitant une permission.
-3. À la fin de la tâche (rapport en pièce jointe).
+Depuis la **v0.1.0**, les agents et MCP **n'envoient plus d'email**. Le daemon
+`opencode-notifier` observe les changements d'état du registre PostgreSQL et
+signale l'utilisateur avec les données de la base :
 
-Vérifier toujours le code de sortie (`0` = succès).
+| État observé | Notification |
+|---|---|
+| Décision humaine `awaiting` (validation/review/permission/recette) | « Décision requise » (pièce jointe : plan si validation) |
+| Décision résolue (`approved`/`rejected`) | « Décision approuvée/rejetée » |
+| Décision expirée | « Décision expirée » (escalade) |
+| Tâche `blocked`/`failed`/`aborted`/`crashed`, événement `BLOCKED` | « Tâche <statut> » |
+| Tâche `done`, événement `TASK_COMPLETED` | « Tâche terminée » (rapport en pièce jointe via `artifacts`) |
+| Audit terminé (`AUDIT_COMPLETED`) | « Audit terminé » (rapport en pièce jointe via `artifacts`) |
+| Déploiement `deploy_failed` | « Déploiement échec » (lien pipeline) |
+| Déploiement `post_deploy_verified` | « Déploiement vérifié » |
+| Incident/incohérence de plan (`plan_incidents`, `plan_inconsistencies`) | « Incident/Incohérence » (+ résolution) |
+| Incident/incohérence d'audit (miroir `audit_notifications`) | « Incident/Incohérence d'audit » (+ résolution) |
+
+Mécanisme : **hybride** — triggers PostgreSQL `LISTEN/NOTIFY` (réactivité) +
+polling de rattrapage (`notifier_state` = high-water marks, reprise propre).
+Envoi via l'unique primitives SMTP `scripts/send-mail.mjs`. Aucun agent n'appelle
+plus ce script ; l'outil MCP `notify` a été retiré des serveurs.
 
 ## 5. Séquence type (exemple à 2 plans)
 
@@ -111,9 +126,10 @@ task; the task stays `in_progress` until all plans are `done`.
 `recette_status` column), `permission` (opencode permission, traced only). Each
 decision has `kind`, `detail`, `planId`, `status`, `resolution`.
 
-**4. Notifications** — mandatory emails (`send-mail.mjs`): before any human
-question/decision, before a permission-requiring action, at task completion (report
-attached). Always check exit code `0`.
+**4. Notifications (v0.1.0)** — centralized: the `opencode-notifier` daemon
+watches registry state changes (events, decisions, deployments, incidents) and
+emails the user with database data. Agents never send emails; the MCP `notify`
+tool was removed.
 
 **5. Example sequence (2 plans)** — human creates task → panel launches (`started`) →
 orchestrator plans (`planning`) → atomic-plan produces 2 plans → `awaiting_validation`

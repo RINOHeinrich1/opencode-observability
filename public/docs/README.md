@@ -11,10 +11,12 @@
 | # | Fichier | Sujet / Topic |
 |---|---|---|
 | 1 | [01-architecture.md](01-architecture.md) | Vue d'ensemble, concepts, architecture / Overview, concepts, architecture |
-| 2 | [02-composants.md](02-composants.md) | Les composants (panneau, orchestrator, agents, MCP, Coder, Git) |
-| 3 | [03-workflow.md](03-workflow.md) | Workflow de bout en bout (tâche + plan + décisions) |
+| 2 | [02-composants.md](02-composants.md) | Les composants (panneau, orchestrator, agents, notifier, MCP, Coder, Git) |
+| 3 | [03-workflow.md](03-workflow.md) | Workflow de bout en bout (tâche + plan + décisions + notifications) |
 | 4 | [04-reproduction.md](04-reproduction.md) | Guide de reproduction pas-à-pas / Step-by-step setup guide |
 | 5 | [05-reference.md](05-reference.md) | Modèle de données, machines à états, config, glossaire |
+| 6 | [06-versioning.md](06-versioning.md) | Versioning de l'écosystème / Ecosystem versioning (v0.1.0) |
+| — | [CHANGELOG.md](CHANGELOG.md) | Historique des versions / Version history |
 
 ## À qui s'adresse ce document / Who this is for
 
@@ -41,6 +43,7 @@
 | `opencode-mcp-oniria-arch` | Audit d'architecture backend (hexagonale) |
 | `opencode-mcp-react-arch` | Audit d'architecture frontend (feature-based) |
 | `opencode-agents` | Agents (orchestrator, atomic-plan, build-notify, auditeurs) |
+| `opencode-notifier` | Daemon de notification email (observe les changements d'état du registre) |
 | `opencode-skills` | Skills (task-execution, plan-manager, audit-manager, …) |
 | `opencode-scripts` | Scripts d'infra (session-guard, send-mail, load-env, …) |
 | `opencode-plugins` | Plugins opencode (permission-hook, session-env) |

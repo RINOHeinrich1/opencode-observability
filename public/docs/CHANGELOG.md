@@ -5,6 +5,41 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.6.0 — 2026-08-31 · Tâches liées (associées) + nature de liaison
+
+**Objectif** : à la création d'une tâche, définir **une ou plusieurs tâches
+associées** (liées) avec la **nature de la liaison** (ex. « c'est là que le
+package a été créé »), exploitables par `atomic-plan` pour traiter la nouvelle
+tâche (commits, étapes de plan, docs attachées).
+
+### Changements
+
+- **Registre / MCP `task-orchestrator` (v0.4.0)** :
+  - table `task_links` (task_id, linked_task_id, description, created_at,
+    dédupliqué par couple) ;
+  - `task_register` accepte `linkedTasks[]` ({taskId, description}) ;
+  - outils `task_link_add` / `task_link_remove` ;
+  - `task_get` renvoie `linkedTasks` **enrichies** (request, statut, nb de
+    plans, nb d'artefacts de la tâche liée).
+- **Panneau (v0.6.0)** :
+  - formulaire « Nouvelle tâche » : éditeur dynamique de **tâches liées**
+    (taskId + nature de la liaison, lignes ajoutables/retirables) ;
+  - détail de tâche (modale Actions) : section **« Tâches liées »** ;
+  - `createTask` (pilot) transmet `linkedTasks`.
+- **Planner `atomic-plan` (v0.2.0)** : à la planification, `task_get` →
+  `linkedTasks` ; pour chaque tâche liée, exploiter **commits**
+  (`plan_commits_list`/`task_get`), **étapes de plan** (`plan_get`/
+  `progress_get`), **docs/résumés** (`artifact_list`), **déroulé**
+  (`events_list`) pour situer les fichiers, réutiliser les conventions et
+  justifier les étapes « en continuité de la tâche liée ».
+
+### Dépôts impactés
+
+`opencode-observability` (v0.6.0) · `opencode-mcp-task-orchestrator` (v0.4.0) ·
+`opencode-agents` (v0.2.0).
+
+---
+
 ## v0.5.2 — 2026-08-31 · Garde « recette validée = tâche clôturée »
 
 **Problème** : après l'approbation de la recette, la session orchestrateur

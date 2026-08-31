@@ -814,6 +814,12 @@ async function taskCreateModal() {
         </select>
         <textarea id="tm-request" placeholder="description de la tâche" required></textarea>
         <input id="tm-scope" placeholder="scope (chemins, séparés par des virgules)">
+        <div class="links-editor">
+          <div class="links-head"><label class="modal-field" style="margin:0">Tâches liées <span class="muted-sm">(associées, exploitables par le planner)</span></label>
+          <button type="button" class="ghost" id="tm-add-link">+ Ajouter</button></div>
+          <div id="tm-links-list"></div>
+          <p class="muted-sm">Ex. tâche liée : <code>T-20260831-105029</code> — nature : « c'est là que le package a été créé ».</p>
+        </div>
         <div class="modal-actions">
           <button type="button" class="ghost" id="modal-cancel">Annuler</button>
           <button type="submit" class="launch-btn">Créer</button>
@@ -827,11 +833,30 @@ async function taskCreateModal() {
   const syncTarget = () => { targetSel.hidden = typeSel.value !== 'audit'; };
   typeSel.addEventListener('change', syncTarget);
   syncTarget();
+
+  // Éditeur de tâches liées (taskId + nature de la liaison).
+  const linksList = document.getElementById('tm-links-list');
+  const addLinkRow = (taskId = '', description = '') => {
+    const row = document.createElement('div');
+    row.className = 'link-row';
+    row.innerHTML = `
+      <input class="link-task" placeholder="T-… (tâche associée)" value="${esc(taskId)}">
+      <input class="link-desc" placeholder="nature de la liaison (ex: c'est là que le package a été créé)" value="${esc(description)}">
+      <button type="button" class="ghost link-del" title="Retirer">✕</button>`;
+    row.querySelector('.link-del').addEventListener('click', () => row.remove());
+    linksList.appendChild(row);
+  };
+  document.getElementById('tm-add-link').addEventListener('click', () => addLinkRow());
+  addLinkRow(); // une ligne par défaut
+
   document.getElementById('task-modal-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const msg = document.getElementById('task-modal-msg');
     const scopeRaw = document.getElementById('tm-scope').value.trim();
     const type = typeSel.value;
+    const linkedTasks = [...linksList.querySelectorAll('.link-row')]
+      .map((r) => ({ taskId: r.querySelector('.link-task').value.trim(), description: r.querySelector('.link-desc').value.trim() }))
+      .filter((l) => l.taskId);
     try {
       await api('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         project: document.getElementById('tm-project').value,
@@ -839,6 +864,7 @@ async function taskCreateModal() {
         auditTarget: type === 'audit' ? targetSel.value : undefined,
         request: document.getElementById('tm-request').value.trim(),
         scope: scopeRaw ? scopeRaw.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
+        linkedTasks,
       }) });
       closeModal();
       refreshActive();
@@ -856,12 +882,24 @@ async function taskActionsModal(taskId) {
   const recette = task.recette_status || 'pending';
   const decisions = detail.decisions || [];
   const awaiting = decisions.filter((d) => d.status === 'awaiting' && d.kind !== 'permission' && d.kind !== 'recette');
+  const linked = detail.linkedTasks || [];
 
   showModal(`
     <div class="modal modal-wide">
       <h2>Actions — <span class="code">${esc(taskId)}</span></h2>
       <div class="modal-request">${esc(task.request || '—')}</div>
       <p class="muted-sm">Projet <span class="code">${esc(task.project)}</span> · Type <span class="code">${esc(task.type)}</span> · ${badge(status)} · Recette ${recetteBadge(recette)}</p>
+
+      ${linked.length ? `
+      <div class="actions-section">
+        <h3>Tâches liées (${linked.length})</h3>
+        ${linked.map((l) => `
+          <div class="link-item">
+            <code>${esc(l.linked_task_id || l.linkedTaskId)}</code>
+            <span class="muted-sm">${esc((l.description || '').slice(0, 90) || '—')}</span>
+            <span class="muted-sm">${esc((l.linked_request || '').slice(0, 50))}${l.linked_status ? ` · ${esc(l.linked_status)}` : ''}</span>
+          </div>`).join('')}
+      </div>` : ''}
 
       ${awaiting.length ? `
       <div class="actions-section">

@@ -190,7 +190,17 @@ async function registryTaskDetail(id) {
   const decisions = await q("SELECT * FROM decisions WHERE task_id = $1 ORDER BY id DESC", [id]);
   const artifacts = await q("SELECT * FROM artifacts WHERE task_id = $1 ORDER BY id DESC", [id]);
   const sessions = await q("SELECT session_id, kind, created_at FROM task_sessions WHERE task_id = $1 ORDER BY id ASC", [id]);
-  return { task, executions, events, deployments, decisions, artifacts, sessions, archived: (await archivedTaskIds()).has(id) };
+  const linkedTasks = await q(
+    `SELECT l.linked_task_id, l.description,
+            t.request AS linked_request, t.recette_status AS linked_recette,
+            (SELECT x.status FROM executions x WHERE x.task_id = l.linked_task_id ORDER BY attempt DESC LIMIT 1) AS linked_status,
+            (SELECT COUNT(*) FROM plans p WHERE p.task_id = l.linked_task_id) AS linked_plans,
+            (SELECT COUNT(*) FROM artifacts a WHERE a.task_id = l.linked_task_id) AS linked_artifacts
+     FROM task_links l LEFT JOIN tasks t ON t.id = l.linked_task_id
+     WHERE l.task_id = $1 ORDER BY l.id ASC`,
+    [id],
+  );
+  return { task, executions, events, deployments, decisions, artifacts, sessions, linkedTasks, archived: (await archivedTaskIds()).has(id) };
 }
 
 async function snapshotForTask(taskId) {

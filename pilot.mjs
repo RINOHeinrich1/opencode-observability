@@ -74,7 +74,7 @@ export async function deleteTask(taskId) {
   return taskOrchestrator("task_delete", { taskId });
 }
 
-export async function createTask({ request, project, type, scope, priority, auditTarget, agents }) {
+export async function createTask({ request, project, type, scope, priority, auditTarget, linkedTasks, agents }) {
   if (!request || !project || !type) throw new Error("request, project et type requis");
   const reg = await taskOrchestrator("task_register", {
     request,
@@ -83,6 +83,7 @@ export async function createTask({ request, project, type, scope, priority, audi
     auditTarget: auditTarget || undefined,
     scope: scope || undefined,
     priority: priority || "normal",
+    linkedTasks: (linkedTasks || []).filter((l) => l && l.taskId).map((l) => ({ taskId: l.taskId, description: l.description })),
   });
   const taskId = reg && (reg.taskId || (reg.task && reg.task.id));
   const list = agents && agents.length ? agents : agentsForType(type, auditTarget);

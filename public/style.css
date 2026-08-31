@@ -553,3 +553,11 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 
 /* ===== Badge « attente humaine » (correctif bug 2) ===== */
 .badge.waiting-human { background: #f08c00; color: #fff; }
+
+/* ===== Tâches liées (v0.6.0) ===== */
+.links-editor { margin: 10px 0; }
+.links-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.link-row { display: flex; gap: 8px; margin-bottom: 6px; }
+.link-row input.link-task { width: 160px; }
+.link-row input.link-desc { flex: 1; }
+.link-item { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 5px 0; border-bottom: 1px dashed var(--border); }

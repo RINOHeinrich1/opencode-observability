@@ -5,6 +5,41 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.5.0 — 2026-08-31 · Branche principale par projet (obligatoire pour déployer)
+
+**Objectif** : chaque projet définit une **branche principale** (obligatoire
+depuis le panneau). Sans elle, **aucun déploiement n'est autorisé** ; avant de
+pousser, on **pull depuis la branche principale**.
+
+### Changements
+
+- **Registre / MCP `task-orchestrator` (v0.3.0)** :
+  - colonne `projects.main_branch` (migration idempotente) ;
+  - `project_register` accepte `mainBranch` ; `project_get`/`project_list`
+    l'exposent.
+- **Panneau (v0.5.0)** :
+  - formulaire projet : champ **« Branche principale » obligatoire** (création
+    et modification) ;
+  - refus côté API si `mainBranch` absente (« branche principale requise ») ;
+  - carte projet : affiche la branche principale, ou un badge
+    **« manquante — déploiement bloqué »**.
+- **Orchestrateur (prompt §7-8, §12)** :
+  - récupère `mainBranch` via `project_get` ;
+  - **garde de déploiement** : pas de déploiement sans `mainBranch`
+    (→ `blocked` + événement + info utilisateur) ;
+  - **pull depuis la branche principale** avant de pousser vers git.
+- **Exécuteur (prompt `build-notify`)** : `git pull --rebase origin
+  <mainBranch>` avant tout push.
+- Le projet **oniria** a été seedé avec `mainBranch=main` (à ajuster dans le
+  panneau si besoin).
+
+### Dépôts impactés
+
+`opencode-observability` (v0.5.0) · `opencode-mcp-task-orchestrator` (v0.3.0) ·
+`opencode-agents` (prompts).
+
+---
+
 ## v0.4.1 — 2026-08-31 · Correctifs (7 bugs d'utilisation)
 
 ### Corrections

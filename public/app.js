@@ -708,6 +708,7 @@ async function renderProjects() {
           </div>
           <div class="project-card-body">
             <div class="project-kv"><span class="lbl">Workspace Coder</span><span>${esc(p.workspace || '—')}</span></div>
+            <div class="project-kv"><span class="lbl">Branche principale</span>${p.mainBranch ? `<code class="muted-sm">${esc(p.mainBranch)}</code>` : '<span class="badge danger">manquante — déploiement bloqué</span>'}</div>
             <div class="project-kv"><span class="lbl">Chemin git</span><code class="muted-sm">${esc(p.gitPath || '—')}</code></div>
             <div class="project-kv"><span class="lbl">Créé le</span><span class="muted-sm">${esc((p.createdAt || '').replace('T', ' ').slice(0, 19))}</span></div>
           </div>
@@ -741,6 +742,9 @@ async function projectFormModal(project) {
           ${wsNames.map((w) => `<option value="${esc(w)}" ${project?.workspace === w ? 'selected' : ''}>${esc(w)}</option>`).join('')}
         </select>
         <input id="pm-gitpath" placeholder="chemin git (ex: /home/coder/oniria)" value="${esc(project?.gitPath || '')}">
+        <label class="modal-field">Branche principale <span class="muted-sm">(obligatoire pour déployer)</span>
+          <input id="pm-main-branch" placeholder="ex: main, oniria-preprod" value="${esc(project?.mainBranch || '')}" required>
+        </label>
         <div class="modal-actions">
           <button type="button" class="ghost" id="modal-cancel">Annuler</button>
           <button type="submit" class="launch-btn">${editing ? 'Enregistrer' : 'Créer'}</button>
@@ -758,6 +762,7 @@ async function projectFormModal(project) {
         name: document.getElementById('pm-name').value.trim(),
         workspace: document.getElementById('pm-workspace').value,
         gitPath: document.getElementById('pm-gitpath').value.trim() || undefined,
+        mainBranch: document.getElementById('pm-main-branch').value.trim(),
       }) });
       closeModal();
       refreshActive();

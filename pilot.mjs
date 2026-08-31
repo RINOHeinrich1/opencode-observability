@@ -35,9 +35,12 @@ export async function listProjects() {
   return taskOrchestrator("project_list", {});
 }
 
-export async function createProject({ id, name, workspace, gitPath, createdBy }) {
+export async function createProject({ id, name, workspace, gitPath, mainBranch, createdBy }) {
   if (!id || !name) throw new Error("id et name requis pour créer un projet");
-  const reg = await taskOrchestrator("project_register", { id, name, workspace, gitPath, createdBy });
+  if (!mainBranch || !String(mainBranch).trim()) {
+    throw new Error("branche principale requise (obligatoire pour autoriser le déploiement)");
+  }
+  const reg = await taskOrchestrator("project_register", { id, name, workspace, gitPath, mainBranch: mainBranch.trim(), createdBy });
 
   // Bug 1 — crée automatiquement le répertoire du projet dans le workspace Coder
   // (mkdir + git init). Non bloquant : un échec (workspace arrêté/inconnu)

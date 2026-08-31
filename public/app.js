@@ -708,7 +708,7 @@ async function renderProjects() {
           </div>
           <div class="project-card-body">
             <div class="project-kv"><span class="lbl">Workspace Coder</span><span>${esc(p.workspace || '—')}</span></div>
-            <div class="project-kv"><span class="lbl">Branche principale</span>${p.mainBranch ? `<code class="muted-sm">${esc(p.mainBranch)}</code>` : '<span class="badge danger">manquante — déploiement bloqué</span>'}</div>
+            <div class="project-kv"><span class="lbl">Branche git principale</span>${p.mainBranch ? `<code class="muted-sm">${esc(p.mainBranch)}</code>` : '<span class="badge danger">manquante — déploiement bloqué</span>'}</div>
             <div class="project-kv"><span class="lbl">Chemin git</span><code class="muted-sm">${esc(p.gitPath || '—')}</code></div>
             <div class="project-kv"><span class="lbl">Créé le</span><span class="muted-sm">${esc((p.createdAt || '').replace('T', ' ').slice(0, 19))}</span></div>
           </div>
@@ -741,8 +741,8 @@ async function projectFormModal(project) {
           <option value="">— workspace Coder —</option>
           ${wsNames.map((w) => `<option value="${esc(w)}" ${project?.workspace === w ? 'selected' : ''}>${esc(w)}</option>`).join('')}
         </select>
-        <input id="pm-gitpath" placeholder="chemin git (ex: /home/coder/oniria)" value="${esc(project?.gitPath || '')}">
-        <label class="modal-field">Branche principale <span class="muted-sm">(obligatoire pour déployer)</span>
+        <input id="pm-gitpath" placeholder="chemin du dépôt sur disque (ex: /home/coder/oniria)" value="${esc(project?.gitPath || '')}">
+        <label class="modal-field">Branche git principale <span class="muted-sm">(obligatoire pour déployer)</span>
           <input id="pm-main-branch" placeholder="ex: main, oniria-preprod" value="${esc(project?.mainBranch || '')}" required>
         </label>
         <div class="modal-actions">

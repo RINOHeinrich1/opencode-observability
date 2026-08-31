@@ -5,6 +5,27 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.4.0 — 2026-08-30 · Observabilité Phase 3 (qualité, rework, coût)
+
+**Objectif** : compléter le dashboard avec les dimensions **Qualité** et
+**Coût vs Productivité** (les KPI worktree/ressources restent abandonnés).
+
+### Dashboard (panneau `opencode-observability`)
+
+- **Funnel qualité** : Completed → Audited → Accepted → Sans rework (barres
+  proportionnelles + taux d'audit / d'acceptation / de propreté).
+- **Rework dans le temps** (30 j) : reworks (transition plan `rework` +
+  recettes rejetées) par jour, avec taux rapporté au done du jour.
+- **Coût vs Throughput** (30 j) : coût journalier (sessions `opencode export`)
+  en barres + tâches done en ligne (double axe).
+- Endpoints : `/api/metrics/{quality,rework,costvsthroughput}`.
+
+### Dépôts impactés
+
+`opencode-observability` (v0.4.0). Aucune migration de schéma.
+
+---
+
 ## v0.3.0 — 2026-08-30 · Observabilité Phase 2 + durcissement (Phase 4)
 
 **Objectif** : enrichir le dashboard avec « où passe le temps » et « où sont

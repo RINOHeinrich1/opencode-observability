@@ -1114,6 +1114,20 @@ function obsCanvas(id) {
   return `<div class="chart-box"><canvas id="${id}" height="220"></canvas></div>`;
 }
 
+// Funnel qualité : barres horizontales proportionnelles à la 1re étape.
+function obsFunnel(f) {
+  if (!f) return '<p class="muted">Aucune donnée</p>';
+  const max = Math.max(1, f.completed || 0);
+  const stages = [
+    ['Completed', f.completed], ['Audited', f.audited], ['Accepted', f.accepted], ['Sans rework', f.noRework],
+  ];
+  return `<div class="funnel">${stages.map(([label, val]) => `
+    <div class="funnel-row"><span class="funnel-label">${esc(label)}</span>
+      <div class="funnel-bar"><div class="funnel-fill" style="width:${Math.round((val / max) * 100)}%"></div></div>
+      <span class="funnel-val">${val}</span>
+    </div>`).join('')}</div>`;
+}
+
 function kpiCard(label, value, sub, cls) {
   return `<div class="kpi-card${cls ? ' ' + cls : ''}"><div class="kpi-label">${esc(label)}</div><div class="kpi-value">${esc(String(value))}</div>${sub ? `<div class="kpi-sub">${esc(String(sub))}</div>` : ''}</div>`;
 }
@@ -1122,7 +1136,7 @@ async function renderObservability() {
   const pane = document.getElementById('pane-observability');
   pane.innerHTML = `<h2>Observabilité — KPI du système</h2><p class="muted">Flow · Orchestration · Agents · Quality (Phase 1 — v0.2.0)</p><p class="muted">Chargement…</p>`;
   try {
-    const [summary, statusData, throughputData, leadtimeData, agentsData, costsData, phasesData, blockedData, successfailureData, hardeningData] = await Promise.all([
+    const [summary, statusData, throughputData, leadtimeData, agentsData, costsData, phasesData, blockedData, successfailureData, hardeningData, qualityData, reworkData, cvtData] = await Promise.all([
       api('/api/metrics/summary'),
       api('/api/metrics/status'),
       api('/api/metrics/throughput?days=14'),
@@ -1133,6 +1147,9 @@ async function renderObservability() {
       api('/api/metrics/blocked?days=30'),
       api('/api/metrics/successfailure?days=14'),
       api('/api/metrics/hardening'),
+      api('/api/metrics/quality'),
+      api('/api/metrics/rework?days=30'),
+      api('/api/metrics/costvsthroughput?days=30'),
     ]);
 
     destroyObsCharts();
@@ -1198,6 +1215,34 @@ async function renderObservability() {
             ${kpiCard('Erreurs de transition', hardeningData.transitionErrors || 0, 'machine à états refusée')}
           </div>
           <p class="muted">Phase 4 — conflits de scope persistés (scope_conflicts) et erreurs de transition tracées (TRANSITION_ERROR) par le MCP task-orchestrator.</p>
+        </div>
+      </div>
+
+      <div class="obs-row">
+        <div class="obs-panel">
+          <h3>Funnel qualité</h3>
+          ${obsFunnel(qualityData.funnel)}
+          <p class="muted">« Audité » = tâche avec un événement AUDIT_COMPLETED (audits explicites). Taux : audit ${qualityData.auditRate ?? 0} % · acceptation ${qualityData.acceptanceRate ?? 0} % · sans rework ${qualityData.cleanRate ?? 0} %.</p>
+        </div>
+        <div class="obs-panel">
+          <h3>Durcissement — traçabilité</h3>
+          <div class="kpi-grid">
+            ${kpiCard('Décisions expirées', hardeningData.expiredDecisions, 'sans réponse')}
+            ${kpiCard('Conflits de scope', hardeningData.scopeConflicts?.total || 0, `${hardeningData.scopeConflicts?.open || 0} ouverts`)}
+            ${kpiCard('Erreurs de transition', hardeningData.transitionErrors || 0, 'machine à états refusée')}
+          </div>
+          <p class="muted">Phase 4 — conflits de scope persistés (scope_conflicts) et erreurs de transition tracées (TRANSITION_ERROR) par le MCP task-orchestrator.</p>
+        </div>
+      </div>
+
+      <div class="obs-row">
+        <div class="obs-panel">
+          <h3>Rework dans le temps (30 j)</h3>
+          ${obsCanvas('obs-rework')}
+        </div>
+        <div class="obs-panel">
+          <h3>Coût vs Throughput (30 j)</h3>
+          ${obsCanvas('obs-cvt')}
         </div>
       </div>
 
@@ -1286,6 +1331,29 @@ async function renderObservability() {
           ],
         },
         options: { scales: { x: { stacked: true }, y: { stacked: true } } },
+      });
+      // Phase 3 : rework dans le temps.
+      obsCharts.rework = new Chart(document.getElementById('obs-rework'), {
+        type: 'line',
+        data: { labels: reworkData.map((d) => d.day.slice(5)), datasets: [
+          { label: 'Reworks', data: reworkData.map((d) => d.rework), borderColor: '#e8590c', tension: 0.3 },
+          { label: 'Taux (%)', data: reworkData.map((d) => d.rate), borderColor: '#5f3dc4', tension: 0.3, yAxisID: 'y1' },
+        ] },
+        options: {
+          scales: { y: { title: { display: true, text: 'reworks' } }, y1: { position: 'right', grid: { drawOnChartArea: false }, title: { display: true, text: '%' } } },
+        },
+      });
+      // Phase 3 : coût vs throughput.
+      obsCharts.cvt = new Chart(document.getElementById('obs-cvt'), {
+        type: 'bar',
+        data: {
+          labels: cvtData.map((d) => d.day.slice(5)),
+          datasets: [
+            { label: 'Coût (€)', data: cvtData.map((d) => d.cost), backgroundColor: '#f59f00', yAxisID: 'y' },
+            { label: 'Done', data: cvtData.map((d) => d.done), type: 'line', borderColor: '#1971c2', tension: 0.3, yAxisID: 'y1' },
+          ],
+        },
+        options: { scales: { y: { position: 'left', title: { display: true, text: '€' } }, y1: { position: 'right', grid: { drawOnChartArea: false }, title: { display: true, text: 'tâches' } } } },
       });
     }
   } catch (e) {

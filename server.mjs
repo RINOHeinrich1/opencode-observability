@@ -615,6 +615,14 @@ const server = createServer(async (req, res) => {
     }
     // Phase 4 — durcissement (décisions expirées, conflits de scope)
     if (path === "/api/metrics/hardening" && req.method === "GET") return sendJson(res, 200, await metrics.hardening(registry()));
+    // Phase 3 (hors worktree) — qualité : funnel, rework, cost vs throughput
+    if (path === "/api/metrics/quality" && req.method === "GET") return sendJson(res, 200, await metrics.quality(registry()));
+    if (path === "/api/metrics/rework" && req.method === "GET") {
+      return sendJson(res, 200, await metrics.rework(registry(), Number(url.searchParams.get("days") || 14)));
+    }
+    if (path === "/api/metrics/costvsthroughput" && req.method === "GET") {
+      return sendJson(res, 200, await metrics.costvsthroughput(registry(), Number(url.searchParams.get("days") || 14)));
+    }
 
     if (path === "/") return serveFile(res, "index.html");
     return serveFile(res, path.slice(1));

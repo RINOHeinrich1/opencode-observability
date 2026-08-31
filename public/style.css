@@ -526,3 +526,11 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 .obs-panel h3 { margin: 0 0 10px; font-size: 14px; }
 .chart-box { position: relative; min-height: 220px; }
 @media (max-width: 900px) { .obs-row { grid-template-columns: 1fr; } }
+
+/* ===== Funnel qualité (Phase 3) ===== */
+.funnel { display: flex; flex-direction: column; gap: 8px; }
+.funnel-row { display: flex; align-items: center; gap: 10px; }
+.funnel-label { width: 110px; font-size: 12px; color: var(--text); }
+.funnel-bar { flex: 1; background: rgba(255,255,255,0.06); border-radius: 5px; height: 18px; }
+.funnel-fill { height: 100%; background: linear-gradient(90deg, #2f9e44, #40c057); border-radius: 5px; }
+.funnel-val { width: 34px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }

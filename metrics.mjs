@@ -2,7 +2,7 @@
 // Lit le registre PostgreSQL `task_registry` (pool passé en argument).
 // Phase 1 (v0.2.0) : summary, leadtime (P50/moyen/P95 + histogramme), status,
 // throughput, agents (exécution), coûts (via usage.mjs).
-import { globalUsage } from "./usage.mjs";
+import { globalUsage, sessionUsage } from "./usage.mjs";
 
 // Statuts "en cours" (toute exécution non terminale hors done/blocked/failed/aborted/crashed).
 const ACTIVE = ["queued", "started", "planning", "awaiting_validation", "planned", "in_progress", "validating", "review", "merge_pending", "merged", "deploy_pending", "deploying", "deployed", "post_deploy_verified"];
@@ -411,4 +411,79 @@ export async function hardening(pool) {
     transitionErrors = (await pool.query("SELECT COUNT(*)::int AS n FROM events WHERE type = 'TRANSITION_ERROR'")).rows[0].n;
   } catch {}
   return { expiredDecisions: expired, scopeConflicts: conflicts, transitionErrors };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 (hors worktree) — qualité : funnel, rework trend, cost vs throughput
+// ---------------------------------------------------------------------------
+
+/** Funnel qualité : Completed → Audited → Accepted → Sans rework. */
+export async function quality(pool) {
+  const tasks = await baseTasks(pool);
+  const done = tasks.filter((t) => t.status === "done");
+  const auditedSet = new Set(
+    (await pool.query("SELECT DISTINCT task_id FROM events WHERE type = 'AUDIT_COMPLETED'")).rows.map((r) => r.task_id),
+  );
+  const reworkedSet = new Set(
+    (await pool.query("SELECT DISTINCT task_id FROM executions WHERE rework_count > 0")).rows.map((r) => r.task_id),
+  );
+  const rejectedSet = new Set(
+    (await pool.query("SELECT DISTINCT task_id FROM decisions WHERE kind = 'recette' AND status = 'rejected'")).rows.map((r) => r.task_id),
+  );
+  const completed = done.length;
+  const audited = done.filter((t) => auditedSet.has(t.id)).length;
+  const accepted = done.filter((t) => t.recetteStatus === "approved").length;
+  const noRework = done.filter((t) => t.recetteStatus === "approved" && !reworkedSet.has(t.id) && !rejectedSet.has(t.id)).length;
+  return {
+    funnel: { completed, audited, accepted, noRework },
+    auditRate: completed ? Math.round((audited / completed) * 1000) / 10 : 0,
+    acceptanceRate: completed ? Math.round((accepted / completed) * 1000) / 10 : 0,
+    cleanRate: completed ? Math.round((noRework / completed) * 1000) / 10 : 0,
+  };
+}
+
+/** Rework dans le temps : reworks (plan + recette rejetée) par jour + taux. */
+export async function rework(pool, days = 14) {
+  const planRw = (await pool.query(`
+    SELECT to_char(date_trunc('day', ts::timestamptz)::date, 'YYYY-MM-DD') AS day, COUNT(*)::int AS n
+    FROM events WHERE type = 'TRANSITION' AND (detail::jsonb->>'to') = 'rework'
+      AND ts::timestamptz >= now() - ($1 || ' days')::interval
+    GROUP BY 1
+  `, [days])).rows;
+  const recRej = (await pool.query(`
+    SELECT to_char(date_trunc('day', resolved_at::timestamptz)::date, 'YYYY-MM-DD') AS day, COUNT(*)::int AS n
+    FROM decisions WHERE kind = 'recette' AND status = 'rejected' AND resolved_at IS NOT NULL
+      AND resolved_at::timestamptz >= now() - ($1 || ' days')::interval
+    GROUP BY 1
+  `, [days])).rows;
+  const map = {};
+  for (const r of planRw) map[r.day] = (map[r.day] || 0) + r.n;
+  for (const r of recRej) map[r.day] = (map[r.day] || 0) + r.n;
+  const donePerDay = new Map((await throughput(pool, days)).map((d) => [d.day, d.done]));
+  return Object.keys(map).sort()
+    .map((day) => {
+      const done = donePerDay.get(day) || 0;
+      return { day, rework: map[day], rate: done ? Math.round((map[day] / done) * 1000) / 10 : 0 };
+    });
+}
+
+/** Coût journalier (sessions) vs throughput (done / jour). */
+export async function costvsthroughput(pool, days = 14) {
+  const sessions = (await pool.query("SELECT session_id, created_at FROM task_sessions WHERE session_id IS NOT NULL ORDER BY id ASC")).rows;
+  const costByDay = {};
+  for (const s of sessions) {
+    const day = s.created_at ? new Date(s.created_at).toISOString().slice(0, 10) : null;
+    if (!day) continue;
+    const u = sessionUsage(s.session_id);
+    costByDay[day] = (costByDay[day] || 0) + (u.cost || 0);
+  }
+  const tp = await throughput(pool, days);
+  const tpMap = new Map(tp.map((d) => [d.day, d.done]));
+  const start = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+  const daysList = [...new Set([...Object.keys(costByDay), ...tpMap.keys()])].filter((d) => d >= start).sort();
+  return daysList.map((day) => ({
+    day,
+    cost: Math.round((costByDay[day] || 0) * 100000) / 100000,
+    done: tpMap.get(day) || 0,
+  }));
 }

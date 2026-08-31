@@ -5,6 +5,39 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.4.1 — 2026-08-31 · Correctifs (7 bugs d'utilisation)
+
+### Corrections
+
+1. **Création automatique du projet** : `createProject` crée désormais le
+   répertoire (+ `git init`) dans le workspace Coder via `workspace_exec`
+   (non bloquant, avertissement si workspace injoignable).
+2. **Attente humaine visible** : les tâches avec une décision en attente
+   (validation/review/recette) affichent un badge « ⏳ attente humaine » dans la
+   liste des tâches (drapeau `waiting_human` ajouté à `/api/tasks`).
+3. **Consommation** : régression v0.2.0 corrigée — `taskConsumption(taskId,
+   registry())` (l'appel omettait la connexion DB, d'où « Aucune session
+   enregistrée »).
+4. **Décisions → réveil de la session** : après approbation/rejet depuis le
+   panneau, un message est injecté dans la session orchestrateur pour qu'elle
+   continue automatiquement (`injectMessage`, non bloquant).
+5. **Rework — session préremplie** : la modale « Reprendre » préremplit la
+   session courante (dernière session de la tâche).
+6. **Rework — remarques préremplies** : la remarque de reprise reprend par défaut
+   la remarque de rejet de la recette.
+7. **Rework bloqué** : la machine à états TÂCHE accepte désormais
+   `rework → planned/in_progress/…/done` (état non terminal) ; le panneau
+   affiche « Reprendre » et « Tuer la session » pour le statut `rework` ; le
+   prompt orchestrateur documente la reprise (`rework → in_progress → done →
+   ré-ouverture recette`).
+
+### Dépôts impactés
+
+`opencode-observability` (v0.4.1) · `opencode-mcp-task-orchestrator` (v0.2.1,
+statemachine) · `opencode-agents` (prompt orchestrateur §13).
+
+---
+
 ## v0.4.0 — 2026-08-30 · Observabilité Phase 3 (qualité, rework, coût)
 
 **Objectif** : compléter le dashboard avec les dimensions **Qualité** et

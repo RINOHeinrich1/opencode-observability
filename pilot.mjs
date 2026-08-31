@@ -37,7 +37,28 @@ export async function listProjects() {
 
 export async function createProject({ id, name, workspace, gitPath, createdBy }) {
   if (!id || !name) throw new Error("id et name requis pour créer un projet");
-  return taskOrchestrator("project_register", { id, name, workspace, gitPath, createdBy });
+  const reg = await taskOrchestrator("project_register", { id, name, workspace, gitPath, createdBy });
+
+  // Bug 1 — crée automatiquement le répertoire du projet dans le workspace Coder
+  // (mkdir + git init). Non bloquant : un échec (workspace arrêté/inconnu)
+  // renvoie un avertissement sans empêcher l'enregistrement du projet.
+  let dirCreated = false;
+  let dirWarning = null;
+  if (workspace) {
+    try {
+      const folder = gitPath ? String(gitPath).split("/").filter(Boolean).pop() : id;
+      const exec = await coderWorkspaces("workspace_exec", {
+        workspace,
+        cwd: "/home/coder",
+        command: `mkdir -p "${folder}" && cd "${folder}" && git init -b main >/dev/null 2>&1; echo OK`,
+      });
+      dirCreated = !!(exec && exec.ok);
+      if (!dirCreated) dirWarning = "répertoire non créé (workspace injoignable)";
+    } catch (e) {
+      dirWarning = `répertoire non créé : ${(e && e.message) || e}`;
+    }
+  }
+  return { ...reg, dirCreated, dirWarning };
 }
 
 export async function deleteProject(id) {
@@ -76,7 +97,32 @@ export async function scopeConflict(project, scope) {
 // atomique vers approved/rejected (Plan A).
 export async function resolveDecision({ decisionId, status, resolution, by }) {
   if (!decisionId || !status) throw new Error("decisionId et status requis");
-  return taskOrchestrator("decision_resolve", { decisionId, status, resolution, by: by || "human" });
+  const r = await taskOrchestrator("decision_resolve", { decisionId, status, resolution, by: by || "human" });
+
+  // Bug 4 — réveille la session orchestrateur pour qu'elle continue
+  // automatiquement après la résolution (plus besoin de retaper un message).
+  try {
+    const decision = r && (r.decision || r.decisions);
+    const taskId = decision && decision.taskId;
+    if (taskId && status !== "permission") {
+      const t = await taskOrchestrator("task_get", { taskId });
+      const sessions = (t && t.sessions) || [];
+      const sid = sessions.length ? sessions[sessions.length - 1].sessionId : (t && t.task && t.task.sessionId);
+      if (sid) {
+        const dir = await projectGitPath((t && t.task && t.task.project) || null);
+        const verdict = status === "approved" ? "approuvée" : "rejetée";
+        injectMessage({
+          sessionId: sid,
+          dir,
+          prompt: `La décision ${decisionId} a été ${verdict} par l'humain${resolution ? ` avec les remarques : ${resolution}` : ""}. Poursuis l'orchestration de la tâche ${taskId} : récupère l'état via task_get, applique la suite (validation/review/merge) sans demander de confirmation.`,
+        });
+      }
+    }
+  } catch {
+    /* réveil non bloquant (session absente/expirée) */
+  }
+
+  return r;
 }
 
 // Validation de la recette (acceptation humaine après déploiement) : approved/rejected

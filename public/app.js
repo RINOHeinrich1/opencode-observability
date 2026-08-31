@@ -133,7 +133,7 @@ async function renderTasks() {
         <td>${esc(t.project)}</td>
         <td>${esc(t.type)}</td>
         <td>${esc(t.priority)}</td>
-        <td>${badge(t.status)}</td>
+        <td>${badge(t.status)}${t.waiting_human ? '<span class="badge waiting-human" title="Une décision humaine est en attente (validation / review / recette)">⏳ attente humaine</span>' : ''}</td>
         <td>${recetteBadge(t.recette_status)}</td>
         <td>${esc((t.request || '').slice(0, 70))}</td>
         <td>${sessionLink(t.session_id)}</td>
@@ -886,8 +886,8 @@ async function taskActionsModal(taskId) {
         <div class="actions-buttons">
           ${status === 'queued' ? `<button class="launch-btn" id="act-launch">Lancer</button>` : ''}
           ${status === 'aborted' ? `<button class="launch-btn" id="act-relaunch">Relancer</button>` : ''}
-          ${(status === 'rejected' || status === 'failed' || (status === 'done' && recette === 'rejected')) ? `<button id="act-rework">Reprendre</button>` : ''}
-          ${['started','planning','awaiting_validation','planned','in_progress','blocked'].includes(status) ? `<button class="danger" id="act-kill">Tuer la session</button>` : ''}
+          ${(status === 'rejected' || status === 'failed' || status === 'rework' || (status === 'done' && recette === 'rejected')) ? `<button id="act-rework">Reprendre</button>` : ''}
+          ${['started','planning','awaiting_validation','planned','in_progress','rework','blocked'].includes(status) ? `<button class="danger" id="act-kill">Tuer la session</button>` : ''}
           ${ME && ME.is_admin ? `<button class="danger" id="act-archive">Archiver</button>` : ''}
         </div>
       </div>
@@ -1007,20 +1007,33 @@ async function launchTaskModal(taskId) {
 }
 
 async function reworkTaskModal(taskId) {
+  // Bug 5/6 — préremplir la session courante et les remarques (rejet de recette).
+  let latestSession = '';
+  let defaultRemarks = '';
+  try {
+    const d = await api(`/api/tasks/${encodeURIComponent(taskId)}`);
+    const sessions = (d.sessions && d.sessions.length) ? d.sessions : [];
+    if (sessions.length) latestSession = sessions[sessions.length - 1].sessionId || '';
+    const rejectedRecette = (d.decisions || []).filter((x) => x.kind === 'recette' && x.status === 'rejected');
+    if (rejectedRecette.length) defaultRemarks = rejectedRecette[rejectedRecette.length - 1].resolution || '';
+  } catch { /* valeurs par défaut vides */ }
+
   showModal(`
     <div class="modal">
       <h2>Reprendre la tâche</h2>
       <p class="muted">Tâche <span class="code">${esc(taskId)}</span></p>
-      <textarea id="rework-remarks" class="modal-textarea" placeholder="remarques de reprise"></textarea>
+      <label class="modal-field">Remarques de reprise
+        <textarea id="rework-remarks" class="modal-textarea" placeholder="remarques de reprise">${esc(defaultRemarks)}</textarea>
+      </label>
       <label class="modal-field">Mode
         <select id="rework-mode">
           <option value="fresh">Nouvelle session vierge (choix 3)</option>
-          <option value="continue">Continuer la session courante (choix 1)</option>
+          <option value="continue" ${latestSession ? '' : 'disabled'}>Continuer la session courante (choix 1)${latestSession ? '' : ' — aucune session active'}</option>
         </select>
       </label>
       <div id="rework-session-wrap" hidden>
         <label class="modal-field">Session courante
-          <input id="rework-session" placeholder="ses_…">
+          <input id="rework-session" placeholder="ses_…" value="${esc(latestSession)}">
         </label>
       </div>
       <div class="modal-actions">

@@ -165,7 +165,9 @@ async function registryTasks(url) {
       `SELECT t.id, t.project, t.type, t.priority, t.request, t.created_at, t.session_id, t.recette_status,
          ${latestStatusSubquery()} AS status,
          (SELECT attempt FROM executions e WHERE e.task_id = t.id ORDER BY attempt DESC LIMIT 1) AS attempt,
-         (SELECT rework_count FROM executions e WHERE e.task_id = t.id ORDER BY attempt DESC LIMIT 1) AS rework_count
+         (SELECT rework_count FROM executions e WHERE e.task_id = t.id ORDER BY attempt DESC LIMIT 1) AS rework_count,
+         EXISTS (SELECT 1 FROM decisions d WHERE d.task_id = t.id AND d.status = 'awaiting'
+                 AND d.kind IN ('validation','review','recette')) AS waiting_human
        FROM tasks t ORDER BY t.created_at DESC`,
     );
     rows = res.rows.filter((r) => !archived.has(r.id));
@@ -187,7 +189,8 @@ async function registryTaskDetail(id) {
   const deployments = await q("SELECT * FROM deployments WHERE task_id = $1 ORDER BY id DESC", [id]);
   const decisions = await q("SELECT * FROM decisions WHERE task_id = $1 ORDER BY id DESC", [id]);
   const artifacts = await q("SELECT * FROM artifacts WHERE task_id = $1 ORDER BY id DESC", [id]);
-  return { task, executions, events, deployments, decisions, artifacts, archived: (await archivedTaskIds()).has(id) };
+  const sessions = await q("SELECT session_id, kind, created_at FROM task_sessions WHERE task_id = $1 ORDER BY id ASC", [id]);
+  return { task, executions, events, deployments, decisions, artifacts, sessions, archived: (await archivedTaskIds()).has(id) };
 }
 
 async function snapshotForTask(taskId) {
@@ -576,7 +579,7 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 200, await registryPlans(u));
       }
       if (path.endsWith("/consumption") && req.method === "GET") {
-        return sendJson(res, 200, await taskConsumption(taskId));
+        return sendJson(res, 200, await taskConsumption(taskId, registry()));
       }
       return sendJson(res, 200, await registryTaskDetail(taskId));
     }

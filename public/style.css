@@ -550,3 +550,6 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 .funnel-bar { flex: 1; background: rgba(255,255,255,0.06); border-radius: 5px; height: 18px; }
 .funnel-fill { height: 100%; background: linear-gradient(90deg, #2f9e44, #40c057); border-radius: 5px; }
 .funnel-val { width: 34px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+
+/* ===== Badge « attente humaine » (correctif bug 2) ===== */
+.badge.waiting-human { background: #f08c00; color: #fff; }

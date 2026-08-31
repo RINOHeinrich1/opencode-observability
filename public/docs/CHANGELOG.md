@@ -5,6 +5,31 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.5.2 — 2026-08-31 · Garde « recette validée = tâche clôturée »
+
+**Problème** : après l'approbation de la recette, la session orchestrateur
+restait vivante et continuait d'accepter de nouvelles demandes (relance
+d'exécution, nouvelles décisions validation/review/recette) sur une tâche déjà
+clôturée — l'utilisateur ne pouvait plus valider.
+
+**Correctifs (défense en profondeur)** :
+
+- **Prompt orchestrateur** (`opencode-agents`) : à **chaque tour**, `task_get`
+  → si `recette_status='approved'`, la tâche est **clôturée** : aucune nouvelle
+  demande, décision, transition, exécution ou déploiement.
+- **Panneau** (`pilot.resolveRecette`) : à l'**approbation** de la recette, la
+  session orchestrateur est **tuée** (`killSession`) — elle ne peut plus
+  accepter de requêtes. (Non tuée en cas de rejet : le rework en a besoin.)
+- **MCP `task-orchestrator`** (gardes dures) : `task_transition`,
+  `plan_transition` et `decision_request` refusent toute opération sur une tâche
+  dont la recette est déjà validée (erreur explicite + `TRANSITION_ERROR` pour
+  les transitions).
+
+**Dépôts impactés** : `opencode-observability` (v0.5.2) ·
+`opencode-mcp-task-orchestrator` (v0.3.1) · `opencode-agents` (v0.1.5).
+
+---
+
 ## v0.5.1 — 2026-08-31 · Docs opérationnelles synchronisées (état v0.5.0)
 
 Synchronisation de la documentation de référence avec l'état courant :

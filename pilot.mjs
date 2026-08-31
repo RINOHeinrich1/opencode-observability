@@ -132,7 +132,20 @@ export async function resolveDecision({ decisionId, status, resolution, by }) {
 // + remarques, tracée comme décision kind="recette", colonne recette_status.
 export async function resolveRecette({ taskId, status, resolution, by }) {
   if (!taskId || !status) throw new Error("taskId et status requis");
-  return taskOrchestrator("task_recette", { taskId, status, resolution, by: by || "human" });
+  const r = await taskOrchestrator("task_recette", { taskId, status, resolution, by: by || "human" });
+
+  // Recette APPROUVÉE = tâche clôturée (v0.5.2) : tuer la session orchestrateur
+  // pour qu'elle n'accepte plus aucune demande (elle resterait sinon vivante et
+  // continuerait de traiter des requêtes sur une tâche déjà validée).
+  if (status === "approved") {
+    try {
+      const t = await taskOrchestrator("task_get", { taskId });
+      const sessions = (t && t.sessions) || [];
+      const sid = sessions.length ? sessions[sessions.length - 1].sessionId : (t && t.task && t.task.sessionId);
+      if (sid) killSession({ taskId, sessionId: sid });
+    } catch { /* non bloquant */ }
+  }
+  return r;
 }
 
 // Résout le chemin git d'un projet (pour le --dir de la session orchestrateur).

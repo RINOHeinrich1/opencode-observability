@@ -33,10 +33,10 @@
 
 | Dépôt | Chemin hôte | Version actuelle |
 |---|---|---|
-| `opencode-observability` (panneau + docs) | `/root/orchestrator-panel` | `0.5.1` |
+| `opencode-observability` (panneau + docs) | `/root/orchestrator-panel` | `0.5.2` |
 | `opencode-agents` | `~/.config/opencode/agent` | `0.1.0` |
 | `opencode-notifier` | `~/.config/opencode/notifier` | `0.1.0` |
-| `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.3.0` |
+| `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.3.1` |
 | `opencode-mcp-plan-manager` | `~/.config/opencode/mcp/plan-manager` | `0.1.0` |
 | `opencode-mcp-audit-manager` | `~/.config/opencode/mcp/audit-manager` | `0.1.0` |
 | `opencode-mcp-coder-workspaces` | `~/.config/opencode/mcp/coder-workspaces` | `0.1.0` |
@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.5.1** (2026-08-31,
-Docs opérationnelles synchronisées (état v0.5.0).
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.5.2** (2026-08-31,
+Garde « recette validée = tâche clôturée ».

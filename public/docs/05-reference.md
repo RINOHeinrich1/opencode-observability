@@ -11,12 +11,12 @@ Base `task_registry` :
 | Table | Rôle | Colonnes clés |
 |---|---|---|
 | `tasks` | Tâche (le « quoi ») | `id`, `request`, `project`, `type`, `audit_target`, `priority`, `scope`, `recette_status`, `version` |
-| `projects` | Projet enregistré | `id`, `name`, `workspace`, `git_path` |
+| `projects` | Projet enregistré | `id`, `name`, `workspace`, `git_path`, `main_branch` (obligatoire pour déployer) |
 | `executions` | Exécution de la tâche (statut grossier) | `execution_id`, `task_id`, `attempt`, `status` |
 | `task_sessions` | Sessions opencode liées à une tâche (append-only) | `task_id`, `session_id`, `kind`, `created_at` |
 | `plan_executions` | Exécution d'un plan (cycle complet) | `plan_id`, `attempt`, `status` |
 | `plan_commits` | Commits d'un plan (trace append-only, fichiers + diff) | `plan_id`, `sha`, `message`, `files`, `created_at` |
-| `events` | Journal append-only | `event_id`, `task_id`, `type`, `by`, `detail` |
+| `events` | Journal append-only | `event_id`, `task_id`, `type`, `by`, `detail` (dont `TRANSITION`, `TRANSITION_ERROR`, `BLOCKED`, `AUDIT_COMPLETED`…) |
 | `deployments` | Suivi CI/CD | `deployment_id`, `task_id`, `status` |
 | `decisions` | Décisions humaines | `decision_id`, `task_id`, `kind`, `status`, `plan_id`, `resolution` |
 | `participants` | Agents participants | `task_id`, `agent`, `role` |
@@ -26,6 +26,7 @@ Base `task_registry` :
 | `plan_steps` | Étapes d'un plan | `plan_id`, `step_id`, `status` |
 | `plan_incidents` / `plan_inconsistencies` | Incidents / incohérences | `plan_id`, `status` |
 | `plan_counters` | Compteurs INC-/INCO- | `name`, `value` |
+| `scope_conflicts` | Conflits de scope persistés (v0.3.0) | `project`, `scope`, `conflicting_task_id`, `worktree_id`, `status` |
 | `notifier_state` | High-water marks du notifier (v0.1.0) | `stream`, `last_id`, `last_ts` |
 | `notifier_dedup` | Déduplication des envois (v0.1.0) | `stream`, `key`, `sent_at` |
 | `audit_notifications` | Miroir des incidents/incohérences d'audit (v0.1.0) | `id`, `kind`, `audit_id`, `status`, `resolved_at` |
@@ -38,19 +39,27 @@ Base `panel` : `users`, `sessions`, `archives`.
 ```
 queued → started → planning → awaiting_validation → planned → in_progress → done
 (+ blocked / failed / aborted / crashed ; done → rework)
+rework → planned / in_progress / blocked / failed / aborted / done   (v0.2.1 : rework NON terminal)
 ```
 
 **Plan** (`PLAN_TRANSITIONS`) — cycle complet :
 ```
 planned → in_progress → validating → review → approved → merge_pending → merged
         → deploy_pending → deploying → deployed → post_deploy_verified → done
-(+ rejected → rework ; blocked / failed / aborted)
+(+ rejected → rework ; rework → in_progress ; blocked / failed / aborted)
 ```
 
 **Recette** (colonne `recette_status`) : `pending → approved/rejected`, indépendante du
-statut d'exécution.
+statut d'exécution. Une recette rejetée rouvre l'exécution (`done → rework`).
 
-## 3. Configuration
+## 3. Endpoints observabilité (panneau, v0.2.0 → v0.4.0)
+
+`GET /api/metrics/*` (authentifié) — dashboard « Observabilité » :
+`summary` · `status` · `throughput` · `leadtime` · `agents` · `costs` · `phases` ·
+`timeline?taskId=` · `blocked` · `successfailure` · `quality` · `rework` ·
+`costvsthroughput` · `hardening`. Consommation : `GET /api/tasks/<id>/consumption`.
+
+## 4. Configuration
 
 **`~/.config/opencode/.env`** :
 ```
@@ -70,7 +79,7 @@ en cache au démarrage, le `--model` explicite garantit la prise en compte).
 
 **`docker-compose.yml`** : PostgreSQL (voir `04-reproduction.md`).
 
-## 4. Glossaire
+## 5. Glossaire
 
 | Terme | Définition |
 |---|---|
@@ -82,6 +91,7 @@ en cache au démarrage, le `--model` explicite garantit la prise en compte).
 | Worktree | Checkout git isolé, créé/supprimé par l'agent exécutant. |
 | État / State | Statut d'exécution (tâche ou plan). |
 | Agrégation | Transition de tâche déclenchée quand toutes les décisions d'un type sont résolues. |
+| Branche principale | `main_branch` d'un projet — obligatoire pour autoriser le déploiement (pull avant push). |
 
 ---
 
@@ -92,7 +102,7 @@ en cache au démarrage, le `--model` explicite garantit la prise en compte).
 | Table | Role | Key columns |
 |---|---|---|
 | `tasks` | Task (the "what") | `id`, `request`, `project`, `type`, `audit_target`, `priority`, `scope`, `recette_status`, `version` |
-| `projects` | Registered project | `id`, `name`, `workspace`, `git_path` |
+| `projects` | Registered project | `id`, `name`, `workspace`, `git_path`, `main_branch` (required to deploy) |
 | `executions` | Task execution (coarse status) | `execution_id`, `task_id`, `attempt`, `status` |
 | `task_sessions` | opencode sessions linked to a task (append-only) | `task_id`, `session_id`, `kind`, `created_at` |
 | `plan_executions` | Plan execution (full cycle) | `plan_id`, `attempt`, `status` |
@@ -107,15 +117,27 @@ en cache au démarrage, le `--model` explicite garantit la prise en compte).
 | `plan_steps` | Plan steps | `plan_id`, `step_id`, `status` |
 | `plan_incidents` / `plan_inconsistencies` | Incidents / inconsistencies | `plan_id`, `status` |
 | `plan_counters` | INC-/INCO- counters | `name`, `value` |
+| `scope_conflicts` | Persisted scope conflicts (v0.3.0) | `project`, `scope`, `conflicting_task_id`, `worktree_id`, `status` |
+| `notifier_state` | Notifier high-water marks (v0.1.0) | `stream`, `last_id`, `last_ts` |
+| `notifier_dedup` | Send dedup (v0.1.0) | `stream`, `key`, `sent_at` |
+| `audit_notifications` | Audit incidents/inconsistencies mirror (v0.1.0) | `id`, `kind`, `audit_id`, `status`, `resolved_at` |
 
 Database `panel`: `users`, `sessions`, `archives`.
 
 **2. State machines** — **Task** (coarse): `queued → started → planning →
 awaiting_validation → planned → in_progress → done` (+ `blocked`/`failed`/`aborted`/
-`crashed`; `done → rework`). **Plan** (full): `planned → in_progress → validating →
-review → approved → merge_pending → merged → deploy_pending → deploying → deployed →
-post_deploy_verified → done` (+ `rejected → rework`). **Acceptance**
-(`recette_status`): `pending → approved/rejected`, independent of execution status.
+`crashed`; `done → rework`; since v0.2.1 `rework` is **non-terminal**:
+`rework → planned / in_progress / blocked / failed / aborted / done`). **Plan** (full):
+`planned → in_progress → validating → review → approved → merge_pending → merged →
+deploy_pending → deploying → deployed → post_deploy_verified → done` (+ `rejected →
+rework`). **Acceptance** (`recette_status`): `pending → approved/rejected`, independent
+of execution status.
+
+**3. Observability endpoints** (panel, v0.2.0 → v0.4.0) — authenticated
+`GET /api/metrics/*`: `summary` · `status` · `throughput` · `leadtime` · `agents` ·
+`costs` · `phases` · `timeline?taskId=` · `blocked` · `successfailure` · `quality` ·
+`rework` · `costvsthroughput` · `hardening`. Consumption:
+`GET /api/tasks/<id>/consumption`.
 
 **3. Configuration** — `~/.config/opencode/.env` (`DATABASE_URL`, `PANEL_DATABASE_URL`,
 `OPENCODE_SERVER_PASSWORD`), `opencode.jsonc` (MCP servers + plugins), agent `.md` files

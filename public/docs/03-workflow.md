@@ -12,6 +12,7 @@ queued → started → planning → awaiting_validation → planned → in_progr
                                                                           │
                                                               [recette]   ▼
                                                      pending → approved / rejected
+                                                     rejet → done → rework → in_progress → done (v0.2.1)
 ```
 
 | État | Signification | Qui le pose |
@@ -22,8 +23,13 @@ queued → started → planning → awaiting_validation → planned → in_progr
 | `awaiting_validation` | Plans à valider | orchestrator |
 | `planned` | Plans validés | `decision_resolve` (agrégation auto) |
 | `in_progress` | Plans en exécution | orchestrator |
+| `rework` | Reprise après rejet humain/recette (**non terminal** depuis v0.2.1) | panneau/orchestrator |
 | `done` | Tous les plans terminés | orchestrator |
 | recette `pending/approved/rejected` | Acceptation humaine après déploiement | humain (bouton « Valider la recette ») |
+
+**Attente humaine visible** (v0.4.1) : une tâche avec une décision en attente
+(validation/review/recette) affiche un badge « ⏳ attente humaine » dans la liste,
+même si son statut grossier reste `in_progress`.
 
 ## 2. Cycle de vie d'un plan (sous-tâche)
 
@@ -76,6 +82,20 @@ Mécanisme : **hybride** — triggers PostgreSQL `LISTEN/NOTIFY` (réactivité) 
 polling de rattrapage (`notifier_state` = high-water marks, reprise propre).
 Envoi via l'unique primitives SMTP `scripts/send-mail.mjs`. Aucun agent n'appelle
 plus ce script ; l'outil MCP `notify` a été retiré des serveurs.
+
+## 4bis. Branche principale & déploiement (v0.5.0)
+
+- Chaque projet définit une **branche principale** (`main_branch`), **obligatoire
+  depuis le panneau** (Projets → Modifier). Sans elle, **aucun déploiement n'est
+  autorisé** (l'orchestrateur passe la tâche en `blocked`).
+- **Avant de pousser** vers git, on **pull depuis la branche principale**
+  (`git pull --rebase origin <mainBranch>`) pour intégrer les derniers
+  changements (consigne orchestrateur §7-8/§12 + exécuteur build-notify).
+- **Décisions depuis le panneau** (v0.4.1) : approuver/rejeter une décision
+  réveille la session orchestrateur (`injectMessage`) — pas besoin de retaper le
+  verdict.
+- **Création de projet** (v0.4.1) : le répertoire est créé automatiquement dans
+  le workspace Coder (`mkdir` + `git init`).
 
 ## 5. Séquence type (exemple à 2 plans)
 

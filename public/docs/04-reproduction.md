@@ -117,8 +117,10 @@ Node (`server.mjs` + `pilot.mjs` + `session-bridge.mjs` + `public/`), PM2.
 > ```
 > Crée un panneau web Node de supervision d'orchestrateur : lecture seule du registre
 > PostgreSQL, endpoints REST (tasks, plans, decisions, deployments, events, artifacts,
-> archives, consommation par session, modèles d'agents), auth par cookie, et pilotage
-> (lancer/rework/kill/relaunch/recette) via MCP.
+> archives, consommation par session, modèles d'agents, **métriques KPI /api/metrics/***),
+> auth par cookie, et pilotage (lancer/rework/kill/relaunch/recette) via MCP.
+> Onglet « Observabilité » : KPI cards + graphiques Chart.js (vendu localement)
+> + table de performance des agents.
 > ```
 
 ## 7. Étape 6 — Workspace Coder + scripts/plugins + notifier
@@ -137,10 +139,13 @@ Node (`server.mjs` + `pilot.mjs` + `session-bridge.mjs` + `public/`), PM2.
 ## 8. Étape 7 — Vérification de bout en bout
 
 1. Démarrer PostgreSQL, le registre, le panneau, le notifier.
-2. Créer un projet + une tâche, lancer : `queued → started → planning → …`.
-3. Vérifier la validation/review par plan, le déploiement, la recette.
-4. Vérifier la traçabilité (événements, décisions) et les notifications
-   (le notifier signale l'utilisateur à chaque changement d'état pertinent).
+2. Créer un projet (**branche principale obligatoire**) + une tâche, lancer :
+   `queued → started → planning → …`.
+3. Vérifier la validation/review par plan, le déploiement, la recette, et le
+   **rework** (rejet de recette → `rework → in_progress → done`).
+4. Vérifier la traçabilité (événements, décisions), les notifications
+   (le notifier signale l'utilisateur à chaque changement d'état pertinent),
+   et l'onglet **Observabilité** (KPI, graphiques, agents).
 
 ---
 

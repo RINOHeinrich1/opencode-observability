@@ -1,8 +1,9 @@
 # Framework d'orchestration opencode — Documentation
 
 > **FR** — Documentation exhaustive du framework d'orchestration d'agents IA
-> (panneau web + orchestrator + sous-agents + MCP/Skills + Coder + Git/CI-CD).
-> **EN** — Exhaustive documentation of the AI-agents orchestration framework.
+> (panneau web + orchestrator + sous-agents + MCP/Skills + Coder + Git/CI-CD +
+> **observabilité/KPI**). **EN** — Exhaustive documentation of the AI-agents
+> orchestration framework.
 
 ---
 

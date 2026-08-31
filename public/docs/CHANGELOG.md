@@ -5,6 +5,27 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.5.1 — 2026-08-31 · Docs opérationnelles synchronisées (état v0.5.0)
+
+Synchronisation de la documentation de référence avec l'état courant :
+
+- **02-composants** : onglet « Observabilité », fonctions de pilotage à jour
+  (`createProject` avec branche principale, `resolveDecision` qui réveille la
+  session), charting Chart.js local.
+- **03-workflow** : statut `rework` non terminal, badge « attente humaine »,
+  section « Branche principale & déploiement » (garde + pull avant push),
+  décisions → réveil de session, création de projet.
+- **04-reproduction** : guide mis à jour (métriques `/api/metrics/*`,
+  branche principale obligatoire, rework, observabilité).
+- **05-reference** : modèle de données (`projects.main_branch`,
+  `scope_conflicts`), machines à états (rework non terminal), section
+  « Endpoints observabilité ».
+- **README** : mention de l'observabilité.
+
+Dépôt impacté : `opencode-observability` (docs uniquement).
+
+---
+
 ## v0.5.0 — 2026-08-31 · Branche principale par projet (obligatoire pour déployer)
 
 **Objectif** : chaque projet définit une **branche principale** (obligatoire

@@ -18,19 +18,28 @@ les tâches, sans jamais écrire directement dans le registre.
 - **Écosystème** : l'onglet Écosystème liste les agents et permet d'éditer leur `model`
   globalement (relu au lancement de session via `--model`).
 
-**Onglets** : Vue d'ensemble, Projets, Tâches, Événements, Déploiements, Décisions,
-Documents, Plans, Archives, Écosystème, Utilisateurs.
+**Onglets** : Vue d'ensemble, **Observabilité** (v0.2.0+), Projets, Tâches,
+Événements, Déploiements, Décisions, Documents, Plans, Archives, Écosystème,
+Utilisateurs.
+
+**Observabilité** (v0.2.0 → v0.4.0) : dashboard KPI système (Flow ·
+Orchestration · Agents · Quality) — KPI cards (Lead Time P50/moyen/P95, Cycle
+Time, Success Rate = done + recette approuvée, Throughput, Rework), graphiques
+Chart.js (vendu localement), waterfall des phases, blocages par raison,
+table de performance des agents, coûts/tokens, funnel qualité. Endpoints :
+`GET /api/metrics/*` (voir `05-reference.md` §3).
 
 **Fonctions de pilotage** (`pilot.mjs`) :
 | Fonction | Rôle |
 |---|---|
 | `createTask` | Créer une tâche (statut `queued`) |
 | `launchTask` | Lancer : `queued → started` + session orchestrator |
-| `reworkTask` | Reprise après rejet (continuer / nouvelle session) |
+| `reworkTask` | Reprise après rejet (continuer / nouvelle session, session + remarques préremplies) |
 | `killTaskSession` | Tuer la session + abandonner la tâche |
 | `relaunchTask` | Relancer une tâche abandonnée |
 | `resolveRecette` | Valider/rejeter la recette |
-| `resolveDecision` | Approuver/rejeter une décision |
+| `resolveDecision` | Approuver/rejeter une décision (**réveille la session orchestrateur**) |
+| `createProject` | Créer un projet (**branche principale obligatoire** + répertoire créé dans le workspace) |
 
 **Session bridge** (`session-bridge.mjs`) : lance une session opencode détachée
 (`opencode run --agent <agent> --model <model> --attach http://127.0.0.1:4096`) et

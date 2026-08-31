@@ -855,7 +855,7 @@ async function taskActionsModal(taskId) {
   showModal(`
     <div class="modal modal-wide">
       <h2>Actions — <span class="code">${esc(taskId)}</span></h2>
-      <p class="muted">${esc(task.request || '')}</p>
+      <div class="modal-request">${esc(task.request || '—')}</div>
       <p class="muted-sm">Projet <span class="code">${esc(task.project)}</span> · Type <span class="code">${esc(task.type)}</span> · ${badge(status)} · Recette ${recetteBadge(recette)}</p>
 
       ${awaiting.length ? `

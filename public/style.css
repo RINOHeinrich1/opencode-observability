@@ -243,12 +243,28 @@ h3 { margin: 18px 0 8px; font-size: 14px; color: var(--muted); }
   border-radius: 12px;
   max-width: 460px;
   width: 100%;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
   padding: 24px;
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
 }
 .modal h2 { margin: 0 0 6px; }
 .modal p { margin: 8px 0; line-height: 1.5; }
 .modal .code { color: var(--accent); }
+.modal-request {
+  margin: 10px 0;
+  padding: 10px 12px;
+  max-height: 30vh;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .modal p.warn {
   color: var(--red);
   border: 1px solid rgba(229, 83, 75, 0.4);

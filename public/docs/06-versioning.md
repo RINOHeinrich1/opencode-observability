@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.17** (2026-09-01,
-Édition tâche : critère parsé (plus de tableau JSON) + libellés.
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.18** (2026-09-01,
+Édition tâche : scope parsé (plus de tableau JSON).

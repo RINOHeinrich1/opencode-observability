@@ -1389,8 +1389,12 @@ async function taskActionsModal(taskId) {
 
 async function taskEditModal(taskId, detail) {
   const task = (detail && detail.task) || {};
-  const scopeVal = Array.isArray(task.scope) ? task.scope.join(', ') : (task.scope || '');
-  // acceptance_criteria est stocké en JSON (chaîne) — parser avant affichage.
+  // scope et acceptance_criteria sont stockés en JSON (chaînes) — parser avant affichage.
+  let scopeVal = '';
+  try {
+    const sArr = typeof task.scope === 'string' ? JSON.parse(task.scope) : (task.scope || []);
+    scopeVal = Array.isArray(sArr) ? sArr.join(', ') : String(sArr || '');
+  } catch { scopeVal = String(task.scope || ''); }
   let crit = '';
   try {
     const arr = typeof task.acceptance_criteria === 'string' ? JSON.parse(task.acceptance_criteria) : (task.acceptance_criteria || []);

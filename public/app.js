@@ -1403,6 +1403,12 @@ async function taskEditModal(taskId, detail) {
         <select id="te-priority">
           ${['low','normal','high','critical'].map((p) => `<option value="${p}" ${(task.priority || 'normal') === p ? 'selected' : ''}>${p}</option>`).join('')}
         </select>
+        <label class="modal-field">Mode d'exécution
+          <select id="te-mode">
+            <option value="plan" ${task.directExecution ? '' : 'selected'}>Avec planification (atomic-plan)</option>
+            <option value="direct" ${task.directExecution ? 'selected' : ''}>Exécution directe (build-notify)</option>
+          </select>
+        </label>
         <div class="modal-actions">
           <button type="button" class="ghost" id="modal-cancel">Annuler</button>
           <button type="submit" class="launch-btn">Enregistrer</button>
@@ -1422,6 +1428,7 @@ async function taskEditModal(taskId, detail) {
         acceptanceCriteria: [document.getElementById('te-acceptance').value.trim()],
         scope: scopeRaw ? scopeRaw.split(',').map((s) => s.trim()).filter(Boolean) : [],
         priority: document.getElementById('te-priority').value,
+        directExecution: document.getElementById('te-mode').value === 'direct',
       }) });
       closeModal();
       refreshActive();

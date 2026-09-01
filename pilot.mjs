@@ -75,7 +75,7 @@ export async function deleteTask(taskId) {
 }
 
 // Modification d'une tâche non lancée (queued).
-export async function editTask({ taskId, request, title, acceptanceCriteria, scope, priority }) {
+export async function editTask({ taskId, request, title, acceptanceCriteria, scope, priority, directExecution }) {
   if (!taskId) throw new Error("taskId requis");
   return taskOrchestrator("task_update", {
     taskId,
@@ -84,6 +84,7 @@ export async function editTask({ taskId, request, title, acceptanceCriteria, sco
     acceptanceCriteria: acceptanceCriteria !== undefined ? acceptanceCriteria : undefined,
     scope: scope !== undefined ? scope : undefined,
     priority: priority !== undefined ? priority : undefined,
+    directExecution: directExecution !== undefined ? directExecution : undefined,
   });
 }
 export async function createTask({ request, title, acceptanceCriteria, project, type, scope, priority, auditTarget, linkedTasks, directExecution, agents }) {

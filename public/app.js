@@ -149,7 +149,7 @@ async function renderTasks() {
         <td>${esc(t.priority)}</td>
         <td>${badge(t.status)}${t.waiting_human ? '<span class="badge waiting-human" title="Une décision humaine est en attente (validation / review)">⏳ attente humaine</span>' : ''}</td>
         <td>${recetteBadge(t.recette_status)}${recetteBadgeExtra}</td>
-        <td><span title="${esc(t.request || '')}"><strong>${esc(t.title || (t.request || '').slice(0, 60))}</strong></span>${(t.request || '') ? `<span class="muted-sm"> — ${esc((t.request || '').slice(0, 40))}</span>` : ''}</td>
+        <td><span title="${esc(t.request || '')}"><strong>${esc((t.title && t.title.trim()) ? t.title : (t.request || '').slice(0, 60))}</strong></span>${(t.title && t.title.trim()) && t.request ? `<span class="muted-sm"> — ${esc(t.request.slice(0, 40))}</span>` : ''}</td>
         <td>${sessionLink(t.session_id)}</td>
         <td>${detailsButtons(t)}</td>
       </tr>`;
@@ -1270,7 +1270,9 @@ async function taskActionsModal(taskId) {
   showModal(`
     <div class="modal modal-wide">
       <h2>Actions — <span class="code">${esc(taskId)}</span></h2>
+      <p class="muted-sm"><strong>Titre :</strong> ${esc((task.title && task.title.trim()) ? task.title : '—')}</p>
       <div class="modal-request">${esc(task.request || '—')}</div>
+      ${(() => { let c = ''; try { const a = typeof task.acceptance_criteria === 'string' ? JSON.parse(task.acceptance_criteria) : (task.acceptance_criteria || []); c = Array.isArray(a) ? a.join(' · ') : String(a || ''); } catch { c = String(task.acceptance_criteria || ''); } return c ? `<p class="muted-sm"><strong>Critère d'acceptation :</strong> ${esc(c)}</p>` : ''; })()}
       <p class="muted-sm">Projet <span class="code">${esc(task.project)}</span> · Type <span class="code">${esc(task.type)}</span> · ${badge(status)} · Recette ${recetteBadge(recette)}</p>
 
       ${linked.length ? `

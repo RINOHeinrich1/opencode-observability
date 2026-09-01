@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.19** (2026-09-01,
-Édition des tâches associées dans la modale Modifier.
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.20** (2026-09-01,
+Liste tâches : titre par défaut ; modale Actions : titre + critère.

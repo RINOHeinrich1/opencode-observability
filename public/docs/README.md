@@ -2,8 +2,8 @@
 
 > **FR** — Documentation exhaustive du framework d'orchestration d'agents IA
 > (panneau web + orchestrator + sous-agents + MCP/Skills + Coder + Git/CI-CD +
-> **observabilité/KPI**). **EN** — Exhaustive documentation of the AI-agents
-> orchestration framework.
+> **observabilité/KPI** + **recette**). **EN** — Exhaustive documentation of the
+> AI-agents orchestration framework.
 
 ---
 

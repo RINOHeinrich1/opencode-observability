@@ -5,6 +5,26 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.7.6 — 2026-09-01 · Docs opérationnelles synchronisées (état v0.7.5)
+
+Synchronisation des docs de référence avec le framework recette et les évolutions
+récentes (v0.6.0 → v0.7.5) :
+
+- **01-architecture** : concept « Recette » mis à jour (opération distincte,
+  session dédiée, éléments, nouvelles tâches).
+- **02-composants** : agent `agent-recette` ajouté ; fonctions de pilotage
+  (`launchRecetteSession`, `finishRecette`).
+- **03-workflow** : cycle de vie avec phase recette (`pending/in_progress/done`),
+  section « Recette = phase distincte », tâches liées (v0.6.0).
+- **04-reproduction** : framework recette + agent-recette.
+- **05-reference** : tables `task_links`, `recettes`, `recette_items` ;
+  `recette_class`/`scope` sur tasks ; sémantique recette ; endpoint
+  `/api/metrics/recette` ; miroir EN.
+
+Dépôt impacté : `opencode-observability` (docs).
+
+---
+
 ## v0.7.5 — 2026-09-01 · « Attente humaine » ne compte plus les décisions recette legacy
 
 **Problème** : des tâches (ex. T-20260831-174431) affichaient encore le badge

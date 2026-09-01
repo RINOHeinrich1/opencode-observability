@@ -10,13 +10,14 @@ Base `task_registry` :
 
 | Table | Rôle | Colonnes clés |
 |---|---|---|
-| `tasks` | Tâche (le « quoi ») | `id`, `request`, `project`, `type`, `audit_target`, `priority`, `scope`, `recette_status`, `version` |
+| `tasks` | Tâche (le « quoi ») | `id`, `request`, `project`, `type`, `audit_target`, `priority`, `scope`, `recette_status` (pending/in_progress/done), `recette_class` (si issue d'une recette), `version` |
 | `projects` | Projet enregistré | `id`, `name`, `workspace`, `git_path`, `main_branch` (obligatoire pour déployer) |
 | `executions` | Exécution de la tâche (statut grossier) | `execution_id`, `task_id`, `attempt`, `status` |
-| `task_sessions` | Sessions opencode liées à une tâche (append-only) | `task_id`, `session_id`, `kind`, `created_at` |
+| `task_sessions` | Sessions opencode liées à une tâche (append-only) | `task_id`, `session_id`, `kind` (launch/rework/relaunch/recette), `created_at` |
+| `task_links` | Tâches liées (v0.6.0) | `task_id`, `linked_task_id`, `description` (nature de la liaison) |
 | `plan_executions` | Exécution d'un plan (cycle complet) | `plan_id`, `attempt`, `status` |
 | `plan_commits` | Commits d'un plan (trace append-only, fichiers + diff) | `plan_id`, `sha`, `message`, `files`, `created_at` |
-| `events` | Journal append-only | `event_id`, `task_id`, `type`, `by`, `detail` (dont `TRANSITION`, `TRANSITION_ERROR`, `BLOCKED`, `AUDIT_COMPLETED`…) |
+| `events` | Journal append-only | `event_id`, `task_id`, `type`, `by`, `detail` (dont `TRANSITION`, `TRANSITION_ERROR`, `BLOCKED`, `AUDIT_COMPLETED`, `WAITING_VALIDATION`…) |
 | `deployments` | Suivi CI/CD | `deployment_id`, `task_id`, `status` |
 | `decisions` | Décisions humaines | `decision_id`, `task_id`, `kind`, `status`, `plan_id`, `resolution` |
 | `participants` | Agents participants | `task_id`, `agent`, `role` |
@@ -27,6 +28,8 @@ Base `task_registry` :
 | `plan_incidents` / `plan_inconsistencies` | Incidents / incohérences | `plan_id`, `status` |
 | `plan_counters` | Compteurs INC-/INCO- | `name`, `value` |
 | `scope_conflicts` | Conflits de scope persistés (v0.3.0) | `project`, `scope`, `conflicting_task_id`, `worktree_id`, `status` |
+| `recettes` | Opération de recette (v0.7.0) | `recette_id`, `task_id`, `session_id`, `status` (pending/in_progress/done), `confirmed_at` |
+| `recette_items` | Éléments de recette (v0.7.0) | `recette_id`, `content`, `classification` (rework/bug/improvement/feature), `scope`, `status`, `created_task_id` |
 | `notifier_state` | High-water marks du notifier (v0.1.0) | `stream`, `last_id`, `last_ts` |
 | `notifier_dedup` | Déduplication des envois (v0.1.0) | `stream`, `key`, `sent_at` |
 | `audit_notifications` | Miroir des incidents/incohérences d'audit (v0.1.0) | `id`, `kind`, `audit_id`, `status`, `resolved_at` |
@@ -49,15 +52,22 @@ planned → in_progress → validating → review → approved → merge_pending
 (+ rejected → rework ; rework → in_progress ; blocked / failed / aborted)
 ```
 
-**Recette** (colonne `recette_status`) : `pending → approved/rejected`, indépendante du
-statut d'exécution. Une recette rejetée rouvre l'exécution (`done → rework`).
+**Recette** (colonne `recette_status` + table `recettes`, v0.7.0) : la recette est
+une **opération de vérification** distincte — `pending` (pas faite) →
+`in_progress` (session dédiée `agent-recette` lancée) → `done` (faite, après
+« Terminer la recette » + confirmation). La tâche initiale reste `done` et
+intacte ; les travaux découverts deviennent de **nouvelles tâches** typées
+(`recette_class` : rework/bug/improvement/feature) liées à la tâche
+(`task_links`). `approved`/`rejected` (legacy) sont gérés en lecture.
 
-## 3. Endpoints observabilité (panneau, v0.2.0 → v0.4.0)
+## 3. Endpoints observabilité (panneau, v0.2.0 → v0.7.4)
 
 `GET /api/metrics/*` (authentifié) — dashboard « Observabilité » :
 `summary` · `status` · `throughput` · `leadtime` · `agents` · `costs` · `phases` ·
 `timeline?taskId=` · `blocked` · `successfailure` · `quality` · `rework` ·
-`costvsthroughput` · `hardening`. Consommation : `GET /api/tasks/<id>/consumption`.
+`costvsthroughput` · `hardening` · **`recette`** (statuts, éléments par classe,
+tâches générées, durée moyenne). Consommation : `GET /api/tasks/<id>/consumption`.
+Recette : `POST /api/tasks/<id>/recette-session` · `POST /api/tasks/<id>/recette-finish`.
 
 ## 4. Configuration
 
@@ -101,10 +111,11 @@ en cache au démarrage, le `--model` explicite garantit la prise en compte).
 
 | Table | Role | Key columns |
 |---|---|---|
-| `tasks` | Task (the "what") | `id`, `request`, `project`, `type`, `audit_target`, `priority`, `scope`, `recette_status`, `version` |
+| `tasks` | Task (the "what") | `id`, `request`, `project`, `type`, `audit_target`, `priority`, `scope`, `recette_status` (pending/in_progress/done), `recette_class` (if from a recette), `version` |
 | `projects` | Registered project | `id`, `name`, `workspace`, `git_path`, `main_branch` (required to deploy) |
 | `executions` | Task execution (coarse status) | `execution_id`, `task_id`, `attempt`, `status` |
-| `task_sessions` | opencode sessions linked to a task (append-only) | `task_id`, `session_id`, `kind`, `created_at` |
+| `task_sessions` | opencode sessions linked to a task (append-only) | `task_id`, `session_id`, `kind` (launch/rework/relaunch/recette), `created_at` |
+| `task_links` | Linked tasks (v0.6.0) | `task_id`, `linked_task_id`, `description` |
 | `plan_executions` | Plan execution (full cycle) | `plan_id`, `attempt`, `status` |
 | `plan_commits` | Plan commits (append-only trace, files + diff) | `plan_id`, `sha`, `message`, `files`, `created_at` |
 | `events` | Append-only journal | `event_id`, `task_id`, `type`, `by`, `detail` |
@@ -118,6 +129,8 @@ en cache au démarrage, le `--model` explicite garantit la prise en compte).
 | `plan_incidents` / `plan_inconsistencies` | Incidents / inconsistencies | `plan_id`, `status` |
 | `plan_counters` | INC-/INCO- counters | `name`, `value` |
 | `scope_conflicts` | Persisted scope conflicts (v0.3.0) | `project`, `scope`, `conflicting_task_id`, `worktree_id`, `status` |
+| `recettes` | Recette operation (v0.7.0) | `recette_id`, `task_id`, `session_id`, `status`, `confirmed_at` |
+| `recette_items` | Recette items (v0.7.0) | `recette_id`, `content`, `classification`, `scope`, `status`, `created_task_id` |
 | `notifier_state` | Notifier high-water marks (v0.1.0) | `stream`, `last_id`, `last_ts` |
 | `notifier_dedup` | Send dedup (v0.1.0) | `stream`, `key`, `sent_at` |
 | `audit_notifications` | Audit incidents/inconsistencies mirror (v0.1.0) | `id`, `kind`, `audit_id`, `status`, `resolved_at` |

@@ -135,6 +135,11 @@ Node (`server.mjs` + `pilot.mjs` + `session-bridge.mjs` + `public/`), PM2.
   decisions, deployments, plan_incidents, plan_inconsistencies,
   audit_notifications) en hybride LISTEN/NOTIFY + polling, et envoie les
   notifications email via `send-mail.mjs`. PM2 : `pm2 start ecosystem.config.cjs`.
+- **Agent `agent-recette`** (v0.7.0) : session dédiée de recette (contexte réel,
+  enregistrement d'éléments classifiés, préparation de la synthèse).
+- **Framework recette** : tables `recettes`/`recette_items`, entrée auto à `done`,
+  boutons « Session de recette » / « Terminer la recette » + confirmation →
+  création de tâches liées.
 
 ## 8. Étape 7 — Vérification de bout en bout
 

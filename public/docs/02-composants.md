@@ -40,6 +40,8 @@ table de performance des agents, coûts/tokens, funnel qualité. Endpoints :
 | `resolveRecette` | Valider/rejeter la recette |
 | `resolveDecision` | Approuver/rejeter une décision (**réveille la session orchestrateur**) |
 | `createProject` | Créer un projet (**branche principale obligatoire** + répertoire créé dans le workspace) |
+| `launchRecetteSession` | Lancer/rejoindre la session dédiée `agent-recette` (v0.7.0) |
+| `finishRecette` | « Terminer la recette » : créer les tâches (par élément classifié) + confirmer |
 
 **Session bridge** (`session-bridge.mjs`) : lance une session opencode détachée
 (`opencode run --agent <agent> --model <model> --attach http://127.0.0.1:4096`) et
@@ -71,6 +73,7 @@ les agents, ne modifie jamais le code du projet lui-même.
 |---|---|---|
 | `atomic-plan` | Planification à granularité atomique (produit des `Plan-*.md`) | read-only (édition restreinte à plans/reports) |
 | `build-notify` | Exécution des plans + traçabilité (événements, artefacts, commits) | pleine (isolation Coder + worktree) |
+| `agent-recette` | Recette : accompagne la vérification, enregistre les éléments (classifiés), prépare la synthèse (v0.7.0) | read-only (inspection) |
 | `hexagonal-architecture-auditor` | Audit architecture backend (hexagonale/DDD) | read-only |
 | `clean-arch-detector-react` | Audit architecture frontend (feature-based) | read-only |
 

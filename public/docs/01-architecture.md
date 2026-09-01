@@ -37,7 +37,7 @@ into several **plans** executed in parallel, each with its own lifecycle).
 | **Décision** | Decision | Un point de validation humaine (validation de plan, review, recette, permission). |
 | **Session** | Session | Une session opencode (agent) lancée/détachée pour traiter la tâche. |
 | **Worktree** | Worktree | Un checkout git isolé, créé/supprimé par l'agent exécutant (via `session-guard`). |
-| **Recette** | Acceptance | Validation humaine finale après déploiement (la fonctionnalité testée sur la plateforme). |
+| **Recette** | Acceptance | Opération de vérification d'une tâche terminée (v0.7.0) : session dédiée `agent-recette`, éléments consolidés (rework/bug/improvement/feature), confirmation → nouvelles tâches liées. La tâche initiale reste intacte. |
 | **État** | State | Statut d'exécution (tâche = phases grossières ; plan = cycle complet). |
 
 ## 3. Architecture en couches / Layered architecture

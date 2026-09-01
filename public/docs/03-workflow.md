@@ -11,8 +11,9 @@
 queued → started → planning → awaiting_validation → planned → in_progress → done
                                                                           │
                                                               [recette]   ▼
-                                                     pending → approved / rejected
-                                                     rejet → done → rework → in_progress → done (v0.2.1)
+                                          recette auto-entrée (v0.7) : pending → in_progress → done
+                                          (session dédiée agent-recette → éléments → « Terminer la recette »)
+                                          └─→ nouvelles tâches (rework/bug/improvement/feature) liées à la tâche
 ```
 
 | État | Signification | Qui le pose |
@@ -23,13 +24,29 @@ queued → started → planning → awaiting_validation → planned → in_progr
 | `awaiting_validation` | Plans à valider | orchestrator |
 | `planned` | Plans validés | `decision_resolve` (agrégation auto) |
 | `in_progress` | Plans en exécution | orchestrator |
-| `rework` | Reprise après rejet humain/recette (**non terminal** depuis v0.2.1) | panneau/orchestrator |
+| `rework` | Reprise après rejet (review) — **non terminal** depuis v0.2.1 | panneau/orchestrator |
 | `done` | Tous les plans terminés | orchestrator |
-| recette `pending/approved/rejected` | Acceptation humaine après déploiement | humain (bouton « Valider la recette ») |
+| recette `pending/in_progress/done` | Opération de recette (v0.7) : pas faite → en cours (session `agent-recette`) → faite | auto à `done` + humain |
 
-**Attente humaine visible** (v0.4.1) : une tâche avec une décision en attente
-(validation/review/recette) affiche un badge « ⏳ attente humaine » dans la liste,
-même si son statut grossier reste `in_progress`.
+**Attente humaine visible** (v0.4.1) : une tâche avec une décision `validation`/
+`review` en attente affiche un badge « ⏳ attente humaine » (la recette est suivie
+via sa propre table, pas une décision — v0.7.5).
+
+## 1bis. Recette = phase distincte (v0.7.0)
+
+- À `done`, une **recette est auto-créée** (`recettes`, statut `pending`).
+- Le panneau propose **« Session de recette »** : lance la session dédiée
+  `agent-recette` (contexte réel : tâche, commits, tâches liées, artefacts,
+  événements, plans). L'agent **enregistre les éléments** (remarques, constats)
+  avec **classification** (`rework` / `bug` / `improvement` / `feature`) et
+  **scope** suggéré.
+- **« Terminer la recette »** → synthèse consolidée → **confirmation** → création
+  de **nouvelles tâches** via `task_register` (typées, `recette_class`,
+  **liées** à la tâche initiale via `task_links`, scope transmis) → recette
+  `done`. La tâche initiale reste `done` et **intacte**.
+- **Création de tâche** : on peut lier des **tâches associées** (v0.6.0) avec une
+  **nature de liaison** (« c'est là que le package a été créé ») — exploitées par
+  atomic-plan (commits, plans, docs).
 
 ## 2. Cycle de vie d'un plan (sous-tâche)
 

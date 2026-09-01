@@ -591,3 +591,8 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 /* ===== Recette : titre cliquable + description (v0.8.5) ===== */
 .recette-title { cursor: pointer; }
 .recette-title:hover { text-decoration: underline; }
+
+/* ===== Recette : modale de détail défilante, aucun contenu tronqué (v0.8.8) ===== */
+.modal.modal-wide, .modal.modal-md { max-height: 86vh; overflow-y: auto; }
+.recette-item { overflow: visible; white-space: normal; word-break: break-word; }
+.recette-item span { flex: 1; min-width: 120px; }

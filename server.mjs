@@ -731,7 +731,10 @@ const server = createServer(async (req, res) => {
         "SELECT id, content, classification, discussion, scope, title, acceptance, status, created_task_id, created_at FROM recette_items WHERE recette_id = $1 ORDER BY id ASC",
         [r.recette_id],
       )).rows;
-      const tasks = (await registry().query("SELECT task_id FROM recette_tasks WHERE recette_id = $1 ORDER BY task_id", [r.recette_id])).rows.map((x) => x.task_id);
+      const tasks = (await registry().query(
+        `SELECT rt.task_id, t.title FROM recette_tasks rt LEFT JOIN tasks t ON t.id = rt.task_id
+         WHERE rt.recette_id = $1 ORDER BY rt.task_id`, [r.recette_id],
+      )).rows.map((x) => ({ taskId: x.task_id, title: x.title || x.task_id }));
       const docs = (await registry().query(
         `SELECT d.id, d.title, d.nature, d.source, d.path, d.artifact_id, d.created_at, a.title AS artifact_title, a.task_id AS artifact_task
          FROM recette_documents d LEFT JOIN artifacts a ON a.artifact_id = d.artifact_id

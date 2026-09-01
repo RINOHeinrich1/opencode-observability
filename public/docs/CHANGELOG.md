@@ -5,6 +5,14 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.6 — 2026-09-01 · Titres de recette dérivés des titres des tâches
+
+Les recettes legacy (« Recette de T-… ») sont **retitrées** avec le **titre court de la tâche couverte** (préfixe « issu de la recette » retiré, tronqué à 60). La modale de détail affiche les **titres des tâches couvertes** (plus d'IDs seuls).
+
+Dépôt : `opencode-observability`.
+
+---
+
 ## v0.8.5 — 2026-09-01 · Recette : titre court affiché + description longue en modale
 
 L'onglet Recettes affiche le **titre court** (plus d'ID barbare) ; cliquer dessus ouvre une **modale de détail** (description longue, projet, statut, tâches couvertes, éléments). Champ « description » ajouté à la création (recettes.description). Purge des recettes orphelines (transition v0.8.0).

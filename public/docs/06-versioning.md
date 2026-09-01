@@ -34,7 +34,7 @@
 | Dépôt | Chemin hôte | Version actuelle |
 |---|---|---|
 | `opencode-observability` (panneau + docs) | `/root/orchestrator-panel` | `0.6.0` |
-| `opencode-agents` | `~/.config/opencode/agent` | `0.2.1` |
+| `opencode-agents` | `~/.config/opencode/agent` | `0.2.2` |
 | `opencode-notifier` | `~/.config/opencode/notifier` | `0.1.0` |
 | `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.4.0` |
 | `opencode-mcp-plan-manager` | `~/.config/opencode/mcp/plan-manager` | `0.1.0` |
@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.6.1** (2026-08-31,
-Attente de validation quand un agent est bloqué par l'humain.
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.6.2** (2026-09-01,
+Whitelist commandes d'inspection (planning).

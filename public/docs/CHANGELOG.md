@@ -5,6 +5,21 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.6.2 — 2026-09-01 · Whitelist commandes d'inspection (planning)
+
+**Problème** : une commande composée de lecture (`ls` + `echo` + `test -f`)
+déclenchait une demande de permission (le segment `test` n'était pas dans la
+liste blanche d'atomic-plan) et pouvait être rejetée, bloquant la planification.
+
+**Correctif** (`opencode-agents` v0.2.2) : ajout à la liste blanche bash
+d'atomic-plan des commandes d'inspection en lecture seule : `test`, `printf`,
+`sha256sum`, `cut`, `xxd`, `base64`, `command -v`, `node --version`, `diff`,
+`cmp`, `du`.
+
+Dépôt impacté : `opencode-agents`.
+
+---
+
 ## v0.6.1 — 2026-08-31 · Attente de validation quand un agent est bloqué par l'humain
 
 **Règle métier** : quand un agent s'arrête parce qu'il **attend une validation

@@ -314,6 +314,7 @@ export async function finishRecette({ taskId, items, by }) {
       project: (t.task && t.task.project) || null,
       type,
       priority: "normal",
+      scope: Array.isArray(it.scope) && it.scope.length ? it.scope : undefined,
       linkedTasks: [{ taskId, description: `Issu de la recette de ${taskId} — ${CLASS_LABEL[cls]} : ${it.content.slice(0, 200)}` }],
       recetteClass: cls,
     });

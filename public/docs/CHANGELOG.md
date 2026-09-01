@@ -5,6 +5,33 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.7.3 — 2026-09-01 · Scope des tâches issues de recette (rempli par l'agent-recette)
+
+**Objectif** : le **scope** (périmètre) des tâches issues de la recette est
+déterminé par l'**agent-recette** (renseigné sur chaque élément de recette), puis
+**transmis à `task_register`** à la confirmation → l'orchestrateur peut
+**sérialiser** les tâches parallèles qui se chevauchent.
+
+### Changements
+
+- **MCP `task-orchestrator` (v0.5.2)** : colonne `recette_items.scope` ;
+  `recette_item_add` / `recette_item_update` acceptent `scope[]` ; renvoyé dans
+  `task_get`/`recette`.
+- **Panneau (v0.7.3)** : `finishRecette` transmet `scope` à `task_register`.
+- **Agent `agent-recette` (v0.3.2)** : détermine et renseigne le `scope` de
+  chaque élément (basé sur commits, tâches liées, chemins d'artefacts, plans).
+- **Application immédiate** : scopes posés sur les 4 tâches issues de la recette
+  de `T-20260831-174431` (`packages/p7-ecosystem/src/extensions/
+  madatalk-requests/`, `apps/admin-next/` pour les tâches admin) → lancement
+  parallèle sérialisé par la détection de conflits de scope.
+
+### Dépôts impactés
+
+`opencode-observability` (v0.7.3) · `opencode-mcp-task-orchestrator` (v0.5.2) ·
+`opencode-agents` (v0.3.2).
+
+---
+
 ## v0.7.2 — 2026-09-01 · Correctif « Session de recette »
 
 **Problème** : le bouton « Session de recette » affichait « session existante »

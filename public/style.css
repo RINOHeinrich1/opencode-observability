@@ -596,3 +596,7 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 .modal.modal-wide, .modal.modal-md { max-height: 86vh; overflow-y: auto; }
 .recette-item { overflow: visible; white-space: normal; word-break: break-word; }
 .recette-item span { flex: 1; min-width: 120px; }
+
+/* ===== Recette : tâche couverte (titre + demande complète, non tronquée) ===== */
+.recette-task { flex: 1; min-width: 0; }
+.recette-task p { margin: 3px 0 0; white-space: normal; word-break: break-word; }

@@ -86,10 +86,12 @@ export async function editTask({ taskId, request, title, acceptanceCriteria, sco
     priority: priority !== undefined ? priority : undefined,
   });
 }
-export async function createTask({ request, project, type, scope, priority, auditTarget, linkedTasks, directExecution, agents }) {
+export async function createTask({ request, title, acceptanceCriteria, project, type, scope, priority, auditTarget, linkedTasks, directExecution, agents }) {
   if (!request || !project || !type) throw new Error("request, project et type requis");
   const reg = await taskOrchestrator("task_register", {
     request,
+    title: title !== undefined ? title : undefined,
+    acceptanceCriteria: acceptanceCriteria !== undefined ? acceptanceCriteria : undefined,
     project,
     type,
     auditTarget: auditTarget || undefined,
@@ -206,6 +208,8 @@ export async function launchTask({ taskId, kind = "launch" }) {
     workspace: task && task.workspace,
     scope: task && task.scope,
     request: task && task.request,
+    title: task && task.title,
+    acceptanceCriteria: task && task.acceptanceCriteria,
     auditTarget: task && task.auditTarget,
     directExecution: task && task.directExecution,
   });

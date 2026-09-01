@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.14** (2026-09-01,
-Mode d'exécution directe (build-notify sans atomic-plan).
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.15** (2026-09-01,
+Fix transmission titre + critère d'acceptation (tâche + prompt).

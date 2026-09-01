@@ -5,6 +5,27 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.7.7 — 2026-09-01 · Liste des tâches : groupement par recette
+
+**Objectif** : dans l'onglet Tâches, pouvoir **grouper les tâches par recette**
+(dépliable/repliable) pour voir d'un coup d'œil toutes les tâches générées par
+chaque recette.
+
+### Changements (`opencode-observability` v0.7.7)
+
+- **`/api/tasks`** renvoie `recette_source` (tâche recette source) pour chaque
+  tâche issue d'une recette (via `task_links` « Issu de la recette »).
+- **Onglet Tâches** : case **« Grouper par recette »** → les tâches issues d'une
+  recette sont regroupées sous un en-tête « Recette de <tâche> » (nb de tâches +
+  classifications), **dépliable/repliable** ; les autres sous « Autres tâches ».
+  Badge « recette » sur les tâches issues d'une recette.
+
+### Dépôts impactés
+
+`opencode-observability` (v0.7.7).
+
+---
+
 ## v0.7.6 — 2026-09-01 · Docs opérationnelles synchronisées (état v0.7.5)
 
 Synchronisation des docs de référence avec le framework recette et les évolutions

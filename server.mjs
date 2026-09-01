@@ -162,10 +162,11 @@ async function registryTasks(url) {
   let rows = [];
   try {
     const res = await db.query(
-      `SELECT t.id, t.project, t.type, t.priority, t.request, t.created_at, t.session_id, t.recette_status,
+      `SELECT t.id, t.project, t.type, t.priority, t.request, t.created_at, t.session_id, t.recette_status, t.recette_class,
          ${latestStatusSubquery()} AS status,
          (SELECT attempt FROM executions e WHERE e.task_id = t.id ORDER BY attempt DESC LIMIT 1) AS attempt,
          (SELECT rework_count FROM executions e WHERE e.task_id = t.id ORDER BY attempt DESC LIMIT 1) AS rework_count,
+         (SELECT l.linked_task_id FROM task_links l WHERE l.task_id = t.id AND l.description LIKE 'Issu de la recette%' ORDER BY l.id LIMIT 1) AS recette_source,
          EXISTS (SELECT 1 FROM decisions d WHERE d.task_id = t.id AND d.status = 'awaiting'
                  AND d.kind IN ('validation','review')) AS waiting_human
        FROM tasks t ORDER BY t.created_at DESC`,

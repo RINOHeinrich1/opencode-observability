@@ -118,6 +118,7 @@ async function renderTasks() {
     <div class="filters">
       <select id="f-project"><option value="">Tous les projets</option>${projects.map((p) => `<option>${esc(p)}</option>`).join('')}</select>
       <select id="f-status"><option value="">Tous les statuts</option></select>
+      <label class="muted filter-check"><input type="checkbox" id="f-group-recette"> Grouper par recette</label>
       <button id="new-task-btn" class="launch-btn">+ Nouvelle tâche</button>
     </div>
     <table><thead><tr><th></th><th>ID</th><th>Projet</th><th>Type</th><th>Priorité</th><th>Statut</th><th>Recette</th><th>Demande</th><th>Session</th><th>Actions</th></tr></thead>
@@ -128,18 +129,25 @@ async function renderTasks() {
   const apply = () => {
     const p = document.getElementById('f-project').value;
     const st = document.getElementById('f-status').value;
+    const groupRecette = document.getElementById('f-group-recette').checked;
     const rows = tasks.filter((t) => (!p || t.project === p) && (!st || (t.status || 'queued') === st));
-    const html = rows.map((t) => {
+
+    // Une ligne de tâche (avec ses plans en sous-lignes).
+    const rowHtml = (t, recetteParent) => {
       const subs = plansByTask[t.id] || [];
       const toggle = subs.length ? `<button class="tree-toggle" data-toggle="${esc(t.id)}">▸</button>` : '';
-      const parent = `<tr class="task-row">
+      const recetteAttr = recetteParent ? ` data-recette-child="${esc(recetteParent)}"` : '';
+      const recetteBadgeExtra = t.recette_class
+        ? ` <span class="badge ${RECETTE_CLS_BADGE[t.recette_class] || 'queued'}" title="Issue de la recette (${RECETTE_CLS_LABEL[t.recette_class]})">recette</span>`
+        : '';
+      const parent = `<tr class="task-row"${recetteAttr}>
         <td>${toggle}</td>
         <td class="code">${esc(t.id)}</td>
         <td>${esc(t.project)}</td>
         <td>${esc(t.type)}</td>
         <td>${esc(t.priority)}</td>
-        <td>${badge(t.status)}${t.waiting_human ? '<span class="badge waiting-human" title="Une décision humaine est en attente (validation / review / recette)">⏳ attente humaine</span>' : ''}</td>
-        <td>${recetteBadge(t.recette_status)}</td>
+        <td>${badge(t.status)}${t.waiting_human ? '<span class="badge waiting-human" title="Une décision humaine est en attente (validation / review)">⏳ attente humaine</span>' : ''}</td>
+        <td>${recetteBadge(t.recette_status)}${recetteBadgeExtra}</td>
         <td>${esc((t.request || '').slice(0, 70))}</td>
         <td>${sessionLink(t.session_id)}</td>
         <td>${detailsButtons(t)}</td>
@@ -161,7 +169,33 @@ async function renderTasks() {
           </td>
         </tr>`).join('');
       return parent + children;
-    }).join('') || '<tr><td colspan="11" class="muted">Aucune tâche</td></tr>';
+    };
+
+    let html;
+    if (groupRecette) {
+      // Regroupe les tâches issues d'une recette sous leur recette source.
+      const bySource = {};
+      const others = [];
+      for (const t of rows) {
+        if (t.recette_source) (bySource[t.recette_source] = bySource[t.recette_source] || []).push(t);
+        else others.push(t);
+      }
+      const groupHtml = (sourceId, list) => {
+        const cls = [...new Set(list.map((x) => x.recette_class).filter(Boolean))];
+        const head = `<tr class="recette-group-head"><td colspan="11">
+          <button class="tree-toggle" data-recette-toggle="${esc(sourceId)}">▸</button>
+          <span class="code">${sourceId === '(sans recette)' ? 'Autres tâches' : 'Recette de ' + esc(sourceId)}</span>
+          <span class="muted-sm">— ${list.length} tâche(s)${cls.length ? ' · ' + cls.map((c) => RECETTE_CLS_LABEL[c]).join(' / ') : ''}</span>
+        </td></tr>`;
+        return head + list.map((t) => rowHtml(t, sourceId)).join('');
+      };
+      const groups = Object.entries(bySource).sort((a, b) => b[0].localeCompare(a[0])).map(([s, l]) => groupHtml(s, l)).join('');
+      const othersHtml = others.length ? groupHtml('(sans recette)', others) : '';
+      html = (groups + othersHtml) || '<tr><td colspan="11" class="muted">Aucune tâche</td></tr>';
+    } else {
+      html = rows.map((t) => rowHtml(t, null)).join('') || '<tr><td colspan="11" class="muted">Aucune tâche</td></tr>';
+    }
+
     document.getElementById('tasks-body').innerHTML = html;
     document.querySelectorAll('#tasks-body [data-actions]').forEach((b) => b.addEventListener('click', () => taskActionsModal(b.dataset.actions)));
     document.querySelectorAll('#tasks-body [data-commits]').forEach((b) => b.addEventListener('click', () => renderPlanCommitsModal(b.dataset.commits)));
@@ -172,9 +206,17 @@ async function renderTasks() {
       children.forEach((c) => { c.hidden = expanded; });
       b.textContent = expanded ? '▸' : '▾';
     }));
+    document.querySelectorAll('#tasks-body [data-recette-toggle]').forEach((b) => b.addEventListener('click', () => {
+      const src = b.dataset.recetteToggle;
+      const children = document.querySelectorAll(`#tasks-body [data-recette-child="${src}"]`);
+      const expanded = b.textContent === '▾';
+      children.forEach((c) => { c.hidden = expanded; });
+      b.textContent = expanded ? '▸' : '▾';
+    }));
   };
   document.getElementById('f-project').addEventListener('change', apply);
   document.getElementById('f-status').addEventListener('change', apply);
+  document.getElementById('f-group-recette').addEventListener('change', apply);
   apply();
 }
 

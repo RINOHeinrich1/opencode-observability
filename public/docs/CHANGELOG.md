@@ -5,6 +5,33 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.7.4 — 2026-09-01 · Observabilité alignée sur le framework recette (Phase D)
+
+**Objectif** : aligner les KPI sur le nouveau modèle recette (opération
+pending/in_progress/done, éléments classés, tâches générées) — l'observabilité
+utilisait encore l'ancienne sémantique (approved/rejected).
+
+### Changements (`opencode-observability` v0.7.4)
+
+- **`summary`** : « Success » = `done` + recette **faite** (`done` nouveau /
+  `approved` legacy) ; **taux de rework redéfini** = éléments de recette classés
+  `rework` / total éléments ; `recette` stats incluses.
+- **Nouveau `GET /api/metrics/recette`** : recettes par statut, nb d'éléments et
+  répartition (rework/bug/improvement/feature), nb de tâches générées par
+  classe, durée moyenne de recette.
+- **Funnel qualité** : « Accepté » = recette `done`/`approved` ; « Sans rework »
+  exclut aussi les tâches dont une tâche fille classée `rework` existe.
+- **Rework dans le temps** : intègre les éléments de recette `rework` par jour
+  (en plus des transitions plan rework et rejets legacy).
+- **Dashboard** : nouveau panneau « Recette » (KPI cards + 2 graphiques : éléments
+  par classification, tâches générées par classification).
+
+### Dépôts impactés
+
+`opencode-observability` (v0.7.4).
+
+---
+
 ## v0.7.3 — 2026-09-01 · Scope des tâches issues de recette (rempli par l'agent-recette)
 
 **Objectif** : le **scope** (périmètre) des tâches issues de la recette est

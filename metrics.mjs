@@ -69,8 +69,8 @@ export async function summary(pool) {
   const inProgress = tasks.filter((t) => ACTIVE.includes(t.status)).length;
   const leads = tasks.map((t) => t.leadMin).filter((v) => v != null);
   const cycles = tasks.map((t) => t.cycleMin).filter((v) => v != null);
-  const success = tasks.filter((t) => t.status === "done" && t.recetteStatus === "approved").length;
-  const rework = tasks.filter((t) => t.recetteStatus === "rejected").length;
+  // Recette « faite » = recette_status 'done' (nouveau modèle) ou 'approved' (legacy).
+  const success = tasks.filter((t) => t.status === "done" && ["approved", "done"].includes(t.recetteStatus)).length;
   const reworkCount = (await pool.query("SELECT COUNT(*)::int AS n FROM (SELECT task_id FROM executions WHERE rework_count > 0 GROUP BY task_id) x")).rows[0].n;
   // Phase 4 — durcissement
   const nowIso = new Date().toISOString();
@@ -83,6 +83,8 @@ export async function summary(pool) {
     const c = (await pool.query("SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status='open')::int AS open FROM scope_conflicts")).rows[0];
     scopeConflicts = { total: c.total, open: c.open };
   } catch {}
+  // Recette (v0.7) : éléments + tâches générées.
+  const recetteStats = await recette(pool);
   const now = new Date();
   const done7 = tasks.filter((t) => t.doneAt && now - new Date(t.doneAt) <= 7 * 86400000).length;
   return {
@@ -96,9 +98,45 @@ export async function summary(pool) {
     successRate: completed ? Math.round((success / completed) * 1000) / 10 : 0,
     successCount: success,
     throughput: Math.round((done7 / 7) * 10) / 10,
-    reworkRate: total ? Math.round(((reworkCount + rework) / total) * 1000) / 10 : 0,
+    // Taux de rework = éléments de recette classés rework / total éléments de recette.
+    reworkRate: recetteStats.itemsTotal ? Math.round((recetteStats.byClass.rework / recetteStats.itemsTotal) * 1000) / 10 : 0,
+    reworkLegacy: reworkCount,
     expiredDecisions,
     scopeConflicts,
+    recette: recetteStats,
+  };
+}
+
+// --- Recette (v0.7) : opérations, éléments, tâches générées -----------------
+export async function recette(pool) {
+  let statuses = [];
+  let itemsTotal = 0;
+  let byClass = { rework: 0, bug: 0, improvement: 0, feature: 0 };
+  let tasksGenerated = 0;
+  let byGeneratedClass = { rework: 0, bug: 0, improvement: 0, feature: 0 };
+  let avgDurationMin = 0;
+  try {
+    statuses = (await pool.query(
+      "SELECT status, COUNT(*)::int AS n FROM recettes GROUP BY status ORDER BY n DESC",
+    )).rows.map((r) => ({ status: r.status, count: Number(r.n) }));
+    const items = (await pool.query("SELECT classification FROM recette_items")).rows;
+    itemsTotal = items.length;
+    for (const i of items) if (i.classification in byClass) byClass[i.classification]++;
+    const gen = (await pool.query("SELECT recette_class FROM tasks WHERE recette_class IS NOT NULL")).rows;
+    tasksGenerated = gen.length;
+    for (const g of gen) if (g.recette_class in byGeneratedClass) byGeneratedClass[g.recette_class]++;
+    const dur = (await pool.query(
+      "SELECT AVG(EXTRACT(EPOCH FROM (confirmed_at::timestamptz - created_at::timestamptz))/60)::float AS avg FROM recettes WHERE confirmed_at IS NOT NULL",
+    )).rows[0];
+    avgDurationMin = Math.round((dur && dur.avg) || 0);
+  } catch {}
+  return {
+    statuses,
+    itemsTotal,
+    byClass,
+    tasksGenerated,
+    byGeneratedClass,
+    avgDurationMin,
   };
 }
 
@@ -432,8 +470,16 @@ export async function quality(pool) {
   );
   const completed = done.length;
   const audited = done.filter((t) => auditedSet.has(t.id)).length;
-  const accepted = done.filter((t) => t.recetteStatus === "approved").length;
-  const noRework = done.filter((t) => t.recetteStatus === "approved" && !reworkedSet.has(t.id) && !rejectedSet.has(t.id)).length;
+  // Recette « faite » = recette_status 'done' (nouveau modèle) ou 'approved' (legacy).
+  const accepted = done.filter((t) => ["approved", "done"].includes(t.recetteStatus)).length;
+  // « Sans rework » : pas de rework d'exécution, pas de recette rejetée legacy,
+  // et aucune tâche issue de la recette classée 'rework' (nouveau modèle v0.7).
+  const reworkChildSet = new Set(
+    (await pool.query(
+      "SELECT DISTINCT l.task_id FROM task_links l JOIN tasks c ON c.id = l.linked_task_id WHERE c.recette_class = 'rework'",
+    )).rows.map((r) => r.task_id),
+  );
+  const noRework = done.filter((t) => ["approved", "done"].includes(t.recetteStatus) && !reworkedSet.has(t.id) && !rejectedSet.has(t.id) && !reworkChildSet.has(t.id)).length;
   return {
     funnel: { completed, audited, accepted, noRework },
     auditRate: completed ? Math.round((audited / completed) * 1000) / 10 : 0,
@@ -442,7 +488,7 @@ export async function quality(pool) {
   };
 }
 
-/** Rework dans le temps : reworks (plan + recette rejetée) par jour + taux. */
+/** Rework dans le temps : reworks (plan + éléments de recette classés rework) par jour + taux. */
 export async function rework(pool, days = 14) {
   const planRw = (await pool.query(`
     SELECT to_char(date_trunc('day', ts::timestamptz)::date, 'YYYY-MM-DD') AS day, COUNT(*)::int AS n
@@ -456,9 +502,20 @@ export async function rework(pool, days = 14) {
       AND resolved_at::timestamptz >= now() - ($1 || ' days')::interval
     GROUP BY 1
   `, [days])).rows;
+  // Nouveau modèle (v0.7) : éléments de recette classés 'rework' par jour.
+  let itemRw = [];
+  try {
+    itemRw = (await pool.query(`
+      SELECT to_char(date_trunc('day', created_at::timestamptz)::date, 'YYYY-MM-DD') AS day, COUNT(*)::int AS n
+      FROM recette_items WHERE classification = 'rework'
+        AND created_at::timestamptz >= now() - ($1 || ' days')::interval
+      GROUP BY 1
+    `, [days])).rows;
+  } catch {}
   const map = {};
   for (const r of planRw) map[r.day] = (map[r.day] || 0) + r.n;
   for (const r of recRej) map[r.day] = (map[r.day] || 0) + r.n;
+  for (const r of itemRw) map[r.day] = (map[r.day] || 0) + r.n;
   const donePerDay = new Map((await throughput(pool, days)).map((d) => [d.day, d.done]));
   return Object.keys(map).sort()
     .map((day) => {

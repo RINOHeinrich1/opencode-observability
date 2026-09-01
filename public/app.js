@@ -1255,7 +1255,7 @@ async function renderObservability() {
   const pane = document.getElementById('pane-observability');
   pane.innerHTML = `<h2>Observabilité — KPI du système</h2><p class="muted">Flow · Orchestration · Agents · Quality (Phase 1 — v0.2.0)</p><p class="muted">Chargement…</p>`;
   try {
-    const [summary, statusData, throughputData, leadtimeData, agentsData, costsData, phasesData, blockedData, successfailureData, hardeningData, qualityData, reworkData, cvtData] = await Promise.all([
+    const [summary, statusData, throughputData, leadtimeData, agentsData, costsData, phasesData, blockedData, successfailureData, hardeningData, qualityData, reworkData, cvtData, recetteData] = await Promise.all([
       api('/api/metrics/summary'),
       api('/api/metrics/status'),
       api('/api/metrics/throughput?days=14'),
@@ -1269,6 +1269,7 @@ async function renderObservability() {
       api('/api/metrics/quality'),
       api('/api/metrics/rework?days=30'),
       api('/api/metrics/costvsthroughput?days=30'),
+      api('/api/metrics/recette'),
     ]);
 
     destroyObsCharts();
@@ -1362,6 +1363,28 @@ async function renderObservability() {
         <div class="obs-panel">
           <h3>Coût vs Throughput (30 j)</h3>
           ${obsCanvas('obs-cvt')}
+        </div>
+      </div>
+
+      <div class="obs-panel">
+        <h3>Recette (v0.7) — éléments détectés &amp; tâches générées</h3>
+        <div class="kpi-grid">
+          ${kpiCard('Recettes', (summary.recette?.statuses || []).reduce((a, s) => a + s.count, 0), 'opérations')}
+          ${kpiCard('En cours', (summary.recette?.statuses || []).find((s) => s.status === 'in_progress')?.count || 0, 'recette active')}
+          ${kpiCard('Éléments détectés', summary.recette?.itemsTotal || 0, 'remarques/constats')}
+          ${kpiCard('Tâches générées', summary.recette?.tasksGenerated || 0, 'issues de recette')}
+          ${kpiCard('Durée moyenne', fmtMin(summary.recette?.avgDurationMin), 'par recette')}
+          ${kpiCard('Taux de rework', (summary.reworkRate ?? 0) + ' %', 'éléments rework / total')}
+        </div>
+        <div class="obs-row" style="margin:8px 0 0">
+          <div class="obs-panel">
+            <h4>Éléments par classification</h4>
+            ${obsCanvas('obs-rec-class')}
+          </div>
+          <div class="obs-panel">
+            <h4>Tâches générées par classification</h4>
+            ${obsCanvas('obs-rec-gen')}
+          </div>
         </div>
       </div>
 
@@ -1473,6 +1496,19 @@ async function renderObservability() {
           ],
         },
         options: { scales: { y: { position: 'left', title: { display: true, text: '€' } }, y1: { position: 'right', grid: { drawOnChartArea: false }, title: { display: true, text: 'tâches' } } } },
+      });
+      // Phase D — recette : éléments par classification + tâches générées.
+      const recByClass = summary.recette?.byClass || { rework: 0, bug: 0, improvement: 0, feature: 0 };
+      const recGen = summary.recette?.byGeneratedClass || { rework: 0, bug: 0, improvement: 0, feature: 0 };
+      obsCharts.recClass = new Chart(document.getElementById('obs-rec-class'), {
+        type: 'bar',
+        data: { labels: ['Rework', 'Bug', 'Improvement', 'Feature'], datasets: [{ label: 'éléments', data: [recByClass.rework, recByClass.bug, recByClass.improvement, recByClass.feature], backgroundColor: ['#e03131', '#f76707', '#1971c2', '#2f9e44'] }] },
+        options: { plugins: { legend: { display: false } } },
+      });
+      obsCharts.recGen = new Chart(document.getElementById('obs-rec-gen'), {
+        type: 'bar',
+        data: { labels: ['Rework', 'Bug', 'Improvement', 'Feature'], datasets: [{ label: 'tâches', data: [recGen.rework, recGen.bug, recGen.improvement, recGen.feature], backgroundColor: ['#e03131', '#f76707', '#1971c2', '#2f9e44'] }] },
+        options: { plugins: { legend: { display: false } } },
       });
     }
   } catch (e) {

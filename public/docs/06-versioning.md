@@ -33,7 +33,7 @@
 
 | Dépôt | Chemin hôte | Version actuelle |
 |---|---|---|
-| `opencode-observability` (panneau + docs) | `/root/orchestrator-panel` | `0.7.3` |
+| `opencode-observability` (panneau + docs) | `/root/orchestrator-panel` | `0.7.4` |
 | `opencode-agents` | `~/.config/opencode/agent` | `0.3.0` |
 | `opencode-notifier` | `~/.config/opencode/notifier` | `0.1.0` |
 | `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.5.2` |
@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.7.3** (2026-09-01,
-Scope des tâches issues de recette (rempli par l'agent-recette).
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.7.4** (2026-09-01,
+Observabilité alignée sur le framework recette (Phase D).

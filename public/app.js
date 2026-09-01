@@ -301,8 +301,27 @@ async function renderArtifacts() {
     <h2>Documents liés aux demandes</h2>
     ${filterBar()}
     <table><thead><tr><th>Tâche</th><th>Type</th><th>Document</th><th>Ajouté</th><th></th></tr></thead>
-    <tbody>${arts.map((a) => `<tr><td class="code">${esc(a.task_id)}</td><td>${badge(a.kind)}</td><td>${esc(a.title || a.path)}</td><td class="code">${esc((a.created_at || '').replace('T', ' ').slice(0, 19))}</td><td><a class="btn-dl" href="/api/tasks/${encodeURIComponent(a.task_id)}/artifacts/${encodeURIComponent(a.artifact_id)}/download" download>Télécharger</a></td></tr>`).join('') || '<tr><td colspan="5" class="muted">Aucun document</td></tr>'}</tbody></table>`;
+    <tbody>${arts.map((a) => `<tr><td class="code">${esc(a.task_id)}</td><td>${badge(a.kind)}</td><td>${esc(a.title || a.path)}</td><td class="code">${esc((a.created_at || '').replace('T', ' ').slice(0, 19))}</td><td>${/\.md$/i.test(a.path || '') ? `<button class="ghost" data-view-art="${esc(a.artifact_id)}" data-view-task="${esc(a.task_id)}">Regarder</button> ` : ''}<a class="btn-dl" href="/api/tasks/${encodeURIComponent(a.task_id)}/artifacts/${encodeURIComponent(a.artifact_id)}/download" download>Télécharger</a></td></tr>`).join('') || '<tr><td colspan="5" class="muted">Aucun document</td></tr>'}</tbody></table>`;
   bindTaskFilter();
+  document.querySelectorAll('#pane-artifacts [data-view-art]').forEach((b) => b.addEventListener('click', () => renderArtifactViewer(b.dataset.viewTask, b.dataset.viewArt)));
+}
+
+// Visionneuse markdown d'un document (artefact).
+async function renderArtifactViewer(taskId, artifactId) {
+  let r;
+  try {
+    r = await api(`/api/tasks/${encodeURIComponent(taskId)}/artifacts/${encodeURIComponent(artifactId)}/view`);
+  } catch (e) {
+    alert('Impossible d\'ouvrir le document : ' + (e.message || e));
+    return;
+  }
+  showModal(`
+    <div class="modal modal-wide modal-md">
+      <div class="md-head"><strong>${esc(r.title || artifactId)}</strong><span class="muted-sm">— ${esc(taskId)}</span></div>
+      <div class="md-body markdown-view">${r.html}</div>
+      <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
 }
 
 // --- Plans (plans d'action, persistance SQLite) ----------------------------

@@ -376,6 +376,24 @@ async function downloadArtifact(res, taskId, artifactId) {
   createReadStream(a.path).pipe(res);
 }
 
+// Visionneuse : rend un document markdown en HTML (via `marked`).
+async function viewArtifact(res, taskId, artifactId) {
+  const db = registry();
+  const notFound = (msg) => sendJson(res, 404, { error: msg || "Document introuvable" });
+  let a;
+  try {
+    a = (await db.query("SELECT * FROM artifacts WHERE artifact_id = $1 AND task_id = $2", [artifactId, taskId])).rows[0];
+  } catch { return notFound(); }
+  if (!a || !a.path) return notFound();
+  if (!existsSync(a.path) || statSync(a.path).isDirectory()) return notFound();
+  if (extname(a.path).toLowerCase() !== ".md") {
+    return sendJson(res, 415, { error: "pas de visionneuse pour ce type de fichier (markdown uniquement)" });
+  }
+  const raw = readFileSync(a.path, "utf8");
+  const html = marked.parse(raw);
+  return sendJson(res, 200, { artifactId, taskId, title: a.title || basename(a.path), html });
+}
+
 async function registryArchives() {
   const archives = await listArchives();
   const db = registry();
@@ -581,6 +599,8 @@ const server = createServer(async (req, res) => {
     if (path === "/api/artifacts") return sendJson(res, 200, await registryArtifacts(url));
     const artDownload = path.match(/^\/api\/tasks\/([^/]+)\/artifacts\/([^/]+)\/download$/);
     if (artDownload) return downloadArtifact(res, artDownload[1], artDownload[2]);
+    const artView = path.match(/^\/api\/tasks\/([^/]+)\/artifacts\/([^/]+)\/view$/);
+    if (artView) return viewArtifact(res, artView[1], artView[2]);
     if (path === "/api/archives") return sendJson(res, 200, await registryArchives());
     if (path === "/api/tasks") return sendJson(res, 200, await registryTasks(url));
     if (path.startsWith("/api/tasks/")) {

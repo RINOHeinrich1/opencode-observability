@@ -570,3 +570,13 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 .filter-check { display: inline-flex; align-items: center; gap: 5px; margin-left: 8px; }
 .recette-group-head td { background: rgba(255,255,255,0.05); font-weight: 600; cursor: default; }
 .recette-group-head .tree-toggle { margin-right: 6px; }
+
+/* ===== Visionneuse markdown (v0.7.9) ===== */
+.modal-md { max-width: 900px; }
+.md-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+.md-body { max-height: 65vh; overflow: auto; border: 1px solid var(--border); border-radius: 8px; padding: 16px; background: var(--bg, #151515); line-height: 1.6; }
+.markdown-view h1,.markdown-view h2,.markdown-view h3 { margin-top: 1.2em; }
+.markdown-view code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 4px; }
+.markdown-view pre { background: rgba(255,255,255,0.05); padding: 12px; border-radius: 6px; overflow: auto; }
+.markdown-view table { border-collapse: collapse; margin: 0.8em 0; }
+.markdown-view th,.markdown-view td { border: 1px solid var(--border); padding: 5px 9px; }

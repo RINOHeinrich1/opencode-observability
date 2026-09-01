@@ -36,7 +36,7 @@
 | `opencode-observability` (panneau + docs) | `/root/orchestrator-panel` | `0.7.0` |
 | `opencode-agents` | `~/.config/opencode/agent` | `0.3.0` |
 | `opencode-notifier` | `~/.config/opencode/notifier` | `0.1.0` |
-| `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.5.0` |
+| `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.5.1` |
 | `opencode-mcp-plan-manager` | `~/.config/opencode/mcp/plan-manager` | `0.1.0` |
 | `opencode-mcp-audit-manager` | `~/.config/opencode/mcp/audit-manager` | `0.1.0` |
 | `opencode-mcp-coder-workspaces` | `~/.config/opencode/mcp/coder-workspaces` | `0.1.0` |
@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.7.0** (2026-09-01,
-Framework Recette (session dédiée, items, création de tâches).
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.7.1** (2026-09-01,
+Correctif session de recette.

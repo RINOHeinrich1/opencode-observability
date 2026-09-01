@@ -5,6 +5,17 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.7.1 — 2026-09-01 · Correctif session de recette
+
+- **`task_link_session` accepte le kind `recette`** (MCP v0.5.1) — corrige
+  « Échec de lancement de la recette : Invalid arguments … kind » au clic
+  « Session de recette ».
+- Nettoyage d'une tâche de test résiduelle (`T-20260901-075803`).
+
+Dépôts impactés : `opencode-mcp-task-orchestrator` (v0.5.1).
+
+---
+
 ## v0.7.0 — 2026-09-01 · Framework Recette (session dédiée, items, création de tâches)
 
 **Objectif** : considérer la **recette** comme une phase distincte du cycle de

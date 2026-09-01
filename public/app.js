@@ -6,6 +6,7 @@ let activeTab = 'overview';
 let lastUpdated = null;
 let taskFilter = '';     // tâche sélectionnée comme filtre ('' = aucune)
 let SESSION_BASE_URL = 'https://dev.madatalk.fr'; // base des liens de session opencode
+let groupRecetteEnabled = localStorage.getItem('panel_group_recette') === '1'; // persistant (onglets + rechargement)
 
 // Agents mobilisés par type de tâche (affichage read-only au lancement).
 const AGENTS_BY_TYPE = {
@@ -118,7 +119,7 @@ async function renderTasks() {
     <div class="filters">
       <select id="f-project"><option value="">Tous les projets</option>${projects.map((p) => `<option>${esc(p)}</option>`).join('')}</select>
       <select id="f-status"><option value="">Tous les statuts</option></select>
-      <label class="muted filter-check"><input type="checkbox" id="f-group-recette"> Grouper par recette</label>
+      <label class="muted filter-check"><input type="checkbox" id="f-group-recette" ${groupRecetteEnabled ? 'checked' : ''}> Grouper par recette</label>
       <button id="new-task-btn" class="launch-btn">+ Nouvelle tâche</button>
     </div>
     <table><thead><tr><th></th><th>ID</th><th>Projet</th><th>Type</th><th>Priorité</th><th>Statut</th><th>Recette</th><th>Demande</th><th>Session</th><th>Actions</th></tr></thead>
@@ -216,7 +217,11 @@ async function renderTasks() {
   };
   document.getElementById('f-project').addEventListener('change', apply);
   document.getElementById('f-status').addEventListener('change', apply);
-  document.getElementById('f-group-recette').addEventListener('change', apply);
+  document.getElementById('f-group-recette').addEventListener('change', () => {
+    groupRecetteEnabled = document.getElementById('f-group-recette').checked;
+    localStorage.setItem('panel_group_recette', groupRecetteEnabled ? '1' : '0');
+    apply();
+  });
   apply();
 }
 

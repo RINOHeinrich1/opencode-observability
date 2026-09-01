@@ -33,7 +33,7 @@
 
 | Dépôt | Chemin hôte | Version actuelle |
 |---|---|---|
-| `opencode-observability` (panneau + docs) | `/root/orchestrator-panel` | `0.7.7` |
+| `opencode-observability` (panneau + docs) | `/root/orchestrator-panel` | `0.7.8` |
 | `opencode-agents` | `~/.config/opencode/agent` | `0.3.0` |
 | `opencode-notifier` | `~/.config/opencode/notifier` | `0.1.0` |
 | `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.5.3` |
@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.7.7** (2026-09-01,
-Liste des tâches : groupement par recette.
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.7.8** (2026-09-01,
+Persistance de « Grouper par recette » (localStorage).

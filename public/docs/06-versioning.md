@@ -33,10 +33,10 @@
 
 | Dépôt | Chemin hôte | Version actuelle |
 |---|---|---|
-| `opencode-observability` (panneau + docs) | `/root/orchestrator-panel` | `0.8.4` |
+| `opencode-observability` (panneau + docs) | `/root/orchestrator-panel` | `0.8.5` |
 | `opencode-agents` | `~/.config/opencode/agent` | `0.3.0` |
 | `opencode-notifier` | `~/.config/opencode/notifier` | `0.1.0` |
-| `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.6.2` |
+| `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.6.3` |
 | `opencode-mcp-plan-manager` | `~/.config/opencode/mcp/plan-manager` | `0.1.0` |
 | `opencode-mcp-audit-manager` | `~/.config/opencode/mcp/audit-manager` | `0.1.0` |
 | `opencode-mcp-coder-workspaces` | `~/.config/opencode/mcp/coder-workspaces` | `0.1.0` |
@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.4** (2026-09-01,
-Documents dans la modale de création de recette.
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.5** (2026-09-01,
+Recette : titre court affiché + description longue en modale.

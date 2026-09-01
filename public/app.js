@@ -312,8 +312,9 @@ function recetteCard(r) {
   const canSession = r.status === 'pending' || r.status === 'in_progress';
   const canFinish = r.status === 'in_progress';
   return `<article class="project-card">
-    <div class="project-card-head"><strong>${esc(r.title || r.recette_id)}</strong><code class="muted-sm">${esc(r.project)}</code> ${badge(r.status)}</div>
+    <div class="project-card-head"><strong class="recette-title" data-rec-detail="${esc(r.recette_id)}" title="Voir le détail">${esc(r.title || r.recette_id)}</strong> <code class="muted-sm">${esc(r.project)}</code> ${badge(r.status)}</div>
     <div class="project-card-body">
+      ${r.description ? `<div class="project-kv"><span class="lbl">Description</span><span class="muted-sm">${esc(r.description.slice(0, 100))}${r.description.length > 100 ? '…' : ''}</span></div>` : ''}
       <div class="project-kv"><span class="lbl">Tâches couvertes</span><span>${r.tasks_count || 0}</span></div>
       <div class="project-kv"><span class="lbl">Éléments</span><span>${r.items_count || 0}</span></div>
       ${r.confirmed_at ? `<div class="project-kv"><span class="lbl">Confirmée</span><span class="muted-sm">${esc((r.confirmed_at || '').replace('T', ' ').slice(0, 16))}</span></div>` : ''}
@@ -345,6 +346,26 @@ async function renderRecettes() {
   }));
   document.querySelectorAll('#pane-recettes [data-rec-finish]').forEach((b) => b.addEventListener('click', () => finishRecetteModal(b.dataset.recFinish)));
   document.querySelectorAll('#pane-recettes [data-rec-docs]').forEach((b) => b.addEventListener('click', () => recetteDocsModal(b.dataset.recDocs)));
+  document.querySelectorAll('#pane-recettes [data-rec-detail]').forEach((b) => b.addEventListener('click', () => recetteDetailModal(b.dataset.recDetail)));
+}
+
+// Détail d'une recette en modale (titre court + description longue + périmètre).
+async function recetteDetailModal(recetteId) {
+  let d;
+  try { d = await api(`/api/recettes/${encodeURIComponent(recetteId)}`); } catch (e) { alert('Impossible de charger la recette : ' + (e.message || e)); return; }
+  const rec = d.recette || {};
+  const tasks = rec.tasks || [];
+  const items = rec.items || [];
+  showModal(`
+    <div class="modal modal-wide">
+      <h2>${esc(rec.title || recetteId)}</h2>
+      <p class="muted">${badge(rec.status)} · Projet <span class="code">${esc(rec.project || '')}</span>${rec.confirmed_at ? ` · confirmée ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}</p>
+      ${rec.description ? `<p class="modal-request">${esc(rec.description)}</p>` : ''}
+      ${tasks.length ? `<div class="actions-section"><h3>Tâches couvertes (${tasks.length})</h3><div class="recette-list">${tasks.map((t) => `<div class="recette-item"><code class="muted-sm">${esc(t)}</code></div>`).join('')}</div></div>` : '<p class="muted-sm">Aucune tâche couverte (recette exploratoire).</p>'}
+      ${items.length ? `<div class="actions-section"><h3>Éléments (${items.length})</h3><div class="recette-list">${items.map((it) => `<div class="recette-item"><span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span><span>${esc(it.title || it.content.slice(0, 80))}</span></div>`).join('')}</div></div>` : ''}
+      <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
 }
 
 // Documents d'une recette : liste, ajout (import / artefact), lecture, retrait.
@@ -449,7 +470,8 @@ async function recetteCreateModal() {
       <h2>Nouvelle recette</h2>
       <form id="recette-modal-form" class="pilot-form">
         <select id="rm-project" required><option value="">— projet —</option>${projects.map((p) => `<option value="${esc(p.id)}">${esc(p.name || p.id)}</option>`).join('')}</select>
-        <input id="rm-title" placeholder="titre (ex: Recette du module chatbot)" required>
+        <input id="rm-title" placeholder="titre court (ex: Recette du module chatbot)" required>
+        <textarea id="rm-description" class="modal-textarea" placeholder="description longue (détail du périmètre vérifié) — optionnel"></textarea>
         <label class="modal-field">Tâches couvertes <span class="muted-sm">(0..N — tâches non encore recettées)</span></label>
         <div id="rm-candidates" class="recette-candidates"><p class="muted-sm">Sélectionnez un projet pour charger les tâches disponibles.</p></div>
         <div class="links-editor">
@@ -541,6 +563,7 @@ async function recetteCreateModal() {
       await api('/api/recettes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         project: document.getElementById('rm-project').value,
         title: document.getElementById('rm-title').value.trim(),
+        description: document.getElementById('rm-description').value.trim() || undefined,
         taskIds,
         documents,
       }) });

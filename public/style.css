@@ -587,3 +587,7 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 .recette-cand { display: flex; gap: 8px; align-items: flex-start; padding: 5px 8px; border-radius: 6px; cursor: pointer; }
 .recette-cand:hover { background: rgba(255,255,255,0.05); }
 .recette-cand span { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+/* ===== Recette : titre cliquable + description (v0.8.5) ===== */
+.recette-title { cursor: pointer; }
+.recette-title:hover { text-decoration: underline; }

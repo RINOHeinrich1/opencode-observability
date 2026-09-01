@@ -5,6 +5,14 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.5 — 2026-09-01 · Recette : titre court affiché + description longue en modale
+
+L'onglet Recettes affiche le **titre court** (plus d'ID barbare) ; cliquer dessus ouvre une **modale de détail** (description longue, projet, statut, tâches couvertes, éléments). Champ « description » ajouté à la création (recettes.description). Purge des recettes orphelines (transition v0.8.0).
+
+Dépôts : `opencode-observability` (v0.8.5) · `opencode-mcp-task-orchestrator` (v0.6.3).
+
+---
+
 ## v0.8.4 — 2026-09-01 · Documents dans la modale de création de recette
 
 La modale « Nouvelle recette » permet de **rattacher des documents dès la création** (importer un fichier ou lier un artefact) avec la **nature de liaison**. Titre par défaut = nom du fichier importé.

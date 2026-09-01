@@ -695,7 +695,7 @@ const server = createServer(async (req, res) => {
     }
     if (path === "/api/recettes" && req.method === "POST") {
       const b = await readBody(req);
-      return sendJson(res, 200, await pilot.createRecette({ project: b.project, title: b.title, taskIds: b.taskIds, documents: b.documents, by: user.username }));
+      return sendJson(res, 200, await pilot.createRecette({ project: b.project, title: b.title, description: b.description, taskIds: b.taskIds, documents: b.documents, by: user.username }));
     }
     const recetteAction = path.match(/^\/api\/recettes\/([^/]+)\/(session|finish)$/);
     if (recetteAction && req.method === "POST") {

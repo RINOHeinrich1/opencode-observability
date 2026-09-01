@@ -280,12 +280,13 @@ export async function relaunchTask({ taskId }) {
 // ===========================================================================
 
 // Crée une recette de PROJET (titre + tâches couvertes 0..N) + documents éventuels.
-export async function createRecette({ project, title, taskIds, documents, by }) {
+export async function createRecette({ project, title, description, taskIds, documents, by }) {
   if (!project) throw new Error("projet requis pour créer une recette");
   if (!title || !String(title).trim()) throw new Error("titre requis pour créer une recette");
   const r = await taskOrchestrator("recette_start", {
     project,
     title: String(title).trim(),
+    description: description ? String(description).trim() : undefined,
     taskIds: (taskIds || []).filter(Boolean),
     status: "pending",
   });

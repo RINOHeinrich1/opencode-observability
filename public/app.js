@@ -1180,7 +1180,7 @@ async function taskCreateModal() {
         </select>
         <textarea id="tm-request" placeholder="description de la tâche" required></textarea>
         <input id="tm-title" placeholder="titre court (ex: Ajouter le filtrage des tâches)" required>
-        <input id="tm-acceptance" placeholder="critère d'acceptation / livrable attendu" required>
+        <textarea id="tm-acceptance" rows="2" placeholder="critère d'acceptation / livrable attendu" required></textarea>
         <input id="tm-scope" placeholder="scope (chemins, séparés par des virgules)">
         <div class="links-editor">
           <div class="links-head"><label class="modal-field" style="margin:0">Tâches liées <span class="muted-sm">(associées, exploitables par le planner)</span></label>
@@ -1385,7 +1385,7 @@ async function taskEditModal(taskId, detail) {
       <form id="task-edit-form" class="pilot-form">
         <input id="te-title" placeholder="titre court" value="${esc(task.title || '')}" required>
         <textarea id="te-request" placeholder="description de la tâche" required>${esc(task.request || '')}</textarea>
-        <input id="te-acceptance" placeholder="critère d'acceptation / livrable attendu" value="${esc(crit)}" required>
+        <textarea id="te-acceptance" rows="2" placeholder="critère d'acceptation / livrable attendu" required>${esc(crit)}</textarea>
         <input id="te-scope" placeholder="scope (chemins, séparés par des virgules)" value="${esc(scopeVal)}">
         <select id="te-priority">
           ${['low','normal','high','critical'].map((p) => `<option value="${p}" ${(task.priority || 'normal') === p ? 'selected' : ''}>${p}</option>`).join('')}

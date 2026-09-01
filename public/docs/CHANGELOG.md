@@ -5,6 +5,34 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.6.1 — 2026-08-31 · Attente de validation quand un agent est bloqué par l'humain
+
+**Règle métier** : quand un agent s'arrête parce qu'il **attend une validation
+humaine** (permission refusée ou en attente, question posée, décision requise),
+la tâche doit passer en **`awaiting_validation`** — jamais rester figée à
+l'état précédent (`planning`, `in_progress`, …).
+
+### Changements (`opencode-agents` v0.2.1)
+
+- **Orchestrateur** : distinction explicite dans la règle « ne laisse jamais une
+  tâche bloquée silencieusement » :
+  - attend l'humain → `task_transition(to="awaiting_validation")` +
+    `task_event(WAITING_VALIDATION, …)` ;
+  - autre blocage (MCP, erreur) → `blocked`/`failed` + `task_event`.
+  - + vérification à **chaque tour** (décision `permission` refusée ou
+    sous-agent signalant une attente humaine → appliquer immédiatement).
+- **atomic-plan** : s'il est bloqué par une permission refusée / question en
+  attente → publie `task_event(WAITING_VALIDATION)` (si taskId) et revient avec
+  un message explicite « bloqué — attente de validation humaine » (sans
+  prétendre la planification terminée).
+
+### Dépôts impactés
+
+`opencode-agents` (v0.2.1). Aucun changement de machine à états (la transition
+`planning → awaiting_validation` existait déjà).
+
+---
+
 ## v0.6.0 — 2026-08-31 · Tâches liées (associées) + nature de liaison
 
 **Objectif** : à la création d'une tâche, définir **une ou plusieurs tâches

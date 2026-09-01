@@ -580,3 +580,10 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 .markdown-view pre { background: rgba(255,255,255,0.05); padding: 12px; border-radius: 6px; overflow: auto; }
 .markdown-view table { border-collapse: collapse; margin: 0.8em 0; }
 .markdown-view th,.markdown-view td { border: 1px solid var(--border); padding: 5px 9px; }
+
+/* ===== Sélecteur de tâches couvertes (v0.8.1) ===== */
+.recette-candidates { margin: 6px 0 10px; }
+.recette-cand-list { max-height: 240px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.recette-cand { display: flex; gap: 8px; align-items: flex-start; padding: 5px 8px; border-radius: 6px; cursor: pointer; }
+.recette-cand:hover { background: rgba(255,255,255,0.05); }
+.recette-cand span { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }

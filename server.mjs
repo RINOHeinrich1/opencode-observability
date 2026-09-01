@@ -673,6 +673,21 @@ const server = createServer(async (req, res) => {
       )).rows;
       return sendJson(res, 200, { recettes: rows });
     }
+    // Candidats : tâches NON encore couvertes par une recette (recette_status != done, non présentes dans recette_tasks).
+    if (path === "/api/recettes/candidates" && req.method === "GET") {
+      const project = url.searchParams.get("project");
+      const rows = (await registry().query(
+        `SELECT t.id, t.title, t.request, t.recette_status, t.created_at,
+                (SELECT x.status FROM executions x WHERE x.task_id = t.id ORDER BY attempt DESC LIMIT 1) AS status
+         FROM tasks t
+         WHERE t.recette_status = 'pending'
+           AND NOT EXISTS (SELECT 1 FROM recette_tasks rt WHERE rt.task_id = t.id)
+           ${project ? "AND t.project = $1" : ""}
+         ORDER BY t.created_at DESC`,
+        project ? [project] : [],
+      )).rows;
+      return sendJson(res, 200, { candidates: rows });
+    }
     if (path === "/api/recettes" && req.method === "POST") {
       const b = await readBody(req);
       return sendJson(res, 200, await pilot.createRecette({ project: b.project, title: b.title, taskIds: b.taskIds, by: user.username }));

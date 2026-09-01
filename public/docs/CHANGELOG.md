@@ -5,6 +5,14 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.1 — 2026-09-01 · Sélecteur de tâches non recettées (création de recette)
+
+**UX** : plus de saisie d'IDs à la main — la modale « Nouvelle recette » liste les **tâches non encore recettées** du projet (titre court + id + statut, cases à cocher, liste défilante). Endpoint `GET /api/recettes/candidates?project=`.
+
+Dépôt impacté : `opencode-observability`.
+
+---
+
 ## v0.8.0 — 2026-09-01 · Recette = objet de projet (titre, 0..N tâches) + titre/critère des tâches
 
 **Objectif** : la recette devient un **objet métier de premier niveau** rattaché

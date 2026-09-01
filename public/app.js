@@ -347,18 +347,15 @@ async function renderRecettes() {
 
 async function recetteCreateModal() {
   let projects = [];
-  let tasks = [];
   try { projects = ((await api('/api/projects')).projects || []); } catch {}
-  try { tasks = (await api('/api/tasks')).tasks || []; } catch {}
   showModal(`
-    <div class="modal">
+    <div class="modal modal-wide">
       <h2>Nouvelle recette</h2>
       <form id="recette-modal-form" class="pilot-form">
         <select id="rm-project" required><option value="">— projet —</option>${projects.map((p) => `<option value="${esc(p.id)}">${esc(p.name || p.id)}</option>`).join('')}</select>
         <input id="rm-title" placeholder="titre (ex: Recette du module chatbot)" required>
-        <label class="modal-field">Tâches couvertes <span class="muted-sm">(optionnel — ids séparés par des virgules)</span>
-          <input id="rm-tasks" placeholder="T-…, T-… (vide = recette exploratoire)">
-        </label>
+        <label class="modal-field">Tâches couvertes <span class="muted-sm">(0..N — tâches non encore recettées)</span></label>
+        <div id="rm-candidates" class="recette-candidates"><p class="muted-sm">Sélectionnez un projet pour charger les tâches disponibles.</p></div>
         <div class="modal-actions">
           <button type="button" class="ghost" id="modal-cancel">Annuler</button>
           <button type="submit" class="launch-btn">Créer</button>
@@ -367,14 +364,33 @@ async function recetteCreateModal() {
       <div id="recette-modal-msg" class="msg"></div>
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
+  const candBox = document.getElementById('rm-candidates');
+  const loadCandidates = async () => {
+    const proj = document.getElementById('rm-project').value;
+    candBox.innerHTML = '<p class="muted-sm">Chargement…</p>';
+    if (!proj) { candBox.innerHTML = '<p class="muted-sm">Sélectionnez un projet.</p>'; return; }
+    try {
+      const d = await api(`/api/recettes/candidates?project=${encodeURIComponent(proj)}`);
+      const c = d.candidates || [];
+      candBox.innerHTML = c.length
+        ? `<div class="recette-cand-list">${c.map((t) => `
+            <label class="recette-cand">
+              <input type="checkbox" class="rm-cand" value="${esc(t.id)}">
+              <span><strong>${esc(t.title || (t.request || '').slice(0, 60))}</strong> <code class="muted-sm">${esc(t.id)}</code> ${badge(t.status || 'queued')}</span>
+            </label>`).join('')}</div>`
+        : '<p class="muted-sm">Aucune tâche non recettée dans ce projet.</p>';
+    } catch (e) { candBox.innerHTML = '<p class="muted-sm">Erreur de chargement : ' + esc(e.message || e) + '</p>'; }
+  };
+  document.getElementById('rm-project').addEventListener('change', loadCandidates);
   document.getElementById('recette-modal-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const msg = document.getElementById('recette-modal-msg');
     try {
+      const taskIds = [...candBox.querySelectorAll('.rm-cand:checked')].map((x) => x.value);
       await api('/api/recettes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         project: document.getElementById('rm-project').value,
         title: document.getElementById('rm-title').value.trim(),
-        taskIds: document.getElementById('rm-tasks').value.split(',').map((s) => s.trim()).filter(Boolean),
+        taskIds,
       }) });
       closeModal();
       refreshActive();

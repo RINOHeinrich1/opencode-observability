@@ -1108,6 +1108,7 @@ async function taskActionsModal(taskId) {
         <h3>Opérations</h3>
         <div class="actions-buttons">
           ${status === 'queued' ? `<button class="launch-btn" id="act-launch">Lancer</button>` : ''}
+          ${status === 'queued' ? `<button class="ghost" id="act-edit">Modifier</button>` : ''}
           ${status === 'aborted' ? `<button class="launch-btn" id="act-relaunch">Relancer</button>` : ''}
           ${(status === 'rejected' || status === 'failed' || status === 'rework') ? `<button id="act-rework">Reprendre</button>` : ''}
           ${['started','planning','awaiting_validation','planned','in_progress','rework','blocked'].includes(status) ? `<button class="danger" id="act-kill">Tuer la session</button>` : ''}
@@ -1135,6 +1136,8 @@ async function taskActionsModal(taskId) {
   document.getElementById('modal-cancel').onclick = closeModal;
   const launch = document.getElementById('act-launch');
   if (launch) launch.onclick = () => { closeModal(); launchTaskModal(taskId); };
+  const editBtn = document.getElementById('act-edit');
+  if (editBtn) editBtn.onclick = () => { closeModal(); taskEditModal(taskId, detail); };
   const rework = document.getElementById('act-rework');
   if (rework) rework.onclick = () => { closeModal(); reworkTaskModal(taskId); };
   const recetteSession = document.getElementById('act-recette-session');
@@ -1186,6 +1189,48 @@ async function taskActionsModal(taskId) {
         refreshActive();
       } catch (err) { alert('Échec : ' + (err.message || err)); }
     });
+  });
+}
+
+async function taskEditModal(taskId, detail) {
+  const task = (detail && detail.task) || {};
+  const scopeVal = Array.isArray(task.scope) ? task.scope.join(', ') : (task.scope || '');
+  const crit = Array.isArray(task.acceptance_criteria) ? task.acceptance_criteria.join(', ') : (task.acceptance_criteria || '');
+  showModal(`
+    <div class="modal modal-wide">
+      <h2>Modifier la tâche</h2>
+      <p class="muted">Tâche <span class="code">${esc(taskId)}</span> · statut <code>queued</code></p>
+      <form id="task-edit-form" class="pilot-form">
+        <input id="te-title" placeholder="titre court" value="${esc(task.title || '')}" required>
+        <textarea id="te-request" placeholder="description de la tâche" required>${esc(task.request || '')}</textarea>
+        <input id="te-acceptance" placeholder="critère d'acceptation / livrable attendu" value="${esc(crit)}" required>
+        <input id="te-scope" placeholder="scope (chemins, séparés par des virgules)" value="${esc(scopeVal)}">
+        <select id="te-priority">
+          ${['low','normal','high','critical'].map((p) => `<option value="${p}" ${(task.priority || 'normal') === p ? 'selected' : ''}>${p}</option>`).join('')}
+        </select>
+        <div class="modal-actions">
+          <button type="button" class="ghost" id="modal-cancel">Annuler</button>
+          <button type="submit" class="launch-btn">Enregistrer</button>
+        </div>
+      </form>
+      <div id="task-edit-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('task-edit-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById('task-edit-msg');
+    const scopeRaw = document.getElementById('te-scope').value.trim();
+    try {
+      await api(`/api/tasks/${encodeURIComponent(taskId)}/edit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        title: document.getElementById('te-title').value.trim(),
+        request: document.getElementById('te-request').value.trim(),
+        acceptanceCriteria: [document.getElementById('te-acceptance').value.trim()],
+        scope: scopeRaw ? scopeRaw.split(',').map((s) => s.trim()).filter(Boolean) : [],
+        priority: document.getElementById('te-priority').value,
+      }) });
+      closeModal();
+      refreshActive();
+    } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
   });
 }
 

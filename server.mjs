@@ -623,6 +623,10 @@ const server = createServer(async (req, res) => {
       if (path.endsWith("/consumption") && req.method === "GET") {
         return sendJson(res, 200, await taskConsumption(taskId, registry()));
       }
+      if (path.endsWith("/edit") && req.method === "POST") {
+        const b = await readBody(req);
+        return sendJson(res, 200, await pilot.editTask({ taskId, ...b }));
+      }
       return sendJson(res, 200, await registryTaskDetail(taskId));
     }
     if (path === "/api/events") return sendJson(res, 200, await registryEvents(url));

@@ -5,6 +5,14 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.2 — 2026-09-01 · Modification des tâches en statut queued
+
+**UX** : bouton « Modifier » dans la modale Actions pour une tâche `queued` — édite titre court, demande, critère d'acceptation, scope, priorité (MCP `task_update`, refusé si la tâche n'est plus queued).
+
+Dépôts : `opencode-observability` (v0.8.2) · `opencode-mcp-task-orchestrator` (v0.6.1).
+
+---
+
 ## v0.8.1 — 2026-09-01 · Sélecteur de tâches non recettées (création de recette)
 
 **UX** : plus de saisie d'IDs à la main — la modale « Nouvelle recette » liste les **tâches non encore recettées** du projet (titre court + id + statut, cases à cocher, liste défilante). Endpoint `GET /api/recettes/candidates?project=`.

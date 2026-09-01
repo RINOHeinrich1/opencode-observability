@@ -74,8 +74,20 @@ export async function deleteTask(taskId) {
   return taskOrchestrator("task_delete", { taskId });
 }
 
-export async function createTask({ request, project, type, scope, priority, auditTarget, linkedTasks, agents }) {
-  if (!request || !project || !type) throw new Error("request, project et type requis");
+// Modification d'une tâche non lancée (queued).
+export async function editTask({ taskId, request, title, acceptanceCriteria, scope, priority }) {
+  if (!taskId) throw new Error("taskId requis");
+  return taskOrchestrator("task_update", {
+    taskId,
+    request: request !== undefined ? request : undefined,
+    title: title !== undefined ? title : undefined,
+    acceptanceCriteria: acceptanceCriteria !== undefined ? acceptanceCriteria : undefined,
+    scope: scope !== undefined ? scope : undefined,
+    priority: priority !== undefined ? priority : undefined,
+  });
+}
+
+export async function createTask({ request, project, type, scope, priority, auditTarget, linkedTasks, agents }) {  if (!request || !project || !type) throw new Error("request, project et type requis");
   const reg = await taskOrchestrator("task_register", {
     request,
     project,

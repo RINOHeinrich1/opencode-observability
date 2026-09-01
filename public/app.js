@@ -1202,14 +1202,18 @@ async function taskCreateModal() {
   typeSel.addEventListener('change', syncTarget);
   syncTarget();
 
-  // Éditeur de tâches liées (taskId + nature de la liaison).
+  // Éditeur de tâches liées (combo tâches + nature de la liaison).
   const linksList = document.getElementById('tm-links-list');
+  let allTasks = [];
+  try { allTasks = (await api('/api/tasks')).tasks || []; } catch {}
+  const taskOptions = `<option value="">— tâche associée (titre) —</option>` + allTasks
+    .map((t) => `<option value="${esc(t.id)}">${esc((t.title || t.request || '').slice(0, 70))} — ${esc(t.id)}</option>`).join('');
   const addLinkRow = (taskId = '', description = '') => {
     const row = document.createElement('div');
     row.className = 'link-row';
     row.innerHTML = `
-      <input class="link-task" placeholder="T-… (tâche associée)" value="${esc(taskId)}">
-      <input class="link-desc" placeholder="nature de la liaison (ex: c'est là que le package a été créé)" value="${esc(description)}">
+      <select class="link-task" style="flex:1; min-width:160px;">${taskOptions.replace(`value="${esc(taskId)}"`, `value="${esc(taskId)}" selected`)}</select>
+      <input class="link-desc" style="flex:2; min-width:160px;" placeholder="nature de la liaison (ex: c'est là que le package a été créé)" value="${esc(description)}">
       <button type="button" class="ghost link-del" title="Retirer">✕</button>`;
     row.querySelector('.link-del').addEventListener('click', () => row.remove());
     linksList.appendChild(row);
@@ -1224,8 +1228,7 @@ async function taskCreateModal() {
     const type = typeSel.value;
     const linkedTasks = [...linksList.querySelectorAll('.link-row')]
       .map((r) => ({ taskId: r.querySelector('.link-task').value.trim(), description: r.querySelector('.link-desc').value.trim() }))
-      .filter((l) => l.taskId);
-    try {
+      .filter((l) => l.taskId);    try {
       await api('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         project: document.getElementById('tm-project').value,
         type,

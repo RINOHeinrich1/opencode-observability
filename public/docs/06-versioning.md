@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.12** (2026-09-01,
-Fix substr + critère d'acceptation en textarea.
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.13** (2026-09-01,
+Tâches liées : combo avec titres au lieu du champ texte.

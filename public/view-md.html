@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Document — Orchestrator</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    body { max-width: 1100px; margin: 0 auto; padding: 20px 24px 60px; }
+    .md-top { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+    .md-top .code { overflow: hidden; text-overflow: ellipsis; max-width: 70%; }
+    .md-body { line-height: 1.65; }
+    .md-body h1 { border-bottom: 1px solid var(--border); padding-bottom: .3em; }
+    .md-body code { background: rgba(255,255,255,0.08); padding: 2px 6px; border-radius: 4px; font-size: .92em; }
+    .md-body pre { background: rgba(255,255,255,0.05); padding: 14px; border-radius: 8px; overflow: auto; }
+    .md-body pre code { background: none; padding: 0; }
+    .md-body table { border-collapse: collapse; margin: 1em 0; width: 100%; display: block; overflow-x: auto; }
+    .md-body th, .md-body td { border: 1px solid var(--border); padding: 7px 11px; }
+    .md-body blockquote { border-left: 4px solid var(--border); margin: 1em 0; padding: .2em 1em; color: var(--muted); }
+    .md-body img { max-width: 100%; }
+    .md-loading, .md-error { margin: 40px auto; text-align: center; color: var(--muted); }
+    .md-error { color: #e03131; }
+  </style>
+</head>
+<body>
+  <div class="md-top">
+    <button id="btn-back" class="ghost">← Retour</button>
+    <strong id="md-title" class="code">Document</strong>
+    <span id="md-task" class="muted-sm"></span>
+  </div>
+  <div id="md-container"><p class="md-loading">Chargement…</p></div>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const task = params.get('task') || '';
+    const art = params.get('art') || '';
+    document.getElementById('btn-back').onclick = () => { history.length > 1 ? history.back() : (window.location.href = '/'); };
+    if (!task || !art) {
+      document.getElementById('md-container').innerHTML = '<p class="md-error">Paramètres manquants (task, art).</p>';
+    } else {
+      fetch(`/api/tasks/${encodeURIComponent(task)}/artifacts/${encodeURIComponent(art)}/view`)
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
+        .then((j) => {
+          if (j.html) {
+            document.getElementById('md-title').textContent = j.title || art;
+            document.getElementById('md-task').textContent = '— ' + task;
+            const c = document.getElementById('md-container');
+            c.className = 'md-body';
+            c.innerHTML = j.html;
+          } else {
+            document.getElementById('md-container').innerHTML = '<p class="md-error">' + (j.error || 'Document vide') + '</p>';
+          }
+        })
+        .catch((e) => {
+          document.getElementById('md-container').innerHTML = '<p class="md-error">Impossible de charger le document : ' + (e && e.message ? e.message : e) + '</p>';
+        });
+    }
+  </script>
+</body>
+</html>

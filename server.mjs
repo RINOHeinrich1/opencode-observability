@@ -200,7 +200,13 @@ async function registryTaskDetail(id) {
      WHERE l.task_id = $1 ORDER BY l.id ASC`,
     [id],
   );
-  return { task, executions, events, deployments, decisions, artifacts, sessions, linkedTasks, archived: (await archivedTaskIds()).has(id) };
+  let recette = null;
+  const rec = (await q("SELECT recette_id, session_id, status, created_at, confirmed_at, confirmed_by FROM recettes WHERE task_id = $1 ORDER BY created_at DESC LIMIT 1", [id]))[0];
+  if (rec) {
+    const items = await q("SELECT id, content, classification, discussion, status, created_task_id, created_at FROM recette_items WHERE recette_id = $1 ORDER BY id ASC", [rec.recette_id]);
+    recette = { ...rec, items };
+  }
+  return { task, executions, events, deployments, decisions, artifacts, sessions, linkedTasks, recette, archived: (await archivedTaskIds()).has(id) };
 }
 
 async function snapshotForTask(taskId) {
@@ -590,6 +596,13 @@ const server = createServer(async (req, res) => {
       }
       if (path.endsWith("/consumption") && req.method === "GET") {
         return sendJson(res, 200, await taskConsumption(taskId, registry()));
+      }
+      if (path.endsWith("/recette-session") && req.method === "POST") {
+        return sendJson(res, 200, await pilot.launchRecetteSession({ taskId }));
+      }
+      if (path.endsWith("/recette-finish") && req.method === "POST") {
+        const b = await readBody(req);
+        return sendJson(res, 200, await pilot.finishRecette({ taskId, items: b.items, by: user.username }));
       }
       return sendJson(res, 200, await registryTaskDetail(taskId));
     }

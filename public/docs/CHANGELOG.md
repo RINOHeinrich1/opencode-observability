@@ -5,6 +5,48 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.7.0 — 2026-09-01 · Framework Recette (session dédiée, items, création de tâches)
+
+**Objectif** : considérer la **recette** comme une phase distincte du cycle de
+vie. Une tâche terminée n'est **plus modifiée** pendant sa recette : une session
+**dédiée** (agent `agent-recette`), des **éléments consolidés** (remarques,
+demandes, constats), une **classification** (rework / bug / improvement /
+feature), puis — après **confirmation** — la **création de nouvelles tâches**
+rattachées à la tâche initiale.
+
+### Changements
+
+- **Registre / MCP `task-orchestrator` (v0.5.0)** :
+  - tables `recettes` (opération : pending/in_progress/done) et `recette_items`
+    (contenu, classification, statut, tâche créée) ; colonne `tasks.recette_class`.
+  - **entrée en recette automatique** dès que la tâche passe `done` ;
+  - outils : `recette_start`, `recette_item_add`, `recette_item_update`,
+    `recette_confirm` ; `task_get` renvoie la recette + ses items ;
+  - `task_register` accepte `recetteClass` ; `newTaskId` **unique** (suffixe
+    aléatoire — corrige la collision sur créations rapprochées) ;
+  - gardes : tâche avec recette en cours/terminée = clôturée (aucune transition,
+    aucune nouvelle décision).
+- **Panneau (v0.7.0)** :
+  - remplacement du bouton « Valider la recette » par la section **Recette** :
+    « Session de recette » (lance/rejoint la session `agent-recette`) et
+    « Terminer la recette » ;
+  - « Terminer la recette » → **synthèse consolidée** (éléments + type + action)
+    → **confirmation** → création des tâches via `task_register` (typées
+    bug→debug, sinon feature), **liées** à la tâche initiale, `recette_class`
+    renseignée, éléments marqués `task_created`, recette clôturée.
+- **Nouvel agent `agent-recette` (opencode-agents v0.3.0)** : contexte réel
+  (task_get, linkedTasks, commits, artefacts, événements, plans), accompagnement,
+  enregistrement des items, classification, regroupement, préparation de la
+  synthèse — **aucune création prématurée de tâches**, **aucune transition** sur
+  la tâche initiale.
+
+### Dépôts impactés
+
+`opencode-observability` (v0.7.0) · `opencode-mcp-task-orchestrator` (v0.5.0) ·
+`opencode-agents` (v0.3.0, nouveau `agent-recette.md`).
+
+---
+
 ## v0.6.3 — 2026-09-01 · Sessions conservées (stop process, aucune suppression)
 
 **Problème** : le correctif v0.5.2 supprimait les sessions à l'approbation de la

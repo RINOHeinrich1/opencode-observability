@@ -561,3 +561,7 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 .link-row input.link-task { width: 160px; }
 .link-row input.link-desc { flex: 1; }
 .link-item { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 5px 0; border-bottom: 1px dashed var(--border); }
+
+/* ===== Recette (v0.7.0) ===== */
+.recette-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.recette-item { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px dashed var(--border); font-size: 13px; }

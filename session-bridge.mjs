@@ -272,4 +272,25 @@ export function buildReworkPrompt({ taskId, remarks, by }) {
   return lines.join("\n");
 }
 
+/**
+ * Prompt d'ouverture d'une session de RECETTE (agent-recette).
+ * Mission + cadre, jamais méthode. L'agent récupère lui-même le contexte
+ * (task_get, linkedTasks, commits, artefacts, événements) via le MCP.
+ */
+export function buildRecettePrompt({ taskId }) {
+  return [
+    `Ouvre la recette de la tâche terminée **${taskId}** (v0.7.0).`,
+    "",
+    "La tâche initiale est terminée (`done`) et reste HISTORIQUEMENT INTACTE : tu ne la modifies jamais (aucune transition, aucun rework direct).",
+    "Mission :",
+    "- Récupère le contexte via `task_get(${taskId})` (tâche, plans, commits par plan, sessions, artefacts via `artifact_list`, tâches liées via `linkedTasks`, recette via `recette`).",
+    "- Accompagne l'utilisateur dans la vérification du résultat (préproduction) : réponds à ses questions, aide-le à comprendre ce qui a été réalisé.",
+    "- Enregistre chaque élément détecté (remarque, demande, constat, problème) via `recette_item_add` avec sa **classification** : `rework` (le périmètre initial n'est pas correctement réalisé), `bug` (dysfonctionnement détecté en recette), `improvement` (amélioration du résultat), `feature` (fonctionnalité supplémentaire hors périmètre).",
+    "- Regroupe les remarques liées ; **ne crée AUCUNE tâche pendant la discussion** (les tâches seront créées à la confirmation finale, via le panneau).",
+    "- Prépare la synthèse consolidée des éléments (type + action) pour la présenter à l'utilisateur.",
+    "",
+    "Cadre : session dédiée à la recette ; l'utilisateur déclenchera « Terminer la recette » puis confirmera la liste. Ne publie pas de transition d'état sur la tâche initiale.",
+  ].join("\n");
+}
+
 export { OPENCODE_BIN };

@@ -519,15 +519,17 @@ async function recetteCreateModal() {
     const row = document.createElement('div');
     row.className = 'link-row';
     row.innerHTML = `
-      <select class="rd-mode">
-        <option value="import">Importer</option>
-        <option value="artifact">Lier artefact</option>
-      </select>
-      <input class="rd-title" placeholder="titre (défaut : nom du fichier)" style="width:150px">
-      <input class="rd-file" type="file" style="flex:1">
-      <select class="rd-art" hidden style="flex:1"><option value="">— artefact existant —</option>${allArtifacts.map((a) => `<option value="${esc(a.artifact_id)}">${esc((a.title || a.path).slice(0, 50))} (${esc(a.task_id)})</option>`).join('')}</select>
-      <input class="rd-nature" placeholder="nature (à quoi sert / comment l'exploiter)" style="flex:2">
-      <button type="button" class="ghost rd-del" title="Retirer">✕</button>`;
+      <div class="rd-head">
+        <select class="rd-mode">
+          <option value="import">Importer</option>
+          <option value="artifact">Lier artefact</option>
+        </select>
+        <input class="rd-title" placeholder="titre (défaut : nom du fichier)">
+        <button type="button" class="ghost rd-del" title="Retirer">✕</button>
+      </div>
+      <input class="rd-file" type="file">
+      <select class="rd-art" hidden><option value="">— artefact existant —</option>${allArtifacts.map((a) => `<option value="${esc(a.artifact_id)}">${esc((a.title || a.path).slice(0, 60))} (${esc(a.task_id)})</option>`).join('')}</select>
+      <textarea class="rd-nature" rows="2" placeholder="nature de la liaison (à quoi sert le document, comment l'exploiter)"></textarea>`;
     const modeSel = row.querySelector('.rd-mode');
     const fileEl = row.querySelector('.rd-file');
     const artEl = row.querySelector('.rd-art');

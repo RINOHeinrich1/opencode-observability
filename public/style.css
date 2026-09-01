@@ -600,3 +600,10 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 /* ===== Recette : tâche couverte (titre + demande complète, non tronquée) ===== */
 .recette-task { flex: 1; min-width: 0; }
 .recette-task p { margin: 3px 0 0; white-space: normal; word-break: break-word; }
+
+/* ===== Documents de recette : champs responsives (v0.8.10) ===== */
+#rm-docs-list .link-row { flex-wrap: wrap; align-items: flex-start; padding: 8px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; }
+#rm-docs-list .rd-head { display: flex; gap: 8px; align-items: center; width: 100%; flex-wrap: wrap; }
+#rm-docs-list .rd-head .rd-title { flex: 1 1 180px; min-width: 140px; }
+#rm-docs-list .rd-file, #rm-docs-list .rd-art { flex: 1 1 200px; min-width: 160px; }
+#rm-docs-list .rd-nature { flex: 1 1 100%; min-width: 0; width: 100%; box-sizing: border-box; resize: vertical; }

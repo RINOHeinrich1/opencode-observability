@@ -1390,19 +1390,26 @@ async function taskActionsModal(taskId) {
 async function taskEditModal(taskId, detail) {
   const task = (detail && detail.task) || {};
   const scopeVal = Array.isArray(task.scope) ? task.scope.join(', ') : (task.scope || '');
-  const crit = Array.isArray(task.acceptance_criteria) ? task.acceptance_criteria.join(', ') : (task.acceptance_criteria || '');
+  // acceptance_criteria est stocké en JSON (chaîne) — parser avant affichage.
+  let crit = '';
+  try {
+    const arr = typeof task.acceptance_criteria === 'string' ? JSON.parse(task.acceptance_criteria) : (task.acceptance_criteria || []);
+    crit = Array.isArray(arr) ? arr.join(', ') : String(arr || '');
+  } catch { crit = String(task.acceptance_criteria || ''); }
   showModal(`
     <div class="modal modal-wide">
       <h2>Modifier la tâche</h2>
       <p class="muted">Tâche <span class="code">${esc(taskId)}</span> · statut <code>queued</code></p>
       <form id="task-edit-form" class="pilot-form">
-        <input id="te-title" placeholder="titre court" value="${esc(task.title || '')}" required>
-        <textarea id="te-request" placeholder="description de la tâche" required>${esc(task.request || '')}</textarea>
-        <textarea id="te-acceptance" rows="2" placeholder="critère d'acceptation / livrable attendu" required>${esc(crit)}</textarea>
-        <input id="te-scope" placeholder="scope (chemins, séparés par des virgules)" value="${esc(scopeVal)}">
-        <select id="te-priority">
-          ${['low','normal','high','critical'].map((p) => `<option value="${p}" ${(task.priority || 'normal') === p ? 'selected' : ''}>${p}</option>`).join('')}
-        </select>
+        <label class="modal-field">Titre court <input id="te-title" value="${esc(task.title || '')}" required></label>
+        <label class="modal-field">Description de la tâche <textarea id="te-request" rows="4" required>${esc(task.request || '')}</textarea></label>
+        <label class="modal-field">Critère d'acceptation / livrable attendu <textarea id="te-acceptance" rows="2" required>${esc(crit)}</textarea></label>
+        <label class="modal-field">Scope (chemins, séparés par des virgules) <input id="te-scope" value="${esc(scopeVal)}"></label>
+        <label class="modal-field">Priorité
+          <select id="te-priority">
+            ${['low','normal','high','critical'].map((p) => `<option value="${p}" ${(task.priority || 'normal') === p ? 'selected' : ''}>${p}</option>`).join('')}
+          </select>
+        </label>
         <label class="modal-field">Mode d'exécution
           <select id="te-mode">
             <option value="plan" ${task.directExecution ? '' : 'selected'}>Avec planification (atomic-plan)</option>

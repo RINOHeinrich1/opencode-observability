@@ -149,7 +149,7 @@ async function renderTasks() {
         <td>${esc(t.priority)}</td>
         <td>${badge(t.status)}${t.waiting_human ? '<span class="badge waiting-human" title="Une décision humaine est en attente (validation / review)">⏳ attente humaine</span>' : ''}</td>
         <td>${recetteBadge(t.recette_status)}${recetteBadgeExtra}</td>
-        <td>${esc((t.request || '').slice(0, 70))}</td>
+        <td><span title="${esc(t.request || '')}"><strong>${esc(t.title || (t.request || '').slice(0, 60))}</strong></span>${(t.request || '') ? `<span class="muted-sm"> — ${esc((t.request || '').slice(0, 40))}</span>` : ''}</td>
         <td>${sessionLink(t.session_id)}</td>
         <td>${detailsButtons(t)}</td>
       </tr>`;
@@ -303,6 +303,122 @@ async function renderArtifacts() {
     <table><thead><tr><th>Tâche</th><th>Type</th><th>Document</th><th>Ajouté</th><th></th></tr></thead>
     <tbody>${arts.map((a) => `<tr><td class="code">${esc(a.task_id)}</td><td>${badge(a.kind)}</td><td>${esc(a.title || a.path)}</td><td class="code">${esc((a.created_at || '').replace('T', ' ').slice(0, 19))}</td><td>${/\.md$/i.test(a.path || '') ? `<a class="ghost" href="/view-md.html?task=${encodeURIComponent(a.task_id)}&art=${encodeURIComponent(a.artifact_id)}">Regarder</a> ` : ''}<a class="btn-dl" href="/api/tasks/${encodeURIComponent(a.task_id)}/artifacts/${encodeURIComponent(a.artifact_id)}/download" download>Télécharger</a></td></tr>`).join('') || '<tr><td colspan="5" class="muted">Aucun document</td></tr>'}</tbody></table>`;
   bindTaskFilter();
+}
+
+// --- Recettes (v0.8.0) : objet de projet -----------------------------------
+const RECETTE_STATUS_LABEL = { pending: 'pas faite', in_progress: 'en cours', done: 'faite' };
+
+function recetteCard(r) {
+  const canSession = r.status === 'pending' || r.status === 'in_progress';
+  const canFinish = r.status === 'in_progress';
+  return `<article class="project-card">
+    <div class="project-card-head"><strong>${esc(r.title || r.recette_id)}</strong><code class="muted-sm">${esc(r.project)}</code> ${badge(r.status)}</div>
+    <div class="project-card-body">
+      <div class="project-kv"><span class="lbl">Tâches couvertes</span><span>${r.tasks_count || 0}</span></div>
+      <div class="project-kv"><span class="lbl">Éléments</span><span>${r.items_count || 0}</span></div>
+      ${r.confirmed_at ? `<div class="project-kv"><span class="lbl">Confirmée</span><span class="muted-sm">${esc((r.confirmed_at || '').replace('T', ' ').slice(0, 16))}</span></div>` : ''}
+    </div>
+    <div class="project-card-actions">
+      ${canSession ? `<button class="launch-btn" data-rec-session="${esc(r.recette_id)}">Session de recette</button>` : ''}
+      ${canFinish ? `<button class="approve" data-rec-finish="${esc(r.recette_id)}">Terminer la recette</button>` : ''}
+    </div>
+  </article>`;
+}
+
+async function renderRecettes() {
+  const data = await api('/api/recettes');
+  const recs = data.recettes || [];
+  document.getElementById('pane-recettes').innerHTML = `
+    <h2>Recettes</h2>
+    <p class="muted-sm">Opérations de vérification par projet — couvrent 0..N tâches, avec titre et session dédiée.</p>
+    <div class="filters"><button id="new-recette-btn" class="launch-btn">+ Nouvelle recette</button></div>
+    <div class="project-cards">${recs.map(recetteCard).join('') || '<p class="muted">Aucune recette.</p>'}</div>`;
+  document.getElementById('new-recette-btn').addEventListener('click', () => recetteCreateModal());
+  document.querySelectorAll('#pane-recettes [data-rec-session]').forEach((b) => b.addEventListener('click', async () => {
+    try {
+      const r = await api(`/api/recettes/${encodeURIComponent(b.dataset.recSession)}/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      if (r.sessionId && /^ses_/.test(r.sessionId)) window.open(sessionHref(r.sessionId), '_blank');
+      else alert('Aucune session de recette disponible.');
+      refreshActive();
+    } catch (e) { alert('Échec de la session de recette : ' + (e.message || e)); }
+  }));
+  document.querySelectorAll('#pane-recettes [data-rec-finish]').forEach((b) => b.addEventListener('click', () => finishRecetteModal(b.dataset.recFinish)));
+}
+
+async function recetteCreateModal() {
+  let projects = [];
+  let tasks = [];
+  try { projects = ((await api('/api/projects')).projects || []); } catch {}
+  try { tasks = (await api('/api/tasks')).tasks || []; } catch {}
+  showModal(`
+    <div class="modal">
+      <h2>Nouvelle recette</h2>
+      <form id="recette-modal-form" class="pilot-form">
+        <select id="rm-project" required><option value="">— projet —</option>${projects.map((p) => `<option value="${esc(p.id)}">${esc(p.name || p.id)}</option>`).join('')}</select>
+        <input id="rm-title" placeholder="titre (ex: Recette du module chatbot)" required>
+        <label class="modal-field">Tâches couvertes <span class="muted-sm">(optionnel — ids séparés par des virgules)</span>
+          <input id="rm-tasks" placeholder="T-…, T-… (vide = recette exploratoire)">
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="ghost" id="modal-cancel">Annuler</button>
+          <button type="submit" class="launch-btn">Créer</button>
+        </div>
+      </form>
+      <div id="recette-modal-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('recette-modal-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById('recette-modal-msg');
+    try {
+      await api('/api/recettes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        project: document.getElementById('rm-project').value,
+        title: document.getElementById('rm-title').value.trim(),
+        taskIds: document.getElementById('rm-tasks').value.split(',').map((s) => s.trim()).filter(Boolean),
+      }) });
+      closeModal();
+      refreshActive();
+    } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
+  });
+}
+
+async function finishRecetteModal(recetteId) {
+  let d;
+  try { d = await api(`/api/recettes/${encodeURIComponent(recetteId)}`); } catch (e) { alert('Impossible de charger la recette : ' + (e.message || e)); return; }
+  const rec = d.recette || {};
+  const items = rec.items || [];
+  showModal(`
+    <div class="modal modal-wide">
+      <h2>Terminer la recette</h2>
+      <p class="muted">${esc(rec.title || recetteId)} — <span class="code">${esc(rec.project)}</span></p>
+      ${items.length ? `
+      <p>Éléments relevés — ils seront transformés en <strong>nouvelles tâches</strong> (titre + demande + critère d'acceptation) :</p>
+      <div class="recette-list">${items.map((it) => `<div class="recette-item">
+        <span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span>
+        <span><strong>${esc(it.title || it.content.slice(0, 50))}</strong></span>
+        <span class="muted-sm">${esc(it.content.slice(0, 90))}${it.acceptance ? ` — ✓ ${esc(it.acceptance.slice(0, 50))}` : ''}</span>
+      </div>`).join('')}</div>` : '<p class="muted-sm">Aucun élément relevé : la recette sera clôturée sans créer de tâche.</p>'}
+      <div class="modal-actions">
+        <button class="ghost" id="modal-cancel">Annuler</button>
+        <button class="approve" id="modal-confirm">Confirmer & terminer</button>
+      </div>
+      <div id="recette-finish-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('modal-confirm').onclick = async () => {
+    const msg = document.getElementById('recette-finish-msg');
+    try {
+      const payload = items.map((it) => ({ itemId: it.id, content: it.content, classification: it.classification, title: it.title, acceptance: it.acceptance, scope: it.scope }));
+      const r = await api(`/api/recettes/${encodeURIComponent(recetteId)}/finish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: payload }) });
+      msg.textContent = r.created && r.created.length
+        ? 'Tâches créées : ' + r.created.map((c) => `${c.taskId} (${RECETTE_CLS_LABEL[c.classification]})`).join(', ')
+        : 'Recette terminée (aucune tâche créée).';
+      msg.className = 'msg ok';
+      closeModal();
+      alert(msg.textContent);
+      refreshActive();
+    } catch (e) { msg.textContent = e.message || e; msg.className = 'msg error'; }
+  };
 }
 
 // --- Plans (plans d'action, persistance SQLite) ----------------------------
@@ -865,6 +981,8 @@ async function taskCreateModal() {
           <option value="both">Les deux (backend + frontend)</option>
         </select>
         <textarea id="tm-request" placeholder="description de la tâche" required></textarea>
+        <input id="tm-title" placeholder="titre court (ex: Ajouter le filtrage des tâches)" required>
+        <input id="tm-acceptance" placeholder="critère d'acceptation / livrable attendu" required>
         <input id="tm-scope" placeholder="scope (chemins, séparés par des virgules)">
         <div class="links-editor">
           <div class="links-head"><label class="modal-field" style="margin:0">Tâches liées <span class="muted-sm">(associées, exploitables par le planner)</span></label>
@@ -915,6 +1033,8 @@ async function taskCreateModal() {
         type,
         auditTarget: type === 'audit' ? targetSel.value : undefined,
         request: document.getElementById('tm-request').value.trim(),
+        title: document.getElementById('tm-title').value.trim(),
+        acceptanceCriteria: [document.getElementById('tm-acceptance').value.trim()],
         scope: scopeRaw ? scopeRaw.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
         linkedTasks,
       }) });
@@ -1003,19 +1123,17 @@ async function taskActionsModal(taskId) {
   if (rework) rework.onclick = () => { closeModal(); reworkTaskModal(taskId); };
   const recetteSession = document.getElementById('act-recette-session');
   if (recetteSession) recetteSession.onclick = async () => {
+    const rid = recetteSession.dataset.recId;
     try {
-      const r = await api(`/api/tasks/${encodeURIComponent(taskId)}/recette-session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
-      if (r.sessionId && /^ses_/.test(r.sessionId)) {
-        window.open(sessionHref(r.sessionId), '_blank');   // ouvre la session de recette
-      } else {
-        alert(r.error || 'Aucune session de recette disponible.');
-      }
+      const r = await api(`/api/recettes/${encodeURIComponent(rid)}/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      if (r.sessionId && /^ses_/.test(r.sessionId)) window.open(sessionHref(r.sessionId), '_blank');
+      else alert(r.error || 'Aucune session de recette disponible.');
       closeModal();
       refreshActive();
     } catch (e) { alert('Échec du lancement de la recette : ' + (e.message || e)); }
   };
   const recetteFinish = document.getElementById('act-recette-finish');
-  if (recetteFinish) recetteFinish.onclick = () => { closeModal(); recetteFinishModal(taskId, detail); };
+  if (recetteFinish) recetteFinish.onclick = () => { closeModal(); finishRecetteModal(recetteFinish.dataset.recId); };
   const archive = document.getElementById('act-archive');
   if (archive) archive.onclick = () => { closeModal(); openArchiveConfirm(taskId); };
   const consumption = document.getElementById('act-consumption');
@@ -1175,77 +1293,29 @@ function recetteItemRow(it) {
   </div>`;
 }
 
-function recetteSectionHtml(recetteStatus, linked) {
-  const rec = linked && linked.recette;
-  const st = rec ? rec.status : (recetteStatus === 'approved' ? 'done' : 'pending');
-  const items = (rec && rec.items) || [];
-  if (st === 'done') {
-    return `<div class="actions-section"><h3>Recette — terminée</h3>
-      <p class="muted-sm">Recette <strong>faite</strong>${rec && rec.confirmed_at ? ` le ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}. La tâche initiale est clôturée.</p>
-      ${items.length ? `<div class="recette-list">${items.map(recetteItemRow).join('')}</div>` : '<p class="muted-sm">Aucun élément relevé.</p>'}
+function recetteSectionHtml(recetteStatus, detail) {
+  const rec = detail && detail.recette;
+  if (!rec) {
+    return `<div class="actions-section"><h3>Recette</h3>
+      <p class="muted-sm">Cette tâche n'est couverte par aucune recette. Créez une recette (onglet <a href="#" onclick="goToTab('recettes'); return false;">Recettes</a>) pour couvrir plusieurs tâches d'un même périmètre.</p>
     </div>`;
   }
-  if (st === 'in_progress') {
-    return `<div class="actions-section"><h3>Recette — en cours</h3>
-      ${items.length ? `<div class="recette-list">${items.map(recetteItemRow).join('')}</div>` : '<p class="muted-sm">Aucun élément relevé pour l’instant.</p>'}
-      <div class="actions-buttons">
-        <button class="launch-btn" id="act-recette-session">Session de recette</button>
-        <button class="approve" id="act-recette-finish">Terminer la recette</button>
-      </div>
-    </div>`;
-  }
-  // pending (pas faite)
-  return `<div class="actions-section"><h3>Recette — pas faite</h3>
-    <p class="muted-sm">Vérifiez le résultat en préproduction dans une session dédiée. Les travaux découverts deviendront de nouvelles tâches (jamais la tâche initiale).</p>
+  const st = rec.status;
+  const title = rec.title || rec.recetteId;
+  const items = rec.items || [];
+  const btns = (st === 'in_progress' || st === 'pending') ? `
     <div class="actions-buttons">
-      <button class="launch-btn" id="act-recette-session">Session de recette</button>
-      <button class="approve" id="act-recette-finish">Terminer la recette</button>
-    </div>
+      <button class="launch-btn" id="act-recette-session" data-rec-id="${esc(rec.recetteId)}">Session de recette</button>
+      ${st === 'in_progress' ? `<button class="approve" id="act-recette-finish" data-rec-id="${esc(rec.recetteId)}">Terminer la recette</button>` : ''}
+    </div>` : '';
+  const statusTxt = st === 'done' ? `faite${rec.confirmed_at ? ` le ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}` : RECETTE_STATUS_LABEL[st] || st;
+  return `<div class="actions-section"><h3>Recette — ${statusTxt}</h3>
+    <p class="muted-sm"><strong>${esc(title)}</strong> <span class="code">${esc(rec.project || '')}</span></p>
+    ${items.length ? `<div class="recette-list">${items.map(recetteItemRow).join('')}</div>` : '<p class="muted-sm">Aucun élément relevé.</p>'}
+    ${btns}
   </div>`;
 }
 
-async function recetteFinishModal(taskId, detail) {
-  const rec = (detail && detail.recette) || null;
-  const items = (rec && rec.items) || [];
-  showModal(`
-    <div class="modal modal-wide">
-      <h2>Terminer la recette</h2>
-      <p class="muted">Tâche <span class="code">${esc(taskId)}</span></p>
-      ${items.length ? `
-      <p>Éléments relevés pendant la recette — ils seront transformés en <strong>nouvelles tâches</strong> (la tâche initiale reste intacte) :</p>
-      <div class="recette-list">${items.map((it) => `
-        <div class="recette-item">
-          <code class="muted-sm">#${it.id || it.itemId}</code>
-          <span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span>
-          <span>${esc(it.content)}</span>
-          <span class="muted-sm">→ Créer une tâche</span>
-        </div>`).join('')}
-      </div>` : '<p class="muted-sm">Aucun élément relevé : la recette sera clôturée sans créer de tâche.</p>'}
-      <div class="modal-actions">
-        <button class="ghost" id="modal-cancel">Annuler</button>
-        <button class="approve" id="modal-confirm">Confirmer & terminer</button>
-      </div>
-      <div id="recette-finish-msg" class="msg"></div>
-    </div>`);
-  document.getElementById('modal-cancel').onclick = closeModal;
-  document.getElementById('modal-confirm').onclick = async () => {
-    const msg = document.getElementById('recette-finish-msg');
-    try {
-      const payload = items.map((it) => ({ itemId: it.id || it.itemId, content: it.content, classification: it.classification }));
-      const r = await api(`/api/tasks/${encodeURIComponent(taskId)}/recette-finish`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items: payload }),
-      });
-      msg.textContent = r.created && r.created.length
-        ? 'Tâches créées : ' + r.created.map((c) => `${c.taskId} (${RECETTE_CLS_LABEL[c.classification]})`).join(', ')
-        : 'Recette terminée (aucune tâche créée).';
-      msg.className = 'msg ok';
-      closeModal();
-      alert(msg.textContent);
-      refreshActive();
-    } catch (e) { msg.textContent = e.message || e; msg.className = 'msg error'; }
-  };
-}
 
 // --- Navigation ------------------------------------------------------------
 // --- Observabilité / KPI (v0.2.0) --------------------------------------------
@@ -1565,7 +1635,7 @@ async function renderObservability() {
 }
 
 const RENDER = {
-  overview: renderOverview, observability: renderObservability, projects: renderProjects, tasks: renderTasks,
+  overview: renderOverview, observability: renderObservability, projects: renderProjects, tasks: renderTasks, recettes: renderRecettes,
   events: renderEvents, deployments: renderDeployments, decisions: renderDecisions, artifacts: renderArtifacts, plans: renderPlans, archives: renderArchives, ecosystem: renderEcosystem, users: renderUsers,
 };
 

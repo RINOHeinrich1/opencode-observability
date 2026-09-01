@@ -273,23 +273,24 @@ export function buildReworkPrompt({ taskId, remarks, by }) {
 }
 
 /**
- * Prompt d'ouverture d'une session de RECETTE (agent-recette).
- * Mission + cadre, jamais méthode. L'agent récupère lui-même le contexte
- * (task_get, linkedTasks, commits, artefacts, événements) via le MCP.
+ * Prompt d'ouverture d'une session de RECETTE (agent-recette) — v0.8.0.
+ * La recette est un objet de PROJET (titre + 0..N tâches couvertes).
+ * Mission + cadre, jamais méthode.
  */
-export function buildRecettePrompt({ taskId }) {
+export function buildRecettePrompt({ project, title, taskIds }) {
   return [
-    `Ouvre la recette de la tâche terminée **${taskId}** (v0.7.0).`,
+    `Ouvre la recette **« ${title || project} »** du projet **${project}** (v0.8.0).`,
     "",
-    "La tâche initiale est terminée (`done`) et reste HISTORIQUEMENT INTACTE : tu ne la modifies jamais (aucune transition, aucun rework direct).",
+    taskIds && taskIds.length ? `Tâches couvertes par cette recette : ${taskIds.join(", ")}.` : "Cette recette ne couvre aucune tâche (parcours global / exploratoire).",
+    "La recette est un objet de premier niveau rattaché au projet — les tâches couvertes restent HISTORIQUEMENT INTACTES : tu ne les modifies jamais (aucune transition, aucun rework direct).",
     "Mission :",
-    "- Récupère le contexte via `task_get(${taskId})` (tâche, plans, commits par plan, sessions, artefacts via `artifact_list`, tâches liées via `linkedTasks`, recette via `recette`).",
-    "- Accompagne l'utilisateur dans la vérification du résultat (préproduction) : réponds à ses questions, aide-le à comprendre ce qui a été réalisé.",
-    "- Enregistre chaque élément détecté (remarque, demande, constat, problème) via `recette_item_add` avec sa **classification** : `rework` (le périmètre initial n'est pas correctement réalisé), `bug` (dysfonctionnement détecté en recette), `improvement` (amélioration du résultat), `feature` (fonctionnalité supplémentaire hors périmètre).",
+    "- Récupère le contexte : `recette_get(<recetteId>)` (titre, projet, tâches couvertes, éléments), et pour chaque tâche couverte `task_get` (plans, commits, artefacts, tâches liées), `artifact_list`, `events_list`.",
+    "- Accompagne l'utilisateur dans la vérification du périmètre : réponds à ses questions, aide-le à comprendre ce qui a été réalisé.",
+    "- Enregistre chaque élément détecté via `recette_item_add` avec **classification** (`rework`/`bug`/`improvement`/`feature`), **scope** (chemins), **titre court** et **critère d'acceptation** (ce qui permettra de considérer la tâche créée comme terminée).",
     "- Regroupe les remarques liées ; **ne crée AUCUNE tâche pendant la discussion** (les tâches seront créées à la confirmation finale, via le panneau).",
     "- Prépare la synthèse consolidée des éléments (type + action) pour la présenter à l'utilisateur.",
     "",
-    "Cadre : session dédiée à la recette ; l'utilisateur déclenchera « Terminer la recette » puis confirmera la liste. Ne publie pas de transition d'état sur la tâche initiale.",
+    "Cadre : session dédiée à la recette ; l'utilisateur déclenchera « Terminer la recette » puis confirmera la liste.",
   ].join("\n");
 }
 

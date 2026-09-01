@@ -34,12 +34,14 @@ via sa propre table, pas une décision — v0.7.5).
 
 ## 1bis. Recette = phase distincte (v0.7.0)
 
-- À `done`, une **recette est auto-créée** (`recettes`, statut `pending`).
+- La recette est un **objet de PROJET** (v0.8.0) : titre propre, session
+  dédiée, couvrant **0..N tâches** (ou aucune — recette exploratoire). Créée
+  depuis l'onglet **Recettes** (projet + titre + tâches couvertes optionnelles).
 - Le panneau propose **« Session de recette »** : lance la session dédiée
-  `agent-recette` (contexte réel : tâche, commits, tâches liées, artefacts,
-  événements, plans). L'agent **enregistre les éléments** (remarques, constats)
-  avec **classification** (`rework` / `bug` / `improvement` / `feature`) et
-  **scope** suggéré.
+  `agent-recette` (contexte réel : titre, projet, tâches couvertes, commits,
+  artefacts, événements, plans). L'agent **enregistre les éléments** avec
+  **classification** (`rework` / `bug` / `improvement` / `feature`), **titre
+  court**, **critère d'acceptation** et **scope** suggéré.
 - **« Terminer la recette »** → synthèse consolidée → **confirmation** → création
   de **nouvelles tâches** via `task_register` (typées, `recette_class`,
   **liées** à la tâche initiale via `task_links`, scope transmis) → recette

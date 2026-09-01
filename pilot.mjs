@@ -264,68 +264,78 @@ export async function relaunchTask({ taskId }) {
 }
 
 // ===========================================================================
-// Recette (v0.7.0) — session dédiée + clôture avec création des tâches
+// Recette (v0.8.0) — objet de PROJET : titre + 0..N tâches couvertes
 // ===========================================================================
 
-// Lance (ou récupère) la session dédiée de l'agent-recette pour une tâche done.
-export async function launchRecetteSession({ taskId }) {
-  if (!taskId) throw new Error("taskId requis");
-  const t = await taskOrchestrator("task_get", { taskId });
-  const task = t && t.task;
-  if (!task) throw new Error(`tâche inconnue : ${taskId}`);
-  const rec = t && t.recette;
-  const dir = await projectGitPath(task.project);
-
-  // Reprise UNIQUEMENT si la session recette existe réellement (id valide + présente).
-  if (rec && rec.sessionId && /^ses_/.test(rec.sessionId) && sessionExists(rec.sessionId, dir)) {
-    return { taskId, recetteId: rec.recetteId, sessionId: rec.sessionId, resumed: true };
-  }
-
-  // Sinon, lance une nouvelle session agent-recette.
-  const prompt = buildRecettePrompt({ taskId });
-  const { sessionId } = await launchSession({ dir, agent: "agent-recette", prompt, title: `Recette ${taskId}` });
-  if (!sessionId || !/^ses_/.test(sessionId)) {
-    throw new Error("échec de lancement de la session de recette (agent-recette indisponible ? redémarrer le serveur opencode pour charger l'agent)");
-  }
-  await taskOrchestrator("task_link_session", { taskId, sessionId, kind: "recette" });
-  const recette = await taskOrchestrator("recette_start", { taskId, status: "in_progress", sessionId });
-  return { taskId, recetteId: recette.recetteId, sessionId, resumed: false };
+// Crée une recette de PROJET (titre + tâches couvertes 0..N).
+export async function createRecette({ project, title, taskIds, by }) {
+  if (!project) throw new Error("projet requis pour créer une recette");
+  if (!title || !String(title).trim()) throw new Error("titre requis pour créer une recette");
+  const r = await taskOrchestrator("recette_start", {
+    project,
+    title: String(title).trim(),
+    taskIds: (taskIds || []).filter(Boolean),
+    status: "pending",
+  });
+  return { ok: true, recette: r.recette };
 }
 
-// Clôt la recette : crée une tâche par élément confirmé (via task_register),
-// rattache chaque tâche à la tâche initiale (task_link_add) puis confirme.
-export async function finishRecette({ taskId, items, by }) {
-  if (!taskId) throw new Error("taskId requis");
-  const itemsList = Array.isArray(items) ? items : [];
-  const t = await taskOrchestrator("task_get", { taskId });
-  const rec = t && t.recette;
-  if (!rec) throw new Error(`aucune recette en cours pour ${taskId}`);
+// Lance (ou récupère) la session dédiée de l'agent-recette pour une recette.
+export async function launchRecetteSession({ recetteId }) {
+  if (!recetteId) throw new Error("recetteId requis");
+  const r = await taskOrchestrator("recette_get", { recetteId });
+  const rec = r && r.recette;
+  if (!rec) throw new Error(`recette inconnue : ${recetteId}`);
+
+  // Reprise UNIQUEMENT si la session existe réellement (id valide + présente).
+  const dir = await projectGitPath(rec.project);
+  if (rec.sessionId && /^ses_/.test(rec.sessionId) && sessionExists(rec.sessionId, dir)) {
+    return { recetteId, sessionId: rec.sessionId, resumed: true };
+  }
+
+  const prompt = buildRecettePrompt({ project: rec.project, title: rec.title, taskIds: rec.tasks || [] });
+  const { sessionId } = await launchSession({ dir, agent: "agent-recette", prompt, title: `Recette ${rec.title || rec.project}` });
+  if (!sessionId || !/^ses_/.test(sessionId)) {
+    throw new Error("échec de lancement de la session de recette (agent-recette indisponible ?)");
+  }
+  await taskOrchestrator("recette_session_set", { recetteId, sessionId });
+  return { recetteId, sessionId, resumed: false };
+}
+
+// Clôt la recette : crée une tâche par élément confirmé (via task_register) puis confirme.
+export async function finishRecette({ recetteId, items, by }) {
+  if (!recetteId) throw new Error("recetteId requis");
+  const r = await taskOrchestrator("recette_get", { recetteId });
+  const rec = r && r.recette;
+  if (!rec) throw new Error(`recette inconnue : ${recetteId}`);
   if (rec.status !== "in_progress") throw new Error(`recette non en cours (statut ${rec.status})`);
 
   const created = [];
   const CLASS_LABEL = { rework: "Rework", bug: "Bug", improvement: "Improvement", feature: "Feature" };
-  for (const it of itemsList) {
+  for (const it of items || []) {
     if (!it || !it.content) continue;
     const cls = ["rework", "bug", "improvement", "feature"].includes(it.classification) ? it.classification : "rework";
     const type = cls === "bug" ? "debug" : "feature";
-    const request = `[${CLASS_LABEL[cls]} — issu de la recette de ${taskId}] ${it.content}`;
+    const request = `[${CLASS_LABEL[cls]} — issu de la recette ${recetteId}] ${it.content}`;
     const reg = await taskOrchestrator("task_register", {
       request,
-      project: (t.task && t.task.project) || null,
+      title: it.title || `[${CLASS_LABEL[cls]}] ${it.content.slice(0, 60)}`,
+      project: rec.project,
       type,
       priority: "normal",
       scope: Array.isArray(it.scope) && it.scope.length ? it.scope : undefined,
-      linkedTasks: [{ taskId, description: `Issu de la recette de ${taskId} — ${CLASS_LABEL[cls]} : ${it.content.slice(0, 200)}` }],
+      acceptanceCriteria: it.acceptance ? [it.acceptance] : undefined,
+      linkedTasks: (rec.tasks || []).map((t) => ({ taskId: t, description: `Couvert par la recette ${recetteId} — ${CLASS_LABEL[cls]}` })),
       recetteClass: cls,
+      recetteId,
     });
     const newTaskId = reg && (reg.taskId || (reg.task && reg.task.id));
     if (newTaskId) {
       created.push({ taskId: newTaskId, classification: cls, content: it.content });
-      // Marque l'élément de recette comme traité.
       try { await taskOrchestrator("recette_item_update", { itemId: Number(it.itemId), status: "task_created", createdTaskId: newTaskId }); } catch {}
     }
   }
 
-  const confirmed = await taskOrchestrator("recette_confirm", { recetteId: rec.recetteId, confirmedBy: by || "human" });
-  return { ok: true, taskId, created, recette: confirmed.recette };
+  const confirmed = await taskOrchestrator("recette_confirm", { recetteId, confirmedBy: by || "human" });
+  return { ok: true, recetteId, created, recette: confirmed.recette };
 }

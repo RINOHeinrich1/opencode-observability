@@ -162,11 +162,11 @@ async function registryTasks(url) {
   let rows = [];
   try {
     const res = await db.query(
-      `SELECT t.id, t.project, t.type, t.priority, t.request, t.created_at, t.session_id, t.recette_status, t.recette_class,
+      `SELECT t.id, t.project, t.type, t.priority, t.request, t.title, t.created_at, t.session_id, t.recette_status, t.recette_class,
          ${latestStatusSubquery()} AS status,
          (SELECT attempt FROM executions e WHERE e.task_id = t.id ORDER BY attempt DESC LIMIT 1) AS attempt,
          (SELECT rework_count FROM executions e WHERE e.task_id = t.id ORDER BY attempt DESC LIMIT 1) AS rework_count,
-         (SELECT l.linked_task_id FROM task_links l WHERE l.task_id = t.id AND l.description LIKE 'Issu de la recette%' ORDER BY l.id LIMIT 1) AS recette_source,
+         COALESCE(t.recette_id, (SELECT l.linked_task_id FROM task_links l WHERE l.task_id = t.id AND l.description LIKE 'Issu de la recette%' ORDER BY l.id LIMIT 1)) AS recette_source,
          EXISTS (SELECT 1 FROM decisions d WHERE d.task_id = t.id AND d.status = 'awaiting'
                  AND d.kind IN ('validation','review')) AS waiting_human
        FROM tasks t ORDER BY t.created_at DESC`,
@@ -202,10 +202,15 @@ async function registryTaskDetail(id) {
     [id],
   );
   let recette = null;
-  const rec = (await q("SELECT recette_id, session_id, status, created_at, confirmed_at, confirmed_by FROM recettes WHERE task_id = $1 ORDER BY created_at DESC LIMIT 1", [id]))[0];
+  const rec = (await q(
+    `SELECT r.*, rt.task_id FROM recettes r
+     LEFT JOIN recette_tasks rt ON rt.recette_id = r.recette_id
+     WHERE rt.task_id = $1 ORDER BY r.created_at DESC LIMIT 1`, [id],
+  ))[0];
   if (rec) {
-    const items = await q("SELECT id, content, classification, discussion, status, created_task_id, created_at FROM recette_items WHERE recette_id = $1 ORDER BY id ASC", [rec.recette_id]);
-    recette = { ...rec, items };
+    const items = await q("SELECT id, content, classification, discussion, scope, title, acceptance, status, created_task_id, created_at FROM recette_items WHERE recette_id = $1 ORDER BY id ASC", [rec.recette_id]);
+    const tasks = (await q("SELECT task_id FROM recette_tasks WHERE recette_id = $1", [rec.recette_id])).map((x) => x.task_id);
+    recette = { recetteId: rec.recette_id, project: rec.project, title: rec.title, sessionId: rec.session_id, status: rec.status, confirmedAt: rec.confirmed_at, confirmedBy: rec.confirmed_by, tasks, items };
   }
   return { task, executions, events, deployments, decisions, artifacts, sessions, linkedTasks, recette, archived: (await archivedTaskIds()).has(id) };
 }
@@ -618,13 +623,6 @@ const server = createServer(async (req, res) => {
       if (path.endsWith("/consumption") && req.method === "GET") {
         return sendJson(res, 200, await taskConsumption(taskId, registry()));
       }
-      if (path.endsWith("/recette-session") && req.method === "POST") {
-        return sendJson(res, 200, await pilot.launchRecetteSession({ taskId }));
-      }
-      if (path.endsWith("/recette-finish") && req.method === "POST") {
-        const b = await readBody(req);
-        return sendJson(res, 200, await pilot.finishRecette({ taskId, items: b.items, by: user.username }));
-      }
       return sendJson(res, 200, await registryTaskDetail(taskId));
     }
     if (path === "/api/events") return sendJson(res, 200, await registryEvents(url));
@@ -662,8 +660,43 @@ const server = createServer(async (req, res) => {
     }
     // Phase 4 — durcissement (décisions expirées, conflits de scope)
     if (path === "/api/metrics/hardening" && req.method === "GET") return sendJson(res, 200, await metrics.hardening(registry()));
-    // Phase D — recette (v0.7) : opérations, éléments, tâches générées
+    // Phase D — recette (v0.8) : opérations de PROJET
     if (path === "/api/metrics/recette" && req.method === "GET") return sendJson(res, 200, await metrics.recette(registry()));
+    if (path === "/api/recettes" && req.method === "GET") {
+      const project = url.searchParams.get("project");
+      const rows = (await registry().query(
+        `SELECT r.*,
+           (SELECT COUNT(*) FROM recette_tasks rt WHERE rt.recette_id = r.recette_id) AS tasks_count,
+           (SELECT COUNT(*) FROM recette_items i WHERE i.recette_id = r.recette_id) AS items_count
+         FROM recettes r ${project ? "WHERE r.project = $1" : ""} ORDER BY r.created_at DESC`,
+        project ? [project] : [],
+      )).rows;
+      return sendJson(res, 200, { recettes: rows });
+    }
+    if (path === "/api/recettes" && req.method === "POST") {
+      const b = await readBody(req);
+      return sendJson(res, 200, await pilot.createRecette({ project: b.project, title: b.title, taskIds: b.taskIds, by: user.username }));
+    }
+    const recetteAction = path.match(/^\/api\/recettes\/([^/]+)\/(session|finish)$/);
+    if (recetteAction && req.method === "POST") {
+      if (recetteAction[2] === "session") return sendJson(res, 200, await pilot.launchRecetteSession({ recetteId: recetteAction[1] }));
+      const b = await readBody(req);
+      return sendJson(res, 200, await pilot.finishRecette({ recetteId: recetteAction[1], items: b.items, by: user.username }));
+    }
+    const recetteDetail = path.match(/^\/api\/recettes\/([^/]+)$/);
+    if (recetteDetail && req.method === "GET") {
+      const r = (await registry().query(
+        `SELECT r.*, (SELECT COUNT(*) FROM recette_tasks rt WHERE rt.recette_id = r.recette_id) AS tasks_count FROM recettes r WHERE r.recette_id = $1`,
+        [recetteDetail[1]],
+      )).rows[0];
+      if (!r) return sendJson(res, 404, { error: "recette inconnue" });
+      const items = (await registry().query(
+        "SELECT id, content, classification, discussion, scope, title, acceptance, status, created_task_id, created_at FROM recette_items WHERE recette_id = $1 ORDER BY id ASC",
+        [r.recette_id],
+      )).rows;
+      const tasks = (await registry().query("SELECT task_id FROM recette_tasks WHERE recette_id = $1 ORDER BY task_id", [r.recette_id])).rows.map((x) => x.task_id);
+      return sendJson(res, 200, { recette: { ...r, tasks, items } });
+    }
     // Phase 3 (hors worktree) — qualité : funnel, rework, cost vs throughput
     if (path === "/api/metrics/quality" && req.method === "GET") return sendJson(res, 200, await metrics.quality(registry()));
     if (path === "/api/metrics/rework" && req.method === "GET") {

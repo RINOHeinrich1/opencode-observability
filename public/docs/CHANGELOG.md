@@ -5,6 +5,41 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.0 — 2026-09-01 · Recette = objet de projet (titre, 0..N tâches) + titre/critère des tâches
+
+**Objectif** : la recette devient un **objet métier de premier niveau** rattaché
+au **projet** (titre propre, session dédiée, historique propre), couvrant
+**0..N tâches** — plus besoin d'une session de recette par tâche. Les tâches
+portent désormais un **titre court** et un **critère d'acceptation**.
+
+### Changements
+
+- **MCP `task-orchestrator` (v0.6.0)** :
+  - `recettes` = projet + titre (0..N tâches via `recette_tasks`) ; colonnes
+    `tasks.title`, `tasks.recette_id` ; `recette_items.title`/`acceptance` ;
+  - **plus d'auto-création** de recette par tâche à `done` ;
+  - `recette_start(project, title, taskIds)` · `recette_list(project)` ·
+    `recette_get` · `recette_link_task` · `recette_session_set` ;
+  - `recette_confirm` marque **toutes les tâches couvertes** `recette_status='done'` ;
+  - `task_register` accepte `title`, `recetteId` ; `acceptance_criteria`.
+- **Panneau (v0.8.0)** :
+  - nouvel onglet **« Recettes »** : créer (projet + titre + tâches 0..N),
+    lister, session, terminer la recette (synthèse → confirmation → tâches) ;
+  - formulaire tâche : **Titre** + **Critère d'acceptation** obligatoires ;
+  - liste des tâches : affiche le titre court ;
+  - section recette du détail = la recette couvrant la tâche.
+- **Agent `agent-recette` (v0.4.0)** : contexte projet (recette_get, tâches
+  couvertes), éléments avec titre court + critère d'acceptation + scope.
+- **Migration** : recettes existantes → projet + titre dérivé + tâche couverte ;
+  titres des tâches backfillés (dérivés de la demande).
+
+### Dépôts impactés
+
+`opencode-observability` (v0.8.0) · `opencode-mcp-task-orchestrator` (v0.6.0) ·
+`opencode-agents` (v0.4.0).
+
+---
+
 ## v0.7.7 — 2026-09-01 · Liste des tâches : groupement par recette
 
 **Objectif** : dans l'onglet Tâches, pouvoir **grouper les tâches par recette**

@@ -5,7 +5,7 @@
 // sessions opencode est délégué au bridge `session-bridge.mjs` (Plan C).
 
 import { taskOrchestrator, coderWorkspaces } from "./mcp-client.mjs";
-import { launchSession, injectMessage, buildLaunchPrompt, buildReworkPrompt, buildRecettePrompt, killSession } from "./session-bridge.mjs";
+import { launchSession, injectMessage, buildLaunchPrompt, buildReworkPrompt, buildRecettePrompt, killSession, sessionExists } from "./session-bridge.mjs";
 
 // Décision n°7 : agents contraints par type de tâche.
 export function agentsForType(type, auditTarget) {
@@ -273,15 +273,20 @@ export async function launchRecetteSession({ taskId }) {
   const t = await taskOrchestrator("task_get", { taskId });
   const task = t && t.task;
   if (!task) throw new Error(`tâche inconnue : ${taskId}`);
-
-  // Une session recette existe déjà ? retourner sa sessionId.
   const rec = t && t.recette;
-  if (rec && rec.sessionId) return { taskId, recetteId: rec.recetteId, sessionId: rec.sessionId, resumed: true };
-
-  const prompt = buildRecettePrompt({ taskId });
   const dir = await projectGitPath(task.project);
+
+  // Reprise UNIQUEMENT si la session recette existe réellement (id valide + présente).
+  if (rec && rec.sessionId && /^ses_/.test(rec.sessionId) && sessionExists(rec.sessionId, dir)) {
+    return { taskId, recetteId: rec.recetteId, sessionId: rec.sessionId, resumed: true };
+  }
+
+  // Sinon, lance une nouvelle session agent-recette.
+  const prompt = buildRecettePrompt({ taskId });
   const { sessionId } = await launchSession({ dir, agent: "agent-recette", prompt, title: `Recette ${taskId}` });
-  if (!sessionId) throw new Error("échec de lancement de la session de recette");
+  if (!sessionId || !/^ses_/.test(sessionId)) {
+    throw new Error("échec de lancement de la session de recette (agent-recette indisponible ? redémarrer le serveur opencode pour charger l'agent)");
+  }
   await taskOrchestrator("task_link_session", { taskId, sessionId, kind: "recette" });
   const recette = await taskOrchestrator("recette_start", { taskId, status: "in_progress", sessionId });
   return { taskId, recetteId: recette.recetteId, sessionId, resumed: false };

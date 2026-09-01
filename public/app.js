@@ -84,9 +84,14 @@ function detailsButtons(t) {
 function sessionLink(sid) {
   if (!sid) return '<span class="muted">—</span>';
   const short = sid.length > 26 ? sid.slice(0, 12) + '…' + sid.slice(-8) : sid;
-  const encoded = btoa(SESSION_BASE_URL).replace(/=+$/, '');
-  const href = `${SESSION_BASE_URL}/server/${encoded}/session/${encodeURIComponent(sid)}`;
+  const href = sessionHref(sid);
   return `<a class="code" href="${href}" target="_blank" rel="noopener" title="${esc(sid)}">${esc(short)}</a>`;
+}
+
+// URL d'une session opencode (réutilisée par sessionLink et le bouton recette).
+function sessionHref(sid) {
+  const encoded = btoa(SESSION_BASE_URL).replace(/=+$/, '');
+  return `${SESSION_BASE_URL}/server/${encoded}/session/${encodeURIComponent(sid)}`;
 }
 
 // --- Vue d'ensemble --------------------------------------------------------
@@ -953,8 +958,12 @@ async function taskActionsModal(taskId) {
   if (recetteSession) recetteSession.onclick = async () => {
     try {
       const r = await api(`/api/tasks/${encodeURIComponent(taskId)}/recette-session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+      if (r.sessionId && /^ses_/.test(r.sessionId)) {
+        window.open(sessionHref(r.sessionId), '_blank');   // ouvre la session de recette
+      } else {
+        alert(r.error || 'Aucune session de recette disponible.');
+      }
       closeModal();
-      alert(r.resumed ? 'Session de recette existante.' : 'Session de recette lancée : ' + r.sessionId);
       refreshActive();
     } catch (e) { alert('Échec du lancement de la recette : ' + (e.message || e)); }
   };

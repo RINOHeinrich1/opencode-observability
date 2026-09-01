@@ -5,6 +5,26 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.7.2 — 2026-09-01 · Correctif « Session de recette »
+
+**Problème** : le bouton « Session de recette » affichait « session existante »
+sans ouvrir la session, car la recette portait un `session_id` **invalide**
+(non `ses_…`, hérité d'un échec de lancement) — et aucune redirection n'était
+faite vers la session.
+
+**Correctif** (`opencode-observability` v0.7.2) :
+- `launchRecetteSession` ne reprend une session que si l'id est valide (`ses_…`)
+  **et** que la session existe réellement (`sessionExists`) ; sinon, lance une
+  nouvelle session `agent-recette` (message d'erreur explicite si l'agent est
+  indisponible).
+- Le bouton **ouvre la session dans un nouvel onglet** (`window.open`) au lieu
+  d'une simple alerte.
+- Purge des `session_id` invalides dans la table `recettes`.
+
+Dépôt impacté : `opencode-observability`.
+
+---
+
 ## v0.7.1 — 2026-09-01 · Correctif session de recette
 
 - **`task_link_session` accepte le kind `recette`** (MCP v0.5.1) — corrige

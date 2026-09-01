@@ -361,7 +361,11 @@ async function recetteDetailModal(recetteId) {
       <h2>${esc(rec.title || recetteId)}</h2>
       <p class="muted">${badge(rec.status)} · Projet <span class="code">${esc(rec.project || '')}</span>${rec.confirmed_at ? ` · confirmée ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}</p>
       ${rec.description ? `<p class="modal-request">${esc(rec.description)}</p>` : ''}
-      ${tasks.length ? `<div class="actions-section"><h3>Tâches couvertes (${tasks.length})</h3><div class="recette-list">${tasks.map((t) => `<div class="recette-item"><code class="muted-sm">${esc(typeof t === 'string' ? t : t.taskId)}</code><span>${esc(typeof t === 'string' ? '' : (t.title || ''))}</span></div>`).join('')}</div></div>` : '<p class="muted-sm">Aucune tâche couverte (recette exploratoire).</p>'}
+      ${tasks.length ? `<div class="actions-section"><h3>Tâches couvertes (${tasks.length})</h3><div class="recette-list">${tasks.map((t) => {
+        const tid = (t && typeof t === 'object') ? (t.taskId || t.task_id || '') : (t || '');
+        const ttl = (t && typeof t === 'object') ? (t.title || '') : '';
+        return `<div class="recette-item"><code class="muted-sm">${esc(tid)}</code><span>${esc(ttl)}</span></div>`;
+      }).join('')}</div></div>` : '<p class="muted-sm">Aucune tâche couverte (recette exploratoire).</p>'}
       ${items.length ? `<div class="actions-section"><h3>Éléments (${items.length})</h3><div class="recette-list">${items.map((it) => `<div class="recette-item"><span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span><span>${esc(it.title || it.content.slice(0, 80))}</span></div>`).join('')}</div></div>` : ''}
       <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
     </div>`);

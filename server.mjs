@@ -167,7 +167,7 @@ async function registryTasks(url) {
          (SELECT attempt FROM executions e WHERE e.task_id = t.id ORDER BY attempt DESC LIMIT 1) AS attempt,
          (SELECT rework_count FROM executions e WHERE e.task_id = t.id ORDER BY attempt DESC LIMIT 1) AS rework_count,
          EXISTS (SELECT 1 FROM decisions d WHERE d.task_id = t.id AND d.status = 'awaiting'
-                 AND d.kind IN ('validation','review','recette')) AS waiting_human
+                 AND d.kind IN ('validation','review')) AS waiting_human
        FROM tasks t ORDER BY t.created_at DESC`,
     );
     rows = res.rows.filter((r) => !archived.has(r.id));

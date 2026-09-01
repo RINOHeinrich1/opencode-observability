@@ -5,6 +5,32 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.7.5 — 2026-09-01 · « Attente humaine » ne compte plus les décisions recette legacy
+
+**Problème** : des tâches (ex. T-20260831-174431) affichaient encore le badge
+« ⏳ attente humaine » alors que la recette était terminée — causé par des
+**décisions `recette` legacy restées `awaiting`** (ancien flux
+`decision_request(kind="recette")`, que la clôture v0.7 ne résolvait pas).
+
+**Correctifs** :
+- **Panneau (v0.7.5)** : `waiting_human` ne compte plus que les décisions
+  `validation`/`review` (la recette est désormais suivie via la table
+  `recettes`, pas via une décision).
+- **MCP `task-orchestrator` (v0.5.3)** : `recette_confirm` résout désormais les
+  décisions `recette` legacy encore `awaiting` de la tâche.
+- **Agent orchestrateur (v0.3.6)** : §13 mis à jour — la recette est entrée
+  automatiquement à `done`, **plus aucune** `decision_request(kind="recette")`
+  (obsolète) ; l'humain utilise la session dédiée `agent-recette` + « Terminer
+  la recette ».
+- Nettoyage des décisions recette stale existantes.
+
+### Dépôts impactés
+
+`opencode-observability` (v0.7.5) · `opencode-mcp-task-orchestrator` (v0.5.3) ·
+`opencode-agents` (v0.3.6).
+
+---
+
 ## v0.7.4 — 2026-09-01 · Observabilité alignée sur le framework recette (Phase D)
 
 **Objectif** : aligner les KPI sur le nouveau modèle recette (opération

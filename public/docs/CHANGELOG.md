@@ -5,6 +5,16 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.3 — 2026-09-01 · Documents rattachés aux recettes (import / artefact + nature)
+
+**Recettes** : on peut rattacher un document (importé par upload, ou lien vers un artefact existant) avec la **nature de la liaison** (à quoi sert / comment l'exploiter). Bouton « Documents » sur chaque recette ; visionneuse markdown ; retrait.
+
+- MCP v0.6.2 : `recette_doc_add` / `recette_doc_remove`, `recette_get` renvoie les documents.
+- Panneau v0.8.3 : upload (base64 → `storage/recette-docs/`), lien artefact, liste, Regarder (md), Retirer.
+- Agent-recette v0.4.1 : exploite les documents de la recette.
+
+---
+
 ## v0.8.2 — 2026-09-01 · Modification des tâches en statut queued
 
 **UX** : bouton « Modifier » dans la modale Actions pour une tâche `queued` — édite titre court, demande, critère d'acceptation, scope, priorité (MCP `task_update`, refusé si la tâche n'est plus queued).

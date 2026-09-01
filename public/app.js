@@ -319,6 +319,7 @@ function recetteCard(r) {
       ${r.confirmed_at ? `<div class="project-kv"><span class="lbl">Confirmée</span><span class="muted-sm">${esc((r.confirmed_at || '').replace('T', ' ').slice(0, 16))}</span></div>` : ''}
     </div>
     <div class="project-card-actions">
+      <button class="ghost" data-rec-docs="${esc(r.recette_id)}">Documents (${r.documents_count || 0})</button>
       ${canSession ? `<button class="launch-btn" data-rec-session="${esc(r.recette_id)}">Session de recette</button>` : ''}
       ${canFinish ? `<button class="approve" data-rec-finish="${esc(r.recette_id)}">Terminer la recette</button>` : ''}
     </div>
@@ -343,6 +344,101 @@ async function renderRecettes() {
     } catch (e) { alert('Échec de la session de recette : ' + (e.message || e)); }
   }));
   document.querySelectorAll('#pane-recettes [data-rec-finish]').forEach((b) => b.addEventListener('click', () => finishRecetteModal(b.dataset.recFinish)));
+  document.querySelectorAll('#pane-recettes [data-rec-docs]').forEach((b) => b.addEventListener('click', () => recetteDocsModal(b.dataset.recDocs)));
+}
+
+// Documents d'une recette : liste, ajout (import / artefact), lecture, retrait.
+async function recetteDocsModal(recetteId) {
+  let d;
+  try { d = await api(`/api/recettes/${encodeURIComponent(recetteId)}`); } catch (e) { alert('Impossible de charger la recette : ' + (e.message || e)); return; }
+  const rec = d.recette || {};
+  const docs = rec.documents || [];
+  showModal(`
+    <div class="modal modal-wide">
+      <h2>Documents de la recette</h2>
+      <p class="muted">${esc(rec.title || recetteId)} — <span class="code">${esc(rec.project || '')}</span></p>
+      <div class="recette-list">
+        ${docs.map((doc) => `<div class="recette-item">
+          <code class="muted-sm">${doc.source === 'artifact' ? '🔗' : '📄'}</code>
+          <span><strong>${esc(doc.title || (doc.path || '').split('/').pop())}</strong></span>
+          ${doc.nature ? `<span class="muted-sm">${esc(doc.nature.slice(0, 90))}</span>` : ''}
+          ${doc.source === 'artifact' ? `<code class="muted-sm">${esc(doc.artifact_task || '')}</code>` : ''}
+          ${/\.md$/i.test(doc.path || '') ? `<button class="ghost" data-doc-view="${esc(doc.documentId || doc.id)}">Regarder</button>` : ''}
+          <button class="danger" data-doc-del="${esc(doc.documentId || doc.id)}">Retirer</button>
+        </div>`).join('') || '<p class="muted-sm">Aucun document rattaché.</p>'}
+      </div>
+      <div class="actions-buttons"><button class="launch-btn" id="rec-doc-add">+ Ajouter un document</button></div>
+      <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('rec-doc-add').onclick = () => recetteDocAddModal(recetteId);
+  document.querySelectorAll('#modal-backdrop [data-doc-del]').forEach((b) => b.addEventListener('click', async () => {
+    try {
+      await api(`/api/recettes/${encodeURIComponent(recetteId)}/documents/${b.dataset.docDel}`, { method: 'DELETE' });
+      closeModal(); recetteDocsModal(recetteId);
+    } catch (e) { alert('Échec : ' + (e.message || e)); }
+  }));
+  document.querySelectorAll('#modal-backdrop [data-doc-view]').forEach((b) => b.addEventListener('click', async () => {
+    try {
+      const v = await api(`/api/recettes/${encodeURIComponent(recetteId)}/documents/${b.dataset.docView}/view`);
+      showModal(`<div class="modal modal-wide modal-md"><div class="md-head"><strong>${esc(v.title || 'Document')}</strong></div><div class="md-body markdown-view">${v.html}</div><div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div></div>`);
+      document.getElementById('modal-cancel').onclick = closeModal;
+    } catch (e) { alert('Impossible d\'ouvrir le document : ' + (e.message || e)); }
+  }));
+}
+
+async function recetteDocAddModal(recetteId) {
+  let arts = [];
+  try { arts = ((await api('/api/artifacts')).artifacts || []); } catch {}
+  showModal(`
+    <div class="modal">
+      <h2>Ajouter un document à la recette</h2>
+      <form id="rec-doc-form" class="pilot-form">
+        <select id="rd-mode">
+          <option value="import">Importer un fichier</option>
+          <option value="artifact">Lier un document existant (artefact)</option>
+        </select>
+        <input id="rd-title" placeholder="titre (défaut : nom du fichier)">
+        <textarea id="rd-nature" class="modal-textarea" placeholder="nature de la liaison — à quoi sert le document, comment l'exploiter (ex: spec à respecter, contexte du parcours)"></textarea>
+        <div id="rd-import-wrap"><input type="file" id="rd-file" required></div>
+        <div id="rd-artifact-wrap" hidden>
+          <select id="rd-artifact"><option value="">— artefact existant —</option>${arts.map((a) => `<option value="${esc(a.artifact_id)}">${esc((a.title || a.path).slice(0, 70))} (${esc(a.task_id)})</option>`).join('')}</select>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="ghost" id="modal-cancel">Annuler</button>
+          <button type="submit" class="launch-btn">Ajouter</button>
+        </div>
+      </form>
+      <div id="rec-doc-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  const modeSel = document.getElementById('rd-mode');
+  modeSel.addEventListener('change', () => {
+    const m = modeSel.value;
+    document.getElementById('rd-import-wrap').hidden = m !== 'import';
+    document.getElementById('rd-artifact-wrap').hidden = m !== 'artifact';
+  });
+  document.getElementById('rec-doc-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById('rec-doc-msg');
+    try {
+      const mode = modeSel.value;
+      const body = { mode, title: document.getElementById('rd-title').value.trim() || undefined, nature: document.getElementById('rd-nature').value.trim() || undefined };
+      if (mode === 'import') {
+        const f = document.getElementById('rd-file').files[0];
+        if (!f) throw new Error('fichier requis');
+        const buf = await f.arrayBuffer();
+        const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+        body.filename = f.name; body.dataBase64 = b64;
+      } else {
+        body.artifactId = document.getElementById('rd-artifact').value;
+        if (!body.artifactId) throw new Error('artefact requis');
+      }
+      await api(`/api/recettes/${encodeURIComponent(recetteId)}/documents`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      closeModal();
+      recetteDocsModal(recetteId);
+    } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
+  });
 }
 
 async function recetteCreateModal() {

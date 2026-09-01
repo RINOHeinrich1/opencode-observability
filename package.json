@@ -1,6 +1,6 @@
 {
   "name": "orchestrator-panel",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "description": "Panneau web de supervision de l'orchestrateur (lecture seule + auth formulaire + dashboard KPI / observabilité).",
   "type": "module",
   "main": "server.mjs",

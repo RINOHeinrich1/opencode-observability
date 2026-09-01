@@ -2,7 +2,7 @@
 // - Lecture SEULE du registre de tâches (PostgreSQL `task_registry`).
 // - Authentification par formulaire (session cookie) + gestion d'utilisateurs.
 import { createServer } from "node:http";
-import { readFileSync, existsSync, statSync, createReadStream } from "node:fs";
+import { readFileSync, existsSync, statSync, createReadStream, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname, extname, normalize, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -671,7 +671,8 @@ const server = createServer(async (req, res) => {
       const rows = (await registry().query(
         `SELECT r.*,
            (SELECT COUNT(*) FROM recette_tasks rt WHERE rt.recette_id = r.recette_id) AS tasks_count,
-           (SELECT COUNT(*) FROM recette_items i WHERE i.recette_id = r.recette_id) AS items_count
+           (SELECT COUNT(*) FROM recette_items i WHERE i.recette_id = r.recette_id) AS items_count,
+           (SELECT COUNT(*) FROM recette_documents d WHERE d.recette_id = r.recette_id) AS documents_count
          FROM recettes r ${project ? "WHERE r.project = $1" : ""} ORDER BY r.created_at DESC`,
         project ? [project] : [],
       )).rows;
@@ -702,6 +703,23 @@ const server = createServer(async (req, res) => {
       const b = await readBody(req);
       return sendJson(res, 200, await pilot.finishRecette({ recetteId: recetteAction[1], items: b.items, by: user.username }));
     }
+    const recetteDocView = path.match(/^\/api\/recettes\/([^/]+)\/documents\/([0-9]+)\/view$/);
+    if (recetteDocView && req.method === "GET") {
+      const d = (await registry().query("SELECT * FROM recette_documents WHERE id = $1", [Number(recetteDocView[2])])).rows[0];
+      if (!d || !d.path || !existsSync(d.path)) return sendJson(res, 404, { error: "document introuvable" });
+      const raw = readFileSync(d.path, "utf8");
+      const html = /\.md$/i.test(d.path) ? marked.parse(raw) : null;
+      return sendJson(res, 200, { title: d.title || d.path.split("/").pop(), html, raw: html ? null : raw });
+    }
+    const recetteDocAction = path.match(/^\/api\/recettes\/([^/]+)\/documents$/);
+    if (recetteDocAction && req.method === "POST") {
+      const b = await readBody(req);
+      return sendJson(res, 200, await pilot.addRecetteDocument({ recetteId: recetteDocAction[1], mode: b.mode, filename: b.filename, dataBase64: b.dataBase64, artifactId: b.artifactId, nature: b.nature, title: b.title }));
+    }
+    const recetteDocDel = path.match(/^\/api\/recettes\/([^/]+)\/documents\/([0-9]+)$/);
+    if (recetteDocDel && req.method === "DELETE") {
+      return sendJson(res, 200, await pilot.removeRecetteDocument({ documentId: Number(recetteDocDel[2]) }));
+    }
     const recetteDetail = path.match(/^\/api\/recettes\/([^/]+)$/);
     if (recetteDetail && req.method === "GET") {
       const r = (await registry().query(
@@ -714,7 +732,12 @@ const server = createServer(async (req, res) => {
         [r.recette_id],
       )).rows;
       const tasks = (await registry().query("SELECT task_id FROM recette_tasks WHERE recette_id = $1 ORDER BY task_id", [r.recette_id])).rows.map((x) => x.task_id);
-      return sendJson(res, 200, { recette: { ...r, tasks, items } });
+      const docs = (await registry().query(
+        `SELECT d.id, d.title, d.nature, d.source, d.path, d.artifact_id, d.created_at, a.title AS artifact_title, a.task_id AS artifact_task
+         FROM recette_documents d LEFT JOIN artifacts a ON a.artifact_id = d.artifact_id
+         WHERE d.recette_id = $1 ORDER BY d.id ASC`, [r.recette_id],
+      )).rows;
+      return sendJson(res, 200, { recette: { ...r, tasks, items, documents: docs } });
     }
     // Phase 3 (hors worktree) — qualité : funnel, rework, cost vs throughput
     if (path === "/api/metrics/quality" && req.method === "GET") return sendJson(res, 200, await metrics.quality(registry()));

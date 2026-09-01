@@ -314,6 +314,29 @@ export async function launchRecetteSession({ recetteId }) {
   return { recetteId, sessionId, resumed: false };
 }
 
+// Rattache un document à une recette : import (upload base64) ou artefact existant.
+export async function addRecetteDocument({ recetteId, mode, filename, dataBase64, artifactId, nature, title }) {
+  if (!recetteId) throw new Error("recetteId requis");
+  if (mode === "artifact") {
+    if (!artifactId) throw new Error("artifactId requis en mode artefact");
+    return taskOrchestrator("recette_doc_add", { recetteId, source: "artifact", artifactId, nature: nature || undefined, title: title || undefined });
+  }
+  // mode import
+  if (!dataBase64 || !filename) throw new Error("fichier requis (mode import)");
+  const docDir = "/root/orchestrator-panel/storage/recette-docs";
+  const fs = await import("node:fs");
+  fs.mkdirSync(docDir, { recursive: true });
+  const safeName = String(filename).replace(/[^\w.\-]+/g, "_");
+  const dest = `${docDir}/${recetteId}-${Date.now()}-${safeName}`;
+  fs.writeFileSync(dest, Buffer.from(String(dataBase64), "base64"));
+  return taskOrchestrator("recette_doc_add", { recetteId, source: "import", path: dest, nature: nature || undefined, title: title || undefined });
+}
+
+export async function removeRecetteDocument({ documentId }) {
+  if (!documentId) throw new Error("documentId requis");
+  return taskOrchestrator("recette_doc_remove", { documentId });
+}
+
 // Clôt la recette : crée une tâche par élément confirmé (via task_register) puis confirme.
 export async function finishRecette({ recetteId, items, by }) {
   if (!recetteId) throw new Error("recetteId requis");

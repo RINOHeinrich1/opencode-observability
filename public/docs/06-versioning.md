@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.10** (2026-09-01,
-Modale Nouvelle recette : champs documents responsives (nature = textarea).
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.11** (2026-09-01,
+Agents : interdiction de lire les bases/config/secrets.

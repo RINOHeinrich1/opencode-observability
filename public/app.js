@@ -452,6 +452,11 @@ async function recetteCreateModal() {
         <input id="rm-title" placeholder="titre (ex: Recette du module chatbot)" required>
         <label class="modal-field">Tâches couvertes <span class="muted-sm">(0..N — tâches non encore recettées)</span></label>
         <div id="rm-candidates" class="recette-candidates"><p class="muted-sm">Sélectionnez un projet pour charger les tâches disponibles.</p></div>
+        <div class="links-editor">
+          <div class="links-head"><label class="modal-field" style="margin:0">Documents <span class="muted-sm">(importés ou liés, avec nature)</span></label>
+          <button type="button" class="ghost" id="rm-add-doc">+ Ajouter</button></div>
+          <div id="rm-docs-list"></div>
+        </div>
         <div class="modal-actions">
           <button type="button" class="ghost" id="modal-cancel">Annuler</button>
           <button type="submit" class="launch-btn">Créer</button>
@@ -478,15 +483,66 @@ async function recetteCreateModal() {
     } catch (e) { candBox.innerHTML = '<p class="muted-sm">Erreur de chargement : ' + esc(e.message || e) + '</p>'; }
   };
   document.getElementById('rm-project').addEventListener('change', loadCandidates);
+
+  // Éditeur de documents (import / artefact + nature).
+  let allArtifacts = [];
+  try { allArtifacts = ((await api('/api/artifacts')).artifacts || []); } catch {}
+  const docsList = document.getElementById('rm-docs-list');
+  const addDocRow = () => {
+    const row = document.createElement('div');
+    row.className = 'link-row';
+    row.innerHTML = `
+      <select class="rd-mode">
+        <option value="import">Importer</option>
+        <option value="artifact">Lier artefact</option>
+      </select>
+      <input class="rd-title" placeholder="titre (défaut : nom du fichier)" style="width:150px">
+      <input class="rd-file" type="file" style="flex:1">
+      <select class="rd-art" hidden style="flex:1"><option value="">— artefact existant —</option>${allArtifacts.map((a) => `<option value="${esc(a.artifact_id)}">${esc((a.title || a.path).slice(0, 50))} (${esc(a.task_id)})</option>`).join('')}</select>
+      <input class="rd-nature" placeholder="nature (à quoi sert / comment l'exploiter)" style="flex:2">
+      <button type="button" class="ghost rd-del" title="Retirer">✕</button>`;
+    const modeSel = row.querySelector('.rd-mode');
+    const fileEl = row.querySelector('.rd-file');
+    const artEl = row.querySelector('.rd-art');
+    const sync = () => {
+      const m = modeSel.value;
+      fileEl.hidden = m !== 'import';
+      artEl.hidden = m !== 'artifact';
+      if (m === 'import') fileEl.required = true; else { fileEl.required = false; artEl.required = true; }
+    };
+    modeSel.addEventListener('change', sync);
+    sync();
+    row.querySelector('.rd-del').addEventListener('click', () => row.remove());
+    docsList.appendChild(row);
+  };
+  document.getElementById('rm-add-doc').addEventListener('click', addDocRow);
+
   document.getElementById('recette-modal-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const msg = document.getElementById('recette-modal-msg');
     try {
       const taskIds = [...candBox.querySelectorAll('.rm-cand:checked')].map((x) => x.value);
+      const documents = [];
+      for (const row of docsList.querySelectorAll('.link-row')) {
+        const mode = row.querySelector('.rd-mode').value;
+        const title = row.querySelector('.rd-title').value.trim() || undefined;
+        const nature = row.querySelector('.rd-nature').value.trim() || undefined;
+        if (mode === 'import') {
+          const f = row.querySelector('.rd-file').files[0];
+          if (f) {
+            const buf = await f.arrayBuffer();
+            documents.push({ mode: 'import', filename: f.name, dataBase64: btoa(String.fromCharCode(...new Uint8Array(buf))), title, nature });
+          }
+        } else {
+          const art = row.querySelector('.rd-art').value;
+          if (art) documents.push({ mode: 'artifact', artifactId: art, title, nature });
+        }
+      }
       await api('/api/recettes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         project: document.getElementById('rm-project').value,
         title: document.getElementById('rm-title').value.trim(),
         taskIds,
+        documents,
       }) });
       closeModal();
       refreshActive();

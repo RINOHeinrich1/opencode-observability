@@ -279,8 +279,8 @@ export async function relaunchTask({ taskId }) {
 // Recette (v0.8.0) — objet de PROJET : titre + 0..N tâches couvertes
 // ===========================================================================
 
-// Crée une recette de PROJET (titre + tâches couvertes 0..N).
-export async function createRecette({ project, title, taskIds, by }) {
+// Crée une recette de PROJET (titre + tâches couvertes 0..N) + documents éventuels.
+export async function createRecette({ project, title, taskIds, documents, by }) {
   if (!project) throw new Error("projet requis pour créer une recette");
   if (!title || !String(title).trim()) throw new Error("titre requis pour créer une recette");
   const r = await taskOrchestrator("recette_start", {
@@ -289,6 +289,21 @@ export async function createRecette({ project, title, taskIds, by }) {
     taskIds: (taskIds || []).filter(Boolean),
     status: "pending",
   });
+  // Rattache les documents fournis à la création (import ou artefact).
+  for (const doc of documents || []) {
+    if (!doc) continue;
+    try {
+      await addRecetteDocument({
+        recetteId: r.recette.recetteId,
+        mode: doc.mode === "artifact" ? "artifact" : "import",
+        filename: doc.filename,
+        dataBase64: doc.dataBase64,
+        artifactId: doc.artifactId,
+        nature: doc.nature,
+        title: doc.title,
+      });
+    } catch {}
+  }
   return { ok: true, recette: r.recette };
 }
 
@@ -329,7 +344,7 @@ export async function addRecetteDocument({ recetteId, mode, filename, dataBase64
   const safeName = String(filename).replace(/[^\w.\-]+/g, "_");
   const dest = `${docDir}/${recetteId}-${Date.now()}-${safeName}`;
   fs.writeFileSync(dest, Buffer.from(String(dataBase64), "base64"));
-  return taskOrchestrator("recette_doc_add", { recetteId, source: "import", path: dest, nature: nature || undefined, title: title || undefined });
+  return taskOrchestrator("recette_doc_add", { recetteId, source: "import", path: dest, nature: nature || undefined, title: title || filename });
 }
 
 export async function removeRecetteDocument({ documentId }) {

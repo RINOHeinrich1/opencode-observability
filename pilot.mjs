@@ -86,8 +86,8 @@ export async function editTask({ taskId, request, title, acceptanceCriteria, sco
     priority: priority !== undefined ? priority : undefined,
   });
 }
-
-export async function createTask({ request, project, type, scope, priority, auditTarget, linkedTasks, agents }) {  if (!request || !project || !type) throw new Error("request, project et type requis");
+export async function createTask({ request, project, type, scope, priority, auditTarget, linkedTasks, directExecution, agents }) {
+  if (!request || !project || !type) throw new Error("request, project et type requis");
   const reg = await taskOrchestrator("task_register", {
     request,
     project,
@@ -95,6 +95,7 @@ export async function createTask({ request, project, type, scope, priority, audi
     auditTarget: auditTarget || undefined,
     scope: scope || undefined,
     priority: priority || "normal",
+    directExecution: !!directExecution,
     linkedTasks: (linkedTasks || []).filter((l) => l && l.taskId).map((l) => ({ taskId: l.taskId, description: l.description })),
   });
   const taskId = reg && (reg.taskId || (reg.task && reg.task.id));
@@ -206,6 +207,7 @@ export async function launchTask({ taskId, kind = "launch" }) {
     scope: task && task.scope,
     request: task && task.request,
     auditTarget: task && task.auditTarget,
+    directExecution: task && task.directExecution,
   });
   const dir = await projectGitPath(task && task.project);
   const { sessionId } = await launchSession({ dir, agent: "orchestrator", prompt, title: `Tâche ${taskId}` });

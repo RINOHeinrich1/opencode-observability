@@ -1178,6 +1178,10 @@ async function taskCreateModal() {
           <option value="frontend">Audit frontend (React)</option>
           <option value="both">Les deux (backend + frontend)</option>
         </select>
+        <select id="tm-mode" hidden>
+          <option value="plan">Avec planification (atomic-plan)</option>
+          <option value="direct">Exécution directe (build-notify)</option>
+        </select>
         <textarea id="tm-request" placeholder="description de la tâche" required></textarea>
         <input id="tm-title" placeholder="titre court (ex: Ajouter le filtrage des tâches)" required>
         <textarea id="tm-acceptance" rows="2" placeholder="critère d'acceptation / livrable attendu" required></textarea>
@@ -1198,7 +1202,12 @@ async function taskCreateModal() {
   document.getElementById('modal-cancel').onclick = closeModal;
   const typeSel = document.getElementById('tm-type');
   const targetSel = document.getElementById('tm-audit-target');
-  const syncTarget = () => { targetSel.hidden = typeSel.value !== 'audit'; };
+  const modeSel = document.getElementById('tm-mode');
+  const syncTarget = () => {
+    const isAudit = typeSel.value === 'audit';
+    targetSel.hidden = !isAudit;
+    modeSel.hidden = isAudit;   // mode planification/direct pour feature & debug
+  };
   typeSel.addEventListener('change', syncTarget);
   syncTarget();
 
@@ -1233,6 +1242,7 @@ async function taskCreateModal() {
         project: document.getElementById('tm-project').value,
         type,
         auditTarget: type === 'audit' ? targetSel.value : undefined,
+        directExecution: type !== 'audit' && modeSel.value === 'direct',
         request: document.getElementById('tm-request').value.trim(),
         title: document.getElementById('tm-title').value.trim(),
         acceptanceCriteria: [document.getElementById('tm-acceptance').value.trim()],

@@ -36,7 +36,7 @@
 | `opencode-observability` (panneau + docs) | `/root/orchestrator-panel` | `0.8.10` |
 | `opencode-agents` | `~/.config/opencode/agent` | `0.3.0` |
 | `opencode-notifier` | `~/.config/opencode/notifier` | `0.1.0` |
-| `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.6.4` |
+| `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.6.5` |
 | `opencode-mcp-plan-manager` | `~/.config/opencode/mcp/plan-manager` | `0.1.0` |
 | `opencode-mcp-audit-manager` | `~/.config/opencode/mcp/audit-manager` | `0.1.0` |
 | `opencode-mcp-coder-workspaces` | `~/.config/opencode/mcp/coder-workspaces` | `0.1.0` |
@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.13** (2026-09-01,
-Tâches liées : combo avec titres au lieu du champ texte.
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.14** (2026-09-01,
+Mode d'exécution directe (build-notify sans atomic-plan).

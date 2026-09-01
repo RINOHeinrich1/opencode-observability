@@ -135,9 +135,10 @@ export async function resolveRecette({ taskId, status, resolution, by }) {
   if (!taskId || !status) throw new Error("taskId et status requis");
   const r = await taskOrchestrator("task_recette", { taskId, status, resolution, by: by || "human" });
 
-  // Recette APPROUVÉE = tâche clôturée (v0.5.2) : tuer la session orchestrateur
-  // pour qu'elle n'accepte plus aucune demande (elle resterait sinon vivante et
-  // continuerait de traiter des requêtes sur une tâche déjà validée).
+  // Recette APPROUVÉE = tâche clôturée (v0.5.2) : arrêter le traitement de la
+  // session orchestrateur (elle n'accepte plus aucune demande) MAIS conserver
+  // l'enregistrement de session (lien + consommation restent consultables,
+  // v0.6.3 — killSession ne supprime plus).
   if (status === "approved") {
     try {
       const t = await taskOrchestrator("task_get", { taskId });

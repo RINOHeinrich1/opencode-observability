@@ -5,6 +5,28 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.6.3 — 2026-09-01 · Sessions conservées (stop process, aucune suppression)
+
+**Problème** : le correctif v0.5.2 supprimait les sessions à l'approbation de la
+recette (`killSession` → `opencode session delete`) — le lien « session » et la
+consommation devenaient indisponibles (tracabilité perdue).
+
+**Correctif** (`opencode-observability` v0.6.3) :
+- `killSession` ne supprime **plus jamais** l'enregistrement de session : il
+  **arrête seulement les processus** `opencode run` (SIGTERM/SIGKILL) ; la
+  session persiste sur disque → lien consultable + `opencode export` (consommation)
+  valides (vérifié sur une session réelle : recette approuvée, process absent,
+  export OK).
+- Appliqué **partout** : approbation de recette **et** bouton « Tuer la session »
+  (Actions).
+
+> ⚠️ Les sessions supprimées avant v0.6.3 sont perdues définitivement (non
+> récupérables). À partir de cette version, plus aucune suppression.
+
+Dépôt impacté : `opencode-observability`.
+
+---
+
 ## v0.6.2 — 2026-09-01 · Whitelist commandes d'inspection (planning)
 
 **Problème** : une commande composée de lecture (`ls` + `echo` + `test -f`)

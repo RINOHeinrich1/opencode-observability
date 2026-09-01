@@ -198,8 +198,10 @@ export function injectMessage({ sessionId, prompt, dir }) {
 
 /**
  * Arrête la session opencode d'une tâche : tue les processus `opencode run`
- * associés (headless) puis supprime l'enregistrement de session. Utilisé par le
- * bouton « Tuer la session » du panneau.
+ * associés (headless) MAIS CONSERVE l'enregistrement de session (lien et
+ * consommation restent consultables). Utilisé par le bouton « Tuer la session »
+ * du panneau et par l'approbation de recette (v0.6.3 : plus aucune suppression).
+ * La suppression d'une session (`opencode session delete`) n'est JAMAIS faite ici.
  */
 export function killSession({ taskId, sessionId }) {
   const result = { killedPids: [], sessionDeleted: false };
@@ -232,14 +234,9 @@ export function killSession({ taskId, sessionId }) {
     }, 2500);
   }
 
-  // 2. Supprimer l'enregistrement de session.
-  if (sessionId) {
-    try {
-      execFileSync(OPENCODE_BIN, ["session", "delete", sessionId], { stdio: "ignore" });
-      result.sessionDeleted = true;
-    } catch {}
-  }
-
+  // NOTE (v0.6.3) : la session opencode n'est PAS supprimée — l'enregistrement
+  // persiste sur disque (lien consultable + `opencode export` pour la consommation).
+  result.sessionDeleted = false;
   return result;
 }
 

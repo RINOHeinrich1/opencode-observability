@@ -33,7 +33,7 @@
 
 | Dépôt | Chemin hôte | Version actuelle |
 |---|---|---|
-| `opencode-observability` (panneau + docs) | `/root/orchestrator-panel` | `0.7.10` |
+| `opencode-observability` (panneau + docs) | `/root/orchestrator-panel` | `0.7.11` |
 | `opencode-agents` | `~/.config/opencode/agent` | `0.3.0` |
 | `opencode-notifier` | `~/.config/opencode/notifier` | `0.1.0` |
 | `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.5.3` |
@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.7.10** (2026-09-01,
-Lecteur markdown en page dédiée (bouton Retour).
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.7.11** (2026-09-01,
+Lecteur markdown pleine hauteur (en-tête fixe).

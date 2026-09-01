@@ -36,7 +36,7 @@
 | `opencode-observability` (panneau + docs) | `/root/orchestrator-panel` | `0.8.10` |
 | `opencode-agents` | `~/.config/opencode/agent` | `0.3.0` |
 | `opencode-notifier` | `~/.config/opencode/notifier` | `0.1.0` |
-| `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.6.6` |
+| `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.6.7` |
 | `opencode-mcp-plan-manager` | `~/.config/opencode/mcp/plan-manager` | `0.1.0` |
 | `opencode-mcp-audit-manager` | `~/.config/opencode/mcp/audit-manager` | `0.1.0` |
 | `opencode-mcp-coder-workspaces` | `~/.config/opencode/mcp/coder-workspaces` | `0.1.0` |
@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.18** (2026-09-01,
-Édition tâche : scope parsé (plus de tableau JSON).
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.19** (2026-09-01,
+Édition des tâches associées dans la modale Modifier.

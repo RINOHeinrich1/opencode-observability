@@ -1420,6 +1420,11 @@ async function taskEditModal(taskId, detail) {
             <option value="direct" ${task.directExecution ? 'selected' : ''}>Exécution directe (build-notify)</option>
           </select>
         </label>
+        <div class="links-editor">
+          <div class="links-head"><label class="modal-field" style="margin:0">Tâches associées (liées)</label>
+          <button type="button" class="ghost" id="te-add-link">+ Ajouter</button></div>
+          <div id="te-links-list"></div>
+        </div>
         <div class="modal-actions">
           <button type="button" class="ghost" id="modal-cancel">Annuler</button>
           <button type="submit" class="launch-btn">Enregistrer</button>
@@ -1428,10 +1433,34 @@ async function taskEditModal(taskId, detail) {
       <div id="task-edit-msg" class="msg"></div>
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
+
+  // Éditeur de tâches associées (combo par titre + nature), prérempli depuis detail.linkedTasks.
+  const teLinksList = document.getElementById('te-links-list');
+  let teAllTasks = [];
+  try { teAllTasks = (await api('/api/tasks')).tasks || []; } catch {}
+  const teOptions = `<option value="">— tâche associée (titre) —</option>` + teAllTasks
+    .map((t) => `<option value="${esc(t.id)}">${esc((t.title || t.request || '').slice(0, 70))} — ${esc(t.id)}</option>`).join('');
+  const teAddRow = (taskId = '', description = '') => {
+    const row = document.createElement('div');
+    row.className = 'link-row';
+    row.innerHTML = `
+      <select class="te-link-task" style="flex:1; min-width:160px;">${teOptions.replace(`value="${esc(taskId)}"`, `value="${esc(taskId)}" selected`)}</select>
+      <input class="te-link-desc" style="flex:2; min-width:160px;" placeholder="nature de la liaison" value="${esc(description)}">
+      <button type="button" class="ghost te-link-del" title="Retirer">✕</button>`;
+    row.querySelector('.te-link-del').addEventListener('click', () => row.remove());
+    teLinksList.appendChild(row);
+  };
+  document.getElementById('te-add-link').addEventListener('click', () => teAddRow());
+  const currentLinks = (detail && detail.linkedTasks) || [];
+  currentLinks.forEach((l) => teAddRow(l.linked_task_id || l.linkedTaskId, l.description || ''));
+
   document.getElementById('task-edit-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const msg = document.getElementById('task-edit-msg');
     const scopeRaw = document.getElementById('te-scope').value.trim();
+    const linkedTasks = [...teLinksList.querySelectorAll('.link-row')]
+      .map((r) => ({ taskId: r.querySelector('.te-link-task').value.trim(), description: r.querySelector('.te-link-desc').value.trim() }))
+      .filter((l) => l.taskId);
     try {
       await api(`/api/tasks/${encodeURIComponent(taskId)}/edit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         title: document.getElementById('te-title').value.trim(),
@@ -1440,6 +1469,7 @@ async function taskEditModal(taskId, detail) {
         scope: scopeRaw ? scopeRaw.split(',').map((s) => s.trim()).filter(Boolean) : [],
         priority: document.getElementById('te-priority').value,
         directExecution: document.getElementById('te-mode').value === 'direct',
+        linkedTasks,
       }) });
       closeModal();
       refreshActive();

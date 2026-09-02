@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.21** (2026-09-01,
-Agents : git en lecture seule (forme -C, branch, etc.).
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.22** (2026-09-01,
+Agents : résilience aux pipes entre guillemets + zéro sortie.

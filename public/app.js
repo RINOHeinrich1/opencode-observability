@@ -36,7 +36,15 @@ function badge(status) {
 }
 
 function recetteBadge(st) {
-  const map = { approved: ['approved', 'validée'], rejected: ['rejected', 'rejetée'], pending: ['queued', 'en attente'] };
+  // Nouveau modèle (v0.8) : pending = pas faite, in_progress = en cours, done = faite.
+  // Legacy : approved = validée, rejected = rejetée.
+  const map = {
+    done: ['done', 'faite'],
+    approved: ['approved', 'validée'],
+    in_progress: ['in_progress', 'en cours'],
+    rejected: ['rejected', 'rejetée'],
+    pending: ['queued', 'pas faite'],
+  };
   const [cls, label] = map[st] || ['queued', st || '—'];
   return `<span class="badge ${cls}" title="Recette : ${esc(label)}">${esc(label)}</span>`;
 }

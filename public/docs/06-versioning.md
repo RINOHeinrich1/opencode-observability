@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.22** (2026-09-01,
-Agents : résilience aux pipes entre guillemets + zéro sortie.
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.23** (2026-09-01,
+Badge recette : 'done' en vert dans la table des tâches.

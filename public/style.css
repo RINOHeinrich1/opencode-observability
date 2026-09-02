@@ -607,3 +607,15 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 #rm-docs-list .rd-head .rd-title { flex: 1 1 180px; min-width: 140px; }
 #rm-docs-list .rd-file, #rm-docs-list .rd-art { flex: 1 1 200px; min-width: 160px; }
 #rm-docs-list .rd-nature { flex: 1 1 100%; min-width: 0; width: 100%; box-sizing: border-box; resize: vertical; }
+
+/* ===== Recette : ordre, vigilance, groupe parallèle (v0.9.0) ===== */
+.badge.order-badge { background: #3b2a5b; color: #d0b8ff; }
+.badge.vig-badge { background: #5b2a2a; color: #ffb8b8; }
+.recette-order-row td { background: rgba(255,255,255,0.03); font-weight: 600; padding: 4px 12px; }
+.modal-finish { max-width: 760px; max-height: 88vh; overflow-y: auto; }
+.modal-finish.finish-full { max-width: 100%; width: 100%; height: 100%; max-height: 100vh; }
+.finish-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.finish-item { align-items: flex-start; padding: 8px 0; }
+@media (max-width: 640px) {
+  .modal-finish { width: 100%; max-height: 94vh; padding: 14px; }
+}

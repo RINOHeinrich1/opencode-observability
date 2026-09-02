@@ -7,6 +7,7 @@ let lastUpdated = null;
 let taskFilter = '';     // tâche sélectionnée comme filtre ('' = aucune)
 let SESSION_BASE_URL = 'https://dev.madatalk.fr'; // base des liens de session opencode
 let groupRecetteEnabled = localStorage.getItem('panel_group_recette') === '1'; // persistant (onglets + rechargement)
+let groupParallelEnabled = localStorage.getItem('panel_group_parallel') === '1'; // grouper par ordre/parallèle
 
 // Agents mobilisés par type de tâche (affichage read-only au lancement).
 const AGENTS_BY_TYPE = {
@@ -128,6 +129,7 @@ async function renderTasks() {
       <select id="f-project"><option value="">Tous les projets</option>${projects.map((p) => `<option>${esc(p)}</option>`).join('')}</select>
       <select id="f-status"><option value="">Tous les statuts</option></select>
       <label class="muted filter-check"><input type="checkbox" id="f-group-recette" ${groupRecetteEnabled ? 'checked' : ''}> Grouper par recette</label>
+      <label class="muted filter-check" id="f-group-parallel-wrap" hidden><input type="checkbox" id="f-group-parallel" ${groupParallelEnabled ? 'checked' : ''}> Grouper par tâches parallèles</label>
       <button id="new-task-btn" class="launch-btn">+ Nouvelle tâche</button>
     </div>
     <table><thead><tr><th></th><th>ID</th><th>Projet</th><th>Type</th><th>Priorité</th><th>Statut</th><th>Recette</th><th>Demande</th><th>Session</th><th>Actions</th></tr></thead>
@@ -139,6 +141,9 @@ async function renderTasks() {
     const p = document.getElementById('f-project').value;
     const st = document.getElementById('f-status').value;
     const groupRecette = document.getElementById('f-group-recette').checked;
+    const groupParallel = document.getElementById('f-group-parallel').checked;
+    const parallelWrap = document.getElementById('f-group-parallel-wrap');
+    if (parallelWrap) parallelWrap.hidden = !groupRecette;
     const rows = tasks.filter((t) => (!p || t.project === p) && (!st || (t.status || 'queued') === st));
 
     // Une ligne de tâche (avec ses plans en sous-lignes).
@@ -149,6 +154,12 @@ async function renderTasks() {
       const recetteBadgeExtra = t.recette_class
         ? ` <span class="badge ${RECETTE_CLS_BADGE[t.recette_class] || 'queued'}" title="Issue de la recette (${RECETTE_CLS_LABEL[t.recette_class]})">recette</span>`
         : '';
+      const orderBadge = t.recette_order != null
+        ? ` <span class="badge order-badge" title="Ordre d'exécution recommandé (recette)">ordre ${esc(t.recette_order)}</span>`
+        : '';
+      const vigBadge = t.recette_vigilance
+        ? ` <span class="badge danger vig-badge" title="Point de vigilance / écart sémantique : ${esc(t.recette_vigilance)}">⚠ vigilance</span>`
+        : '';
       const parent = `<tr class="task-row"${recetteAttr}>
         <td>${toggle}</td>
         <td class="code">${esc(t.id)}</td>
@@ -156,7 +167,7 @@ async function renderTasks() {
         <td>${esc(t.type)}</td>
         <td>${esc(t.priority)}</td>
         <td>${badge(t.status)}${t.waiting_human ? '<span class="badge waiting-human" title="Une décision humaine est en attente (validation / review)">⏳ attente humaine</span>' : ''}</td>
-        <td>${recetteBadge(t.recette_status)}${recetteBadgeExtra}</td>
+        <td>${recetteBadge(t.recette_status)}${recetteBadgeExtra}${orderBadge}${vigBadge}</td>
         <td><span title="${esc(t.request || '')}"><strong>${esc((t.title && t.title.trim()) ? t.title : (t.request || '').slice(0, 60))}</strong></span>${(t.title && t.title.trim()) && t.request ? `<span class="muted-sm"> — ${esc(t.request.slice(0, 40))}</span>` : ''}</td>
         <td>${sessionLink(t.session_id)}</td>
         <td>${detailsButtons(t)}</td>
@@ -182,7 +193,7 @@ async function renderTasks() {
 
     let html;
     if (groupRecette) {
-      // Regroupe les tâches issues d'une recette sous leur recette source.
+      // Regroupe les tâches issues d'une recette sous leur recette source (titre si disponible).
       const bySource = {};
       const others = [];
       for (const t of rows) {
@@ -190,13 +201,32 @@ async function renderTasks() {
         else others.push(t);
       }
       const groupHtml = (sourceId, list) => {
-        const cls = [...new Set(list.map((x) => x.recette_class).filter(Boolean))];
+        const sorted = [...list].sort((a, b) => (a.recette_order ?? 999) - (b.recette_order ?? 999) || String(a.id).localeCompare(String(b.id)));
+        const title = sorted[0] && sorted[0].recette_source_title;
+        const label = sourceId === '(sans recette)'
+          ? 'Autres tâches'
+          : (title ? `Recette — ${esc(title)}` : `Recette de ${esc(sourceId)}`);
+        const cls = [...new Set(sorted.map((x) => x.recette_class).filter(Boolean))];
         const head = `<tr class="recette-group-head"><td colspan="11">
           <button class="tree-toggle" data-recette-toggle="${esc(sourceId)}">▸</button>
-          <span class="code">${sourceId === '(sans recette)' ? 'Autres tâches' : 'Recette de ' + esc(sourceId)}</span>
-          <span class="muted-sm">— ${list.length} tâche(s)${cls.length ? ' · ' + cls.map((c) => RECETTE_CLS_LABEL[c]).join(' / ') : ''}</span>
+          <span class="code">${label}</span>
+          <span class="muted-sm">— ${sorted.length} tâche(s)${cls.length ? ' · ' + cls.map((c) => RECETTE_CLS_LABEL[c]).join(' / ') : ''}</span>
         </td></tr>`;
-        return head + list.map((t) => rowHtml(t, sourceId)).join('');
+        const members = () => {
+          if (!groupParallel) return sorted.map((t) => rowHtml(t, sourceId)).join('');
+          // Sous-groupes par ordre d'exécution (même ordre = parallèle).
+          const byOrder = {};
+          sorted.forEach((t) => { const o = t.recette_order ?? 999; (byOrder[o] = byOrder[o] || []).push(t); });
+          return Object.keys(byOrder).sort((a, b) => Number(a) - Number(b)).map((o) => {
+            const l = byOrder[o];
+            const isParallel = l.length > 1;
+            const subHead = `<tr class="recette-order-row" data-recette-child="${esc(sourceId)}"><td colspan="11">
+              <span class="tree-branch">↳</span> <strong>Ordre ${o === '999' ? '— (non défini)' : esc(o)}</strong>${isParallel ? ` <span class="muted-sm">(${l.length} exécutables en parallèle)</span>` : ''}
+            </td></tr>`;
+            return subHead + l.map((t) => rowHtml(t, sourceId)).join('');
+          }).join('');
+        };
+        return head + members();
       };
       const groups = Object.entries(bySource).sort((a, b) => b[0].localeCompare(a[0])).map(([s, l]) => groupHtml(s, l)).join('');
       const othersHtml = others.length ? groupHtml('(sans recette)', others) : '';
@@ -228,6 +258,13 @@ async function renderTasks() {
   document.getElementById('f-group-recette').addEventListener('change', () => {
     groupRecetteEnabled = document.getElementById('f-group-recette').checked;
     localStorage.setItem('panel_group_recette', groupRecetteEnabled ? '1' : '0');
+    if (!groupRecetteEnabled) { groupParallelEnabled = false; document.getElementById('f-group-parallel').checked = false; }
+    apply();
+  });
+  const parallelBox = document.getElementById('f-group-parallel');
+  if (parallelBox) parallelBox.addEventListener('change', () => {
+    groupParallelEnabled = parallelBox.checked;
+    localStorage.setItem('panel_group_parallel', groupParallelEnabled ? '1' : '0');
     apply();
   });
   apply();
@@ -375,7 +412,7 @@ async function recetteDetailModal(recetteId) {
         const req = (t && typeof t === 'object') ? (t.request || '') : '';
         return `<div class="recette-item"><code class="muted-sm">${esc(tid)}</code><div class="recette-task"><strong>${esc(ttl)}</strong>${req ? `<p class="muted-sm">${esc(req)}</p>` : ''}</div></div>`;
       }).join('')}</div></div>` : '<p class="muted-sm">Aucune tâche couverte (recette exploratoire).</p>'}
-      ${items.length ? `<div class="actions-section"><h3>Éléments (${items.length})</h3><div class="recette-list">${items.map((it) => `<div class="recette-item"><span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span><span>${esc(it.title || it.content.slice(0, 80))}</span></div>`).join('')}</div></div>` : ''}
+      ${items.length ? `<div class="actions-section"><h3>Éléments (${items.length})</h3><div class="recette-list">${items.map((it) => `<div class="recette-item"><span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span>${it.execOrder != null ? `<span class="badge order-badge" title="Ordre d'exécution">ordre ${esc(it.execOrder)}</span>` : ''}${it.vigilance ? `<span class="badge danger" title="${esc(it.vigilance)}">⚠ vigilance</span>` : ''}<span>${esc(it.title || it.content.slice(0, 80))}</span></div>`).join('')}</div></div>` : ''}
       <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
@@ -593,24 +630,51 @@ async function finishRecetteModal(recetteId) {
   try { d = await api(`/api/recettes/${encodeURIComponent(recetteId)}`); } catch (e) { alert('Impossible de charger la recette : ' + (e.message || e)); return; }
   const rec = d.recette || {};
   const items = rec.items || [];
+  const itemCard = (it) => {
+    const full = it.content || '';
+    const truncated = full.length > 120;
+    const show = truncated ? full.slice(0, 120) + '…' : full;
+    return `<div class="recette-item finish-item">
+      <span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span>
+      <div class="recette-task">
+        <strong>${esc(it.title || it.content.slice(0, 60))}</strong>
+        ${it.execOrder != null ? `<span class="badge order-badge" title="Ordre d'exécution">ordre ${esc(it.execOrder)}</span>` : ''}
+        ${it.vigilance ? `<span class="badge danger" title="Point de vigilance">⚠ vigilance</span>` : ''}
+        <p class="muted-sm finish-desc" data-full="${esc(full)}">${esc(show)}</p>
+        ${truncated ? `<button type="button" class="ghost finish-more">Voir en entier</button>` : ''}
+        ${it.acceptance ? `<p class="muted-sm"><strong>✓ Critère :</strong> ${esc(it.acceptance)}</p>` : ''}
+        ${it.vigilance ? `<p class="muted-sm warn"><strong>⚠ Point de vigilance :</strong> ${esc(it.vigilance)}</p>` : ''}
+        ${it.scope && it.scope.length ? `<p class="muted-sm"><strong>Scope :</strong> ${esc(it.scope.join(', '))}</p>` : ''}
+      </div>
+    </div>`;
+  };
   showModal(`
-    <div class="modal modal-wide">
-      <h2>Terminer la recette</h2>
+    <div class="modal modal-wide modal-finish" id="finish-modal">
+      <div class="finish-head"><h2 style="margin:0">Terminer la recette</h2>
+        <button class="ghost" id="finish-fullscreen" title="Plein écran">⛶</button></div>
       <p class="muted">${esc(rec.title || recetteId)} — <span class="code">${esc(rec.project)}</span></p>
       ${items.length ? `
       <p>Éléments relevés — ils seront transformés en <strong>nouvelles tâches</strong> (titre + demande + critère d'acceptation) :</p>
-      <div class="recette-list">${items.map((it) => `<div class="recette-item">
-        <span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span>
-        <span><strong>${esc(it.title || it.content.slice(0, 50))}</strong></span>
-        <span class="muted-sm">${esc(it.content.slice(0, 90))}${it.acceptance ? ` — ✓ ${esc(it.acceptance.slice(0, 50))}` : ''}</span>
-      </div>`).join('')}</div>` : '<p class="muted-sm">Aucun élément relevé : la recette sera clôturée sans créer de tâche.</p>'}
+      <div class="recette-list">${items.map(itemCard).join('')}</div>` : '<p class="muted-sm">Aucun élément relevé : la recette sera clôturée sans créer de tâche.</p>'}
       <div class="modal-actions">
         <button class="ghost" id="modal-cancel">Annuler</button>
         <button class="approve" id="modal-confirm">Confirmer & terminer</button>
       </div>
       <div id="recette-finish-msg" class="msg"></div>
     </div>`);
+  const finishModal = document.getElementById('finish-modal');
   document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('finish-fullscreen').onclick = () => {
+    const fs = finishModal.classList.toggle('finish-full');
+    document.getElementById('finish-fullscreen').textContent = fs ? '⤢ rétrécir' : '⛶ plein écran';
+  };
+  finishModal.querySelectorAll('.finish-more').forEach((b) => b.addEventListener('click', () => {
+    const p = b.parentElement.querySelector('.finish-desc');
+    const full = p.dataset.full || '';
+    const collapsed = p.textContent.endsWith('…');
+    p.textContent = collapsed ? full : (full.slice(0, 120) + '…');
+    b.textContent = collapsed ? 'Réduire' : 'Voir en entier';
+  }));
   document.getElementById('modal-confirm').onclick = async () => {
     const msg = document.getElementById('recette-finish-msg');
     try {
@@ -1602,6 +1666,8 @@ function recetteItemRow(it) {
   return `<div class="recette-item">
     <code class="muted-sm">#${it.id || it.itemId}</code>
     <span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span>
+    ${it.execOrder != null ? `<span class="badge order-badge" title="Ordre d'exécution (même numéro = parallèle)">ordre ${esc(it.execOrder)}</span>` : ''}
+    ${it.vigilance ? `<span class="badge danger" title="Point de vigilance / écart sémantique : ${esc(it.vigilance)}">⚠ vigilance</span>` : ''}
     <span>${esc(it.content)}</span>
     ${it.status === 'task_created' && it.created_task_id ? `<code class="muted-sm">→ ${esc(it.created_task_id)}</code>` : ''}
   </div>`;

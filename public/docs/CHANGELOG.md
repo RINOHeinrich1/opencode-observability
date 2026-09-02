@@ -5,6 +5,32 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.24 — 2026-09-02 · Recette : titre dans la table des tâches, ordre d'exécution, points de vigilance, modal de clôture complet
+
+Les **4 améliorations recette** demandées :
+
+1. **Titre de la recette** affiché dans la table des tâches : le groupement
+   « Grouper par recette » affiche `Recette — <titre>` (au lieu de l'id
+   technique `RECT-…`) quand la recette a un titre.
+2. **Ordre d'exécution** par élément de recette (`recette_items.exec_order`) :
+   l'agent-recette renseigne un **ordre numérique** (obligatoire) — éléments
+   **indépendants = même numéro** (exécutables en **parallèle**), élément
+   dépendant = numéro supérieur. Nouvelle option **« Grouper par tâches
+   parallèles »** dans la table (sous-groupes « Ordre N » + mention du nombre
+   d'exécutions parallèles) ; badge `ordre N` sur les tâches issues de recette.
+3. **Point de vigilance** par élément (`recette_items.vigilance`) : l'agent-recette
+   signale les écarts sémantiques / zones fragiles ; badge `⚠ vigilance` (avec
+   le détail en infobulle) dans la table, le détail de tâche, le détail de
+   recette et le modal de clôture.
+4. **Modal « Terminer la recette »** amélioré : défilement interne, bouton
+   **plein écran** ⛶, **« Voir en entier »** pour les contenus tronqués, détail
+   complet non tronqué (contenu + critère + vigilance + scope), rendu mobile.
+
+Dépôts : `opencode-observability` (v0.8.24) · `opencode-mcp-task-orchestrator`
+(v0.6.8) · `opencode-agents` (v0.4.6).
+
+---
+
 ## v0.8.6 — 2026-09-01 · Titres de recette dérivés des titres des tâches
 
 Les recettes legacy (« Recette de T-… ») sont **retitrées** avec le **titre court de la tâche couverte** (préfixe « issu de la recette » retiré, tronqué à 60). La modale de détail affiche les **titres des tâches couvertes** (plus d'IDs seuls).

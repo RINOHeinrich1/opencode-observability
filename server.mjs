@@ -167,6 +167,9 @@ async function registryTasks(url) {
          (SELECT attempt FROM executions e WHERE e.task_id = t.id ORDER BY attempt DESC LIMIT 1) AS attempt,
          (SELECT rework_count FROM executions e WHERE e.task_id = t.id ORDER BY attempt DESC LIMIT 1) AS rework_count,
          COALESCE(t.recette_id, (SELECT l.linked_task_id FROM task_links l WHERE l.task_id = t.id AND l.description LIKE 'Issu de la recette%' ORDER BY l.id LIMIT 1)) AS recette_source,
+         (SELECT r.title FROM recettes r WHERE r.recette_id = t.recette_id) AS recette_source_title,
+         (SELECT ri.exec_order FROM recette_items ri WHERE ri.created_task_id = t.id ORDER BY ri.id LIMIT 1) AS recette_order,
+         (SELECT ri.vigilance FROM recette_items ri WHERE ri.created_task_id = t.id ORDER BY ri.id LIMIT 1) AS recette_vigilance,
          EXISTS (SELECT 1 FROM decisions d WHERE d.task_id = t.id AND d.status = 'awaiting'
                  AND d.kind IN ('validation','review')) AS waiting_human
        FROM tasks t ORDER BY t.created_at DESC`,
@@ -208,7 +211,7 @@ async function registryTaskDetail(id) {
      WHERE rt.task_id = $1 ORDER BY r.created_at DESC LIMIT 1`, [id],
   ))[0];
   if (rec) {
-    const items = await q("SELECT id, content, classification, discussion, scope, title, acceptance, status, created_task_id, created_at FROM recette_items WHERE recette_id = $1 ORDER BY id ASC", [rec.recette_id]);
+    const items = mapRecetteItems(await q("SELECT id, content, classification, discussion, scope, title, acceptance, exec_order, vigilance, status, created_task_id, created_at FROM recette_items WHERE recette_id = $1 ORDER BY id ASC", [rec.recette_id]));
     const tasks = (await q("SELECT task_id FROM recette_tasks WHERE recette_id = $1", [rec.recette_id])).map((x) => x.task_id);
     recette = { recetteId: rec.recette_id, project: rec.project, title: rec.title, sessionId: rec.session_id, status: rec.status, confirmedAt: rec.confirmed_at, confirmedBy: rec.confirmed_by, tasks, items };
   }
@@ -503,6 +506,23 @@ async function handleUserAction(req, res, user, path) {
   return sendJson(res, 405, { error: "méthode non autorisée" });
 }
 
+function mapRecetteItems(rows) {
+  return rows.map((i) => ({
+    id: i.id,
+    content: i.content,
+    classification: i.classification,
+    discussion: i.discussion,
+    scope: i.scope ? JSON.parse(i.scope) : [],
+    title: i.title ?? null,
+    acceptance: i.acceptance ?? null,
+    execOrder: i.exec_order ?? null,
+    vigilance: i.vigilance ?? null,
+    status: i.status,
+    createdTaskId: i.created_task_id ?? null,
+    createdAt: i.created_at,
+  }));
+}
+
 // --- Router ----------------------------------------------------------------
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
@@ -727,10 +747,10 @@ const server = createServer(async (req, res) => {
         [recetteDetail[1]],
       )).rows[0];
       if (!r) return sendJson(res, 404, { error: "recette inconnue" });
-      const items = (await registry().query(
-        "SELECT id, content, classification, discussion, scope, title, acceptance, status, created_task_id, created_at FROM recette_items WHERE recette_id = $1 ORDER BY id ASC",
+      const items = mapRecetteItems((await registry().query(
+        "SELECT id, content, classification, discussion, scope, title, acceptance, exec_order, vigilance, status, created_task_id, created_at FROM recette_items WHERE recette_id = $1 ORDER BY id ASC",
         [r.recette_id],
-      )).rows;
+      )).rows);
       const tasks = (await registry().query(
         `SELECT rt.task_id, t.title, t.request FROM recette_tasks rt LEFT JOIN tasks t ON t.id = rt.task_id
          WHERE rt.recette_id = $1 ORDER BY rt.task_id`, [r.recette_id],

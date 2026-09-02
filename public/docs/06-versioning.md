@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.20** (2026-09-01,
-Liste tâches : titre par défaut ; modale Actions : titre + critère.
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.21** (2026-09-01,
+Agents : git en lecture seule (forme -C, branch, etc.).

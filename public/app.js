@@ -368,6 +368,7 @@ function recetteCard(r) {
       <button class="ghost" data-rec-docs="${esc(r.recette_id)}">Documents (${r.documents_count || 0})</button>
       ${canSession ? `<button class="launch-btn" data-rec-session="${esc(r.recette_id)}">Session de recette</button>` : ''}
       ${canFinish ? `<button class="approve" data-rec-finish="${esc(r.recette_id)}">Terminer la recette</button>` : ''}
+      ${r.status === 'done' ? `<button class="ghost" data-rec-items="${esc(r.recette_id)}">Détail de la recette</button>` : ''}
     </div>
   </article>`;
 }
@@ -390,6 +391,7 @@ async function renderRecettes() {
     } catch (e) { alert('Échec de la session de recette : ' + (e.message || e)); }
   }));
   document.querySelectorAll('#pane-recettes [data-rec-finish]').forEach((b) => b.addEventListener('click', () => finishRecetteModal(b.dataset.recFinish)));
+  document.querySelectorAll('#pane-recettes [data-rec-items]').forEach((b) => b.addEventListener('click', () => recetteDetailItemsModal(b.dataset.recItems)));
   document.querySelectorAll('#pane-recettes [data-rec-docs]').forEach((b) => b.addEventListener('click', () => recetteDocsModal(b.dataset.recDocs)));
   document.querySelectorAll('#pane-recettes [data-rec-detail]').forEach((b) => b.addEventListener('click', () => recetteDetailModal(b.dataset.recDetail)));
 }
@@ -625,7 +627,10 @@ async function recetteCreateModal() {
   });
 }
 
-async function finishRecetteModal(recetteId) {
+// Modal de recette (items) : 'finish' = clôture avec confirmation (in_progress) ;
+// 'detail' = lecture seule (recette terminée) — même présentation, sans action de clôture.
+async function recetteItemsModal(recetteId, mode = 'finish') {
+  const readOnly = mode === 'detail';
   let d;
   try { d = await api(`/api/recettes/${encodeURIComponent(recetteId)}`); } catch (e) { alert('Impossible de charger la recette : ' + (e.message || e)); return; }
   const rec = d.recette || {};
@@ -640,6 +645,7 @@ async function finishRecetteModal(recetteId) {
         <strong>${esc(it.title || it.content.slice(0, 60))}</strong>
         ${it.execOrder != null ? `<span class="badge order-badge" title="Ordre d'exécution">ordre ${esc(it.execOrder)}</span>` : ''}
         ${it.vigilance ? `<span class="badge danger" title="Point de vigilance">⚠ vigilance</span>` : ''}
+        ${it.status === 'task_created' && it.createdTaskId ? `<code class="muted-sm">→ ${esc(it.createdTaskId)}</code>` : ''}
         <p class="muted-sm finish-desc" data-full="${esc(full)}">${esc(show)}</p>
         ${truncated ? `<button type="button" class="ghost finish-more">Voir en entier</button>` : ''}
         ${it.acceptance ? `<p class="muted-sm"><strong>✓ Critère :</strong> ${esc(it.acceptance)}</p>` : ''}
@@ -648,17 +654,24 @@ async function finishRecetteModal(recetteId) {
       </div>
     </div>`;
   };
+  const intro = readOnly
+    ? (items.length
+      ? '<p>Éléments relevés lors de la recette (lecture seule) :</p>'
+      : '<p class="muted-sm">Aucun élément relevé.</p>')
+    : (items.length
+      ? '<p>Éléments relevés — ils seront transformés en <strong>nouvelles tâches</strong> (titre + demande + critère d\'acceptation) :</p>'
+      : '<p class="muted-sm">Aucun élément relevé : la recette sera clôturée sans créer de tâche.</p>');
   showModal(`
     <div class="modal modal-wide modal-finish" id="finish-modal">
-      <div class="finish-head"><h2 style="margin:0">Terminer la recette</h2>
+      <div class="finish-head"><h2 style="margin:0">${readOnly ? 'Détail de la recette' : 'Terminer la recette'}</h2>
         <button class="ghost" id="finish-fullscreen" title="Plein écran">⛶</button></div>
-      <p class="muted">${esc(rec.title || recetteId)} — <span class="code">${esc(rec.project)}</span></p>
-      ${items.length ? `
-      <p>Éléments relevés — ils seront transformés en <strong>nouvelles tâches</strong> (titre + demande + critère d'acceptation) :</p>
-      <div class="recette-list">${items.map(itemCard).join('')}</div>` : '<p class="muted-sm">Aucun élément relevé : la recette sera clôturée sans créer de tâche.</p>'}
+      <p class="muted">${esc(rec.title || recetteId)} — <span class="code">${esc(rec.project)}</span>${readOnly && rec.confirmed_at ? ` · clôturée le ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}</p>
+      ${intro}
+      ${items.length ? `<div class="recette-list">${items.map(itemCard).join('')}</div>` : ''}
       <div class="modal-actions">
-        <button class="ghost" id="modal-cancel">Annuler</button>
-        <button class="approve" id="modal-confirm">Confirmer & terminer</button>
+        ${readOnly
+          ? '<button class="ghost" id="modal-cancel">Fermer</button>'
+          : '<button class="ghost" id="modal-cancel">Annuler</button><button class="approve" id="modal-confirm">Confirmer & terminer</button>'}
       </div>
       <div id="recette-finish-msg" class="msg"></div>
     </div>`);
@@ -675,6 +688,7 @@ async function finishRecetteModal(recetteId) {
     p.textContent = collapsed ? full : (full.slice(0, 120) + '…');
     b.textContent = collapsed ? 'Réduire' : 'Voir en entier';
   }));
+  if (readOnly) return;
   document.getElementById('modal-confirm').onclick = async () => {
     const msg = document.getElementById('recette-finish-msg');
     try {
@@ -690,6 +704,9 @@ async function finishRecetteModal(recetteId) {
     } catch (e) { msg.textContent = e.message || e; msg.className = 'msg error'; }
   };
 }
+
+function finishRecetteModal(recetteId) { return recetteItemsModal(recetteId, 'finish'); }
+function recetteDetailItemsModal(recetteId) { return recetteItemsModal(recetteId, 'detail'); }
 
 // --- Plans (plans d'action, persistance SQLite) ----------------------------
 function progressBar(pct) {
@@ -1422,6 +1439,8 @@ async function taskActionsModal(taskId) {
   };
   const recetteFinish = document.getElementById('act-recette-finish');
   if (recetteFinish) recetteFinish.onclick = () => { closeModal(); finishRecetteModal(recetteFinish.dataset.recId); };
+  const recetteDetail = document.getElementById('act-recette-detail');
+  if (recetteDetail) recetteDetail.onclick = () => { closeModal(); recetteDetailItemsModal(recetteDetail.dataset.recId); };
   const archive = document.getElementById('act-archive');
   if (archive) archive.onclick = () => { closeModal(); openArchiveConfirm(taskId); };
   const consumption = document.getElementById('act-consumption');
@@ -1687,7 +1706,10 @@ function recetteSectionHtml(recetteStatus, detail) {
     <div class="actions-buttons">
       <button class="launch-btn" id="act-recette-session" data-rec-id="${esc(rec.recetteId)}">Session de recette</button>
       ${st === 'in_progress' ? `<button class="approve" id="act-recette-finish" data-rec-id="${esc(rec.recetteId)}">Terminer la recette</button>` : ''}
-    </div>` : '';
+    </div>` : (st === 'done' ? `
+    <div class="actions-buttons">
+      <button class="ghost" id="act-recette-detail" data-rec-id="${esc(rec.recetteId)}">Détail de la recette</button>
+    </div>` : '');
   const statusTxt = st === 'done' ? `faite${rec.confirmed_at ? ` le ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}` : RECETTE_STATUS_LABEL[st] || st;
   return `<div class="actions-section"><h3>Recette — ${statusTxt}</h3>
     <p class="muted-sm"><strong>${esc(title)}</strong> <span class="code">${esc(rec.project || '')}</span></p>

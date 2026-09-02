@@ -5,6 +5,23 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.25 — 2026-09-02 · Recette faite : bouton « Détail de la recette » (modal items lecture seule)
+
+Quand une recette est **terminée** (`done`), le bouton « Terminer la recette »
+disparaît (normal) — à la place un bouton **« Détail de la recette »** apparaît :
+- dans la **section Recette** du détail de tâche (onglet Tâches) ;
+- sur la **carte de l'onglet Recettes**.
+
+Il ouvre le **même modal que « Terminer »** mais en **lecture seule** (aucune
+action de clôture) : liste des items avec classification, ordre d'exécution,
+badge ⚠ vigilance, lien `→ T-…` vers la tâche créée, contenu (« Voir en
+entier »), critère d'acceptation, scope — plein écran et défilement conservés.
+`finishRecetteModal` refactoré en `recetteItemsModal(recetteId, 'finish'|'detail')`.
+
+Dépôt : `opencode-observability` (v0.8.25).
+
+---
+
 ## v0.8.24 — 2026-09-02 · Recette : titre dans la table des tâches, ordre d'exécution, points de vigilance, modal de clôture complet
 
 Les **4 améliorations recette** demandées :

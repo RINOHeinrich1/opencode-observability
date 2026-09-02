@@ -5,6 +5,21 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.27 — 2026-09-02 · Onglet Tâches : filtre statut multi-valeurs (tag input)
+
+Le combo « statut » à valeur unique est remplacé par un **filtre à valeurs
+multiples** : des **puces (tags)** pour chaque statut affiché + un sélecteur
+« + Ajouter… » pour en ajouter d'autres. La liste montre les tâches dont le
+statut correspond à **l'un des statuts sélectionnés** (cumulable avec le filtre
+projet). Chaque puce se retire d'un clic (×) ; bouton « tout afficher » pour
+vider. Choix **persisté** (localStorage, conservé après re-rendu polling / retour
+d'onglet) et **responsive** (le tag-input passe en pleine largeur et les puces
+se répartissent sur plusieurs lignes en mobile).
+
+Dépôt : `opencode-observability` (v0.8.27).
+
+---
+
 ## v0.8.26 — 2026-09-02 · Onglet Tâches : filtres projet/statut conservés après re-rendu
 
 Les filtres **projet** et **statut** de l'onglet Tâches étaient perdus à chaque

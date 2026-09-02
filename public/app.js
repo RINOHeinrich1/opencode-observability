@@ -9,7 +9,8 @@ let SESSION_BASE_URL = 'https://dev.madatalk.fr'; // base des liens de session o
 let groupRecetteEnabled = localStorage.getItem('panel_group_recette') === '1'; // persistant (onglets + rechargement)
 let groupParallelEnabled = localStorage.getItem('panel_group_parallel') === '1'; // grouper par ordre/parallèle
 let tasksProjectFilter = localStorage.getItem('panel_task_project') || ''; // filtre projet de l'onglet Tâches (persistant re-rendu)
-let tasksStatusFilter = localStorage.getItem('panel_task_status') || '';   // filtre statut de l'onglet Tâches (persistant re-rendu)
+let tasksStatusFilter = (() => { try { const v = JSON.parse(localStorage.getItem('panel_task_status') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })(); // statuts affichés (multi-valeurs, persistant re-rendu)
+const persistTasksStatus = () => localStorage.setItem('panel_task_status', JSON.stringify(tasksStatusFilter));
 
 // Agents mobilisés par type de tâche (affichage read-only au lancement).
 const AGENTS_BY_TYPE = {
@@ -129,7 +130,12 @@ async function renderTasks() {
     <h2>Tâches</h2>
     <div class="filters">
       <select id="f-project"><option value="">Tous les projets</option>${projects.map((p) => `<option>${esc(p)}</option>`).join('')}</select>
-      <select id="f-status"><option value="">Tous les statuts</option></select>
+      <div class="status-tagfilter" id="status-tagfilter" title="Afficher les tâches dont le statut est sélectionné (multi)">
+        <span class="tagfilter-label">Statuts :</span>
+        <span class="tagfilter-tags" id="f-status-tags"></span>
+        <select id="f-status-add" title="Ajouter un statut à afficher"><option value="">+ Ajouter…</option></select>
+        <button type="button" class="ghost tagfilter-clear" id="f-status-clear" hidden>tout afficher</button>
+      </div>
       <label class="muted filter-check"><input type="checkbox" id="f-group-recette" ${groupRecetteEnabled ? 'checked' : ''}> Grouper par recette</label>
       <label class="muted filter-check" id="f-group-parallel-wrap" hidden><input type="checkbox" id="f-group-parallel" ${groupParallelEnabled ? 'checked' : ''}> Grouper par tâches parallèles</label>
       <button id="new-task-btn" class="launch-btn">+ Nouvelle tâche</button>
@@ -138,23 +144,38 @@ async function renderTasks() {
     <tbody id="tasks-body"></tbody></table>`;
   const statuses = [...new Set(tasks.map((t) => t.status || 'queued'))];
   const projectSel = document.getElementById('f-project');
-  const statusSel = document.getElementById('f-status');
-  // Restaure les filtres projet/statut (perdus lors d'un re-rendu : polling, retour d'onglet…).
+  // Restaure le filtre projet (perdu lors d'un re-rendu : polling, retour d'onglet…).
   if (tasksProjectFilter && !projects.includes(tasksProjectFilter)) projects.push(tasksProjectFilter);
   projectSel.innerHTML = `<option value="">Tous les projets</option>` + projects.map((p) => `<option>${esc(p)}</option>`).join('');
   projectSel.value = [...projectSel.options].some((o) => o.value === tasksProjectFilter) ? tasksProjectFilter : '';
-  if (tasksStatusFilter && !statuses.includes(tasksStatusFilter)) statuses.push(tasksStatusFilter);
-  statusSel.innerHTML = `<option value="">Tous les statuts</option>` + statuses.map((s) => `<option>${esc(s)}</option>`).join('');
-  statusSel.value = [...statusSel.options].some((o) => o.value === tasksStatusFilter) ? tasksStatusFilter : '';
+  // Filtre statut MULTI-VALEURS : puces + sélecteur d'ajout (pas un combo à valeur unique).
+  const tagsBox = document.getElementById('f-status-tags');
+  const statusSelAdd = document.getElementById('f-status-add');
+  const statusClear = document.getElementById('f-status-clear');
+  const allStatuses = [...new Set([...statuses, ...tasksStatusFilter])]; // conserve les puces choisies
+  const renderStatusUI = () => {
+    tagsBox.innerHTML = tasksStatusFilter.length
+      ? tasksStatusFilter.map((s) => `<span class="status-chip"><span class="chip-txt">${esc(s)}</span><button type="button" class="chip-x" data-status="${esc(s)}" title="Retirer « ${esc(s)} »">×</button></span>`).join('')
+      : '<span class="tagfilter-empty">tous les statuts</span>';
+    statusSelAdd.innerHTML = `<option value="">+ Ajouter…</option>` + allStatuses.filter((s) => !tasksStatusFilter.includes(s)).map((s) => `<option>${esc(s)}</option>`).join('');
+    statusClear.hidden = !tasksStatusFilter.length;
+  };
+  renderStatusUI();
+  const setStatusFilter = (next) => {
+    tasksStatusFilter = [...new Set(next)];
+    persistTasksStatus();
+    renderStatusUI();
+    apply();
+  };
   document.getElementById('new-task-btn').addEventListener('click', () => taskCreateModal());
   const apply = () => {
     const p = document.getElementById('f-project').value;
-    const st = document.getElementById('f-status').value;
+    const st = tasksStatusFilter;
     const groupRecette = document.getElementById('f-group-recette').checked;
     const groupParallel = document.getElementById('f-group-parallel').checked;
     const parallelWrap = document.getElementById('f-group-parallel-wrap');
     if (parallelWrap) parallelWrap.hidden = !groupRecette;
-    const rows = tasks.filter((t) => (!p || t.project === p) && (!st || (t.status || 'queued') === st));
+    const rows = tasks.filter((t) => (!p || t.project === p) && (!st.length || st.includes(t.status || 'queued')));
 
     // Une ligne de tâche (avec ses plans en sous-lignes).
     const rowHtml = (t, recetteParent) => {
@@ -268,11 +289,16 @@ async function renderTasks() {
     localStorage.setItem('panel_task_project', tasksProjectFilter);
     apply();
   });
-  document.getElementById('f-status').addEventListener('change', () => {
-    tasksStatusFilter = document.getElementById('f-status').value;
-    localStorage.setItem('panel_task_status', tasksStatusFilter);
-    apply();
+  statusSelAdd.addEventListener('change', () => {
+    const v = statusSelAdd.value;
+    if (v && !tasksStatusFilter.includes(v)) setStatusFilter([...tasksStatusFilter, v]);
+    statusSelAdd.value = '';
   });
+  tagsBox.addEventListener('click', (e) => {
+    const x = e.target.closest('.chip-x');
+    if (x) setStatusFilter(tasksStatusFilter.filter((s) => s !== x.dataset.status));
+  });
+  statusClear.addEventListener('click', () => setStatusFilter([]));
   document.getElementById('f-group-recette').addEventListener('change', () => {
     groupRecetteEnabled = document.getElementById('f-group-recette').checked;
     localStorage.setItem('panel_group_recette', groupRecetteEnabled ? '1' : '0');

@@ -619,3 +619,50 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 @media (max-width: 640px) {
   .modal-finish { width: 100%; max-height: 94vh; padding: 14px; }
 }
+
+/* ===== Filtre statut multi-valeurs (tag input) — onglet Tâches (v0.8.27) ===== */
+.status-tagfilter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 4px 6px;
+  border: 1px solid var(--border, #3a3f4a);
+  border-radius: 7px;
+  background: var(--panel, #1d222b);
+  min-width: 220px;
+  max-width: 100%;
+  flex: 1 1 260px;
+}
+.tagfilter-label { font-size: 12px; color: var(--muted, #9aa3b0); white-space: nowrap; }
+.tagfilter-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #2e5c8a;
+  color: #eaf3fc;
+  border-radius: 12px;
+  padding: 1px 4px 1px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.chip-x {
+  background: none;
+  border: 0;
+  color: #bcd9f0;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 6px;
+  border-radius: 10px;
+  line-height: 1.4;
+}
+.chip-x:hover { background: rgba(255, 255, 255, 0.2); color: #fff; }
+#f-status-add { max-width: 140px; border-radius: 6px; }
+.tagfilter-empty { color: var(--muted, #9aa3b0); font-size: 12px; font-style: italic; }
+.tagfilter-clear { font-size: 12px; padding: 2px 8px; }
+@media (max-width: 640px) {
+  .status-tagfilter { width: 100%; flex: 1 1 100%; }
+  #f-status-add { max-width: none; flex: 1 1 100%; }
+}

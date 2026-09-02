@@ -8,6 +8,8 @@ let taskFilter = '';     // tâche sélectionnée comme filtre ('' = aucune)
 let SESSION_BASE_URL = 'https://dev.madatalk.fr'; // base des liens de session opencode
 let groupRecetteEnabled = localStorage.getItem('panel_group_recette') === '1'; // persistant (onglets + rechargement)
 let groupParallelEnabled = localStorage.getItem('panel_group_parallel') === '1'; // grouper par ordre/parallèle
+let tasksProjectFilter = localStorage.getItem('panel_task_project') || ''; // filtre projet de l'onglet Tâches (persistant re-rendu)
+let tasksStatusFilter = localStorage.getItem('panel_task_status') || '';   // filtre statut de l'onglet Tâches (persistant re-rendu)
 
 // Agents mobilisés par type de tâche (affichage read-only au lancement).
 const AGENTS_BY_TYPE = {
@@ -135,7 +137,15 @@ async function renderTasks() {
     <table><thead><tr><th></th><th>ID</th><th>Projet</th><th>Type</th><th>Priorité</th><th>Statut</th><th>Recette</th><th>Demande</th><th>Session</th><th>Actions</th></tr></thead>
     <tbody id="tasks-body"></tbody></table>`;
   const statuses = [...new Set(tasks.map((t) => t.status || 'queued'))];
-  document.getElementById('f-status').innerHTML = `<option value="">Tous les statuts</option>` + statuses.map((s) => `<option>${esc(s)}</option>`).join('');
+  const projectSel = document.getElementById('f-project');
+  const statusSel = document.getElementById('f-status');
+  // Restaure les filtres projet/statut (perdus lors d'un re-rendu : polling, retour d'onglet…).
+  if (tasksProjectFilter && !projects.includes(tasksProjectFilter)) projects.push(tasksProjectFilter);
+  projectSel.innerHTML = `<option value="">Tous les projets</option>` + projects.map((p) => `<option>${esc(p)}</option>`).join('');
+  projectSel.value = [...projectSel.options].some((o) => o.value === tasksProjectFilter) ? tasksProjectFilter : '';
+  if (tasksStatusFilter && !statuses.includes(tasksStatusFilter)) statuses.push(tasksStatusFilter);
+  statusSel.innerHTML = `<option value="">Tous les statuts</option>` + statuses.map((s) => `<option>${esc(s)}</option>`).join('');
+  statusSel.value = [...statusSel.options].some((o) => o.value === tasksStatusFilter) ? tasksStatusFilter : '';
   document.getElementById('new-task-btn').addEventListener('click', () => taskCreateModal());
   const apply = () => {
     const p = document.getElementById('f-project').value;
@@ -253,8 +263,16 @@ async function renderTasks() {
       b.textContent = expanded ? '▸' : '▾';
     }));
   };
-  document.getElementById('f-project').addEventListener('change', apply);
-  document.getElementById('f-status').addEventListener('change', apply);
+  document.getElementById('f-project').addEventListener('change', () => {
+    tasksProjectFilter = document.getElementById('f-project').value;
+    localStorage.setItem('panel_task_project', tasksProjectFilter);
+    apply();
+  });
+  document.getElementById('f-status').addEventListener('change', () => {
+    tasksStatusFilter = document.getElementById('f-status').value;
+    localStorage.setItem('panel_task_status', tasksStatusFilter);
+    apply();
+  });
   document.getElementById('f-group-recette').addEventListener('change', () => {
     groupRecetteEnabled = document.getElementById('f-group-recette').checked;
     localStorage.setItem('panel_group_recette', groupRecetteEnabled ? '1' : '0');

@@ -5,6 +5,19 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.26 — 2026-09-02 · Onglet Tâches : filtres projet/statut conservés après re-rendu
+
+Les filtres **projet** et **statut** de l'onglet Tâches étaient perdus à chaque
+re-rendu de la liste (polling périodique, retour d'onglet navigateur via
+`visibilitychange`). Ils sont désormais **persistés** (état + `localStorage`,
+comme les cases « Grouper par recette / tâches parallèles ») et **restaurés**
+après reconstruction des `<select>` ; l'option filtrée est conservée même si
+aucune tâche ne correspond temporairement.
+
+Dépôt : `opencode-observability` (v0.8.26).
+
+---
+
 ## v0.8.25 — 2026-09-02 · Recette faite : bouton « Détail de la recette » (modal items lecture seule)
 
 Quand une recette est **terminée** (`done`), le bouton « Terminer la recette »

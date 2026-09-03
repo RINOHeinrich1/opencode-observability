@@ -5,6 +5,23 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.29 — 2026-09-02 · Onglet Tâches : pré-filtres « À recetter » et « Actif »
+
+Deux filtres rapides (cases à cocher, cumulables en ET avec le filtre projet et
+les tags de statuts) sur la table des tâches :
+- **« À recetter »** : ne garde que les tâches dont la recette n'est pas faite
+  (`recette_status != done`, inclut pending jamais recettées + legacy approved).
+- **« Actif »** : ne garde que les tâches dont le statut d'exécution n'est pas
+  `done` (tout statut intermédiaire ou terminal non-done : queued, in_progress,
+  failed, aborted…).
+
+Choix persistés (localStorage) et conservés après re-rendu (polling / retour
+d'onglet) comme les autres filtres.
+
+Dépôt : `opencode-observability` (v0.8.29).
+
+---
+
 ## v0.8.28 — 2026-09-02 · Bouton « Session de la recette » : reprise systématique (fini les doublons)
 
 Bug général corrigé : cliquer sur « Session de la recette » créait une **nouvelle

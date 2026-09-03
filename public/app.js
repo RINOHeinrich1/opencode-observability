@@ -11,6 +11,8 @@ let groupParallelEnabled = localStorage.getItem('panel_group_parallel') === '1';
 let tasksProjectFilter = localStorage.getItem('panel_task_project') || ''; // filtre projet de l'onglet Tâches (persistant re-rendu)
 let tasksStatusFilter = (() => { try { const v = JSON.parse(localStorage.getItem('panel_task_status') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })(); // statuts affichés (multi-valeurs, persistant re-rendu)
 const persistTasksStatus = () => localStorage.setItem('panel_task_status', JSON.stringify(tasksStatusFilter));
+let tasksNeedRecette = localStorage.getItem('panel_task_recette') === '1'; // pré-filtre « À recetter » (recette_status != done)
+let tasksActifOnly = localStorage.getItem('panel_task_actif') === '1';      // pré-filtre « Actif » (statut != done)
 
 // Agents mobilisés par type de tâche (affichage read-only au lancement).
 const AGENTS_BY_TYPE = {
@@ -138,6 +140,8 @@ async function renderTasks() {
       </div>
       <label class="muted filter-check"><input type="checkbox" id="f-group-recette" ${groupRecetteEnabled ? 'checked' : ''}> Grouper par recette</label>
       <label class="muted filter-check" id="f-group-parallel-wrap" hidden><input type="checkbox" id="f-group-parallel" ${groupParallelEnabled ? 'checked' : ''}> Grouper par tâches parallèles</label>
+      <label class="muted filter-check" title="Tâches dont la recette n'est pas faite"><input type="checkbox" id="f-filter-recette" ${tasksNeedRecette ? 'checked' : ''}> À recetter</label>
+      <label class="muted filter-check" title="Tâches dont le statut n'est pas « done »"><input type="checkbox" id="f-filter-actif" ${tasksActifOnly ? 'checked' : ''}> Actif</label>
       <button id="new-task-btn" class="launch-btn">+ Nouvelle tâche</button>
     </div>
     <table><thead><tr><th></th><th>ID</th><th>Projet</th><th>Type</th><th>Priorité</th><th>Statut</th><th>Recette</th><th>Demande</th><th>Session</th><th>Actions</th></tr></thead>
@@ -175,7 +179,13 @@ async function renderTasks() {
     const groupParallel = document.getElementById('f-group-parallel').checked;
     const parallelWrap = document.getElementById('f-group-parallel-wrap');
     if (parallelWrap) parallelWrap.hidden = !groupRecette;
-    const rows = tasks.filter((t) => (!p || t.project === p) && (!st.length || st.includes(t.status || 'queued')));
+    const needRecette = document.getElementById('f-filter-recette').checked;
+    const actifOnly = document.getElementById('f-filter-actif').checked;
+    const rows = tasks.filter((t) =>
+      (!p || t.project === p)
+      && (!st.length || st.includes(t.status || 'queued'))
+      && (!needRecette || (t.recette_status || 'pending') !== 'done')
+      && (!actifOnly || (t.status || 'queued') !== 'done'));
 
     // Une ligne de tâche (avec ses plans en sous-lignes).
     const rowHtml = (t, recetteParent) => {
@@ -299,6 +309,18 @@ async function renderTasks() {
     if (x) setStatusFilter(tasksStatusFilter.filter((s) => s !== x.dataset.status));
   });
   statusClear.addEventListener('click', () => setStatusFilter([]));
+  const needRecetteBox = document.getElementById('f-filter-recette');
+  if (needRecetteBox) needRecetteBox.addEventListener('change', () => {
+    tasksNeedRecette = needRecetteBox.checked;
+    localStorage.setItem('panel_task_recette', tasksNeedRecette ? '1' : '0');
+    apply();
+  });
+  const actifBox = document.getElementById('f-filter-actif');
+  if (actifBox) actifBox.addEventListener('change', () => {
+    tasksActifOnly = actifBox.checked;
+    localStorage.setItem('panel_task_actif', tasksActifOnly ? '1' : '0');
+    apply();
+  });
   document.getElementById('f-group-recette').addEventListener('change', () => {
     groupRecetteEnabled = document.getElementById('f-group-recette').checked;
     localStorage.setItem('panel_group_recette', groupRecetteEnabled ? '1' : '0');

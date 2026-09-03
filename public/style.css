@@ -471,7 +471,12 @@ button.launch-btn, button.approve { background: var(--green); }
 .project-card-body { display: flex; flex-direction: column; gap: 6px; }
 .project-kv { display: flex; flex-direction: column; gap: 2px; word-break: break-all; }
 .project-kv .lbl { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
-.project-card-actions { display: flex; gap: 8px; margin-top: 4px; }
+.project-card-actions { display: flex; gap: 8px; margin-top: 4px; flex-wrap: wrap; align-items: center; }
+.project-card-actions button { flex: 0 1 auto; white-space: normal; }
+@media (max-width: 640px) {
+  .project-card-actions { align-items: stretch; }
+  .project-card-actions button { flex: 1 1 100%; }
+}
 
 /* ===== Modale d'actions (tâche) ===== */
 .actions-section { margin: 14px 0; }

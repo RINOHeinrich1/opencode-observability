@@ -5,6 +5,24 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.30 — 2026-09-02 · Recettes : une recette = une session (boutons simplifiés) + cartes responsives
+
+Suite au retour utilisateur sur la v0.8.28, l'UI recette est **simplifiée** :
+- suppression des boutons « Continuer la session » et « Nouvelle session » ;
+- **une recette = une session** : le bouton **« Session de la recette »** reprend
+  la session en cours (ou en crée une la première fois) ; **« Terminer la
+  recette »** clôture et reste bien visible quand la recette est `in_progress` ;
+- **cartes recette responsives** : `.project-card-actions` passe en `flex-wrap`
+  (et boutons pleine largeur empilés en mobile) — corrige le débordement qui
+  pouvait masquer « Terminer la recette » et rendait le card non responsive.
+
+L'option API `force` (nouvelle session explicite) reste disponible côté serveur,
+simplement plus exposée dans l'interface.
+
+Dépôt : `opencode-observability` (v0.8.30).
+
+---
+
 ## v0.8.29 — 2026-09-02 · Onglet Tâches : pré-filtres « À recetter » et « Actif »
 
 Deux filtres rapides (cases à cocher, cumulables en ET avec le filtre projet et

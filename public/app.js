@@ -397,9 +397,21 @@ async function renderArtifacts() {
 // --- Recettes (v0.8.0) : objet de projet -----------------------------------
 const RECETTE_STATUS_LABEL = { pending: 'pas faite', in_progress: 'en cours', done: 'faite' };
 
+// Ouvre la session de recette : reprend la session rattachée si elle existe
+// (jamais de doublon) ; `force = true` démarre une nouvelle session.
+async function openRecetteSession(recetteId, force) {
+  try {
+    const r = await api(`/api/recettes/${encodeURIComponent(recetteId)}/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: !!force }) });
+    if (r.sessionId && /^ses_/.test(r.sessionId)) window.open(sessionHref(r.sessionId), '_blank');
+    else alert(r.error || (force ? 'Impossible de lancer une nouvelle session de recette.' : 'Aucune session de recette disponible.'));
+    refreshActive();
+  } catch (e) { alert('Échec de la session de recette : ' + (e.message || e)); }
+}
+
 function recetteCard(r) {
   const canSession = r.status === 'pending' || r.status === 'in_progress';
   const canFinish = r.status === 'in_progress';
+  const hasSession = !!(r.session_id && /^ses_/.test(r.session_id));
   return `<article class="project-card">
     <div class="project-card-head"><strong class="recette-title" data-rec-detail="${esc(r.recette_id)}" title="Voir le détail">${esc(r.title || r.recette_id)}</strong> <code class="muted-sm">${esc(r.project)}</code> ${badge(r.status)}</div>
     <div class="project-card-body">
@@ -410,7 +422,8 @@ function recetteCard(r) {
     </div>
     <div class="project-card-actions">
       <button class="ghost" data-rec-docs="${esc(r.recette_id)}">Documents (${r.documents_count || 0})</button>
-      ${canSession ? `<button class="launch-btn" data-rec-session="${esc(r.recette_id)}">Session de recette</button>` : ''}
+      ${canSession ? `<button class="launch-btn" data-rec-session="${esc(r.recette_id)}">${hasSession ? 'Continuer la session' : 'Session de recette'}</button>` : ''}
+      ${canSession && hasSession ? `<button class="ghost" data-rec-session-new="${esc(r.recette_id)}" title="Démarrer une nouvelle session (l'ancienne reste consultable)">Nouvelle session</button>` : ''}
       ${canFinish ? `<button class="approve" data-rec-finish="${esc(r.recette_id)}">Terminer la recette</button>` : ''}
       ${r.status === 'done' ? `<button class="ghost" data-rec-items="${esc(r.recette_id)}">Détail de la recette</button>` : ''}
     </div>
@@ -426,14 +439,8 @@ async function renderRecettes() {
     <div class="filters"><button id="new-recette-btn" class="launch-btn">+ Nouvelle recette</button></div>
     <div class="project-cards">${recs.map(recetteCard).join('') || '<p class="muted">Aucune recette.</p>'}</div>`;
   document.getElementById('new-recette-btn').addEventListener('click', () => recetteCreateModal());
-  document.querySelectorAll('#pane-recettes [data-rec-session]').forEach((b) => b.addEventListener('click', async () => {
-    try {
-      const r = await api(`/api/recettes/${encodeURIComponent(b.dataset.recSession)}/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-      if (r.sessionId && /^ses_/.test(r.sessionId)) window.open(sessionHref(r.sessionId), '_blank');
-      else alert('Aucune session de recette disponible.');
-      refreshActive();
-    } catch (e) { alert('Échec de la session de recette : ' + (e.message || e)); }
-  }));
+  document.querySelectorAll('#pane-recettes [data-rec-session]').forEach((b) => b.addEventListener('click', () => openRecetteSession(b.dataset.recSession, false)));
+  document.querySelectorAll('#pane-recettes [data-rec-session-new]').forEach((b) => b.addEventListener('click', () => openRecetteSession(b.dataset.recSessionNew, true)));
   document.querySelectorAll('#pane-recettes [data-rec-finish]').forEach((b) => b.addEventListener('click', () => finishRecetteModal(b.dataset.recFinish)));
   document.querySelectorAll('#pane-recettes [data-rec-items]').forEach((b) => b.addEventListener('click', () => recetteDetailItemsModal(b.dataset.recItems)));
   document.querySelectorAll('#pane-recettes [data-rec-docs]').forEach((b) => b.addEventListener('click', () => recetteDocsModal(b.dataset.recDocs)));
@@ -1471,16 +1478,9 @@ async function taskActionsModal(taskId) {
   const rework = document.getElementById('act-rework');
   if (rework) rework.onclick = () => { closeModal(); reworkTaskModal(taskId); };
   const recetteSession = document.getElementById('act-recette-session');
-  if (recetteSession) recetteSession.onclick = async () => {
-    const rid = recetteSession.dataset.recId;
-    try {
-      const r = await api(`/api/recettes/${encodeURIComponent(rid)}/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-      if (r.sessionId && /^ses_/.test(r.sessionId)) window.open(sessionHref(r.sessionId), '_blank');
-      else alert(r.error || 'Aucune session de recette disponible.');
-      closeModal();
-      refreshActive();
-    } catch (e) { alert('Échec du lancement de la recette : ' + (e.message || e)); }
-  };
+  if (recetteSession) recetteSession.onclick = () => openRecetteSession(recetteSession.dataset.recId, false);
+  const recetteSessionNew = document.getElementById('act-recette-session-new');
+  if (recetteSessionNew) recetteSessionNew.onclick = () => { closeModal(); openRecetteSession(recetteSessionNew.dataset.recId, true); };
   const recetteFinish = document.getElementById('act-recette-finish');
   if (recetteFinish) recetteFinish.onclick = () => { closeModal(); finishRecetteModal(recetteFinish.dataset.recId); };
   const recetteDetail = document.getElementById('act-recette-detail');
@@ -1748,7 +1748,8 @@ function recetteSectionHtml(recetteStatus, detail) {
   const items = rec.items || [];
   const btns = (st === 'in_progress' || st === 'pending') ? `
     <div class="actions-buttons">
-      <button class="launch-btn" id="act-recette-session" data-rec-id="${esc(rec.recetteId)}">Session de recette</button>
+      <button class="launch-btn" id="act-recette-session" data-rec-id="${esc(rec.recetteId)}">${rec.sessionId ? 'Continuer la session' : 'Session de recette'}</button>
+      ${rec.sessionId ? `<button class="ghost" id="act-recette-session-new" data-rec-id="${esc(rec.recetteId)}" title="Démarrer une nouvelle session (l'ancienne reste consultable)">Nouvelle session</button>` : ''}
       ${st === 'in_progress' ? `<button class="approve" id="act-recette-finish" data-rec-id="${esc(rec.recetteId)}">Terminer la recette</button>` : ''}
     </div>` : (st === 'done' ? `
     <div class="actions-buttons">

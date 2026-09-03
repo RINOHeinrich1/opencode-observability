@@ -316,19 +316,24 @@ export async function createRecette({ project, title, description, taskIds, docu
   return { ok: true, recette: r.recette };
 }
 
-// Lance (ou récupère) la session dédiée de l'agent-recette pour une recette.
-export async function launchRecetteSession({ recetteId }) {
+// Lance (ou reprend) la session dédiée de l'agent-recette pour une recette.
+// `force = true` : ignore la session rattachée et en démarre une nouvelle.
+export async function launchRecetteSession({ recetteId, force = false }) {
   if (!recetteId) throw new Error("recetteId requis");
   const r = await taskOrchestrator("recette_get", { recetteId });
   const rec = r && r.recette;
   if (!rec) throw new Error(`recette inconnue : ${recetteId}`);
 
-  // Reprise UNIQUEMENT si la session existe réellement (id valide + présente).
-  const dir = await projectGitPath(rec.project);
-  if (rec.sessionId && /^ses_/.test(rec.sessionId) && sessionExists(rec.sessionId, dir)) {
+  // REPRISE : dès qu'une session est rattachée à la recette, on la REPREND —
+  // on n'en relance JAMAIS automatiquement une nouvelle. L'ancienne détection
+  // par `opencode session list` (répertoire) dépendait du cwd du serveur au
+  // moment du lancement : en cas de faux négatif, chaque clic créait une
+  // nouvelle session (doublons). Pour repartir de zéro : `force = true`.
+  if (!force && rec.sessionId && /^ses_/.test(rec.sessionId)) {
     return { recetteId, sessionId: rec.sessionId, resumed: true };
   }
 
+  const dir = await projectGitPath(rec.project);
   const prompt = buildRecettePrompt({ project: rec.project, title: rec.title, taskIds: rec.tasks || [] });
   const { sessionId } = await launchSession({ dir, agent: "agent-recette", prompt, title: `Recette ${rec.title || rec.project}` });
   if (!sessionId || !/^ses_/.test(sessionId)) {

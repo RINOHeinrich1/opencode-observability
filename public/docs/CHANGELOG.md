@@ -5,6 +5,27 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.28 — 2026-09-02 · Bouton « Session de la recette » : reprise systématique (fini les doublons)
+
+Bug général corrigé : cliquer sur « Session de la recette » créait une **nouvelle
+session à chaque clic** au lieu de continuer l'ancienne. Cause : la reprise
+dépendait d'une détection `opencode session list` scopée au répertoire — or ce
+répertoire (cwd du serveur au lancement) varie selon les redémarrages pm2 et le
+`git_path` du projet peut être NULL (`mada-talk`) → faux négatif → nouvelle
+session + écrasement de `recettes.session_id`.
+
+Correctif :
+- **reprise systématique** dès qu'une session `ses_…` est rattachée à la recette
+  (plus aucun doublon automatique) ;
+- bouton principal renommé **« Continuer la session »** quand une session existe ;
+- nouveau bouton **« Nouvelle session »** (carte Recettes + section Recette du
+  détail tâche) pour repartir de zéro explicitement (`POST …/session {force:true}`),
+  l'ancienne session restant consultable.
+
+Dépôt : `opencode-observability` (v0.8.28).
+
+---
+
 ## v0.8.27 — 2026-09-02 · Onglet Tâches : filtre statut multi-valeurs (tag input)
 
 Le combo « statut » à valeur unique est remplacé par un **filtre à valeurs

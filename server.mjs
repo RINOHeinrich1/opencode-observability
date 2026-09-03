@@ -719,7 +719,11 @@ const server = createServer(async (req, res) => {
     }
     const recetteAction = path.match(/^\/api\/recettes\/([^/]+)\/(session|finish)$/);
     if (recetteAction && req.method === "POST") {
-      if (recetteAction[2] === "session") return sendJson(res, 200, await pilot.launchRecetteSession({ recetteId: recetteAction[1] }));
+      if (recetteAction[2] === "session") {
+        let sb = {};
+        try { sb = await readBody(req); } catch {}
+        return sendJson(res, 200, await pilot.launchRecetteSession({ recetteId: recetteAction[1], force: !!(sb && sb.force) }));
+      }
       const b = await readBody(req);
       return sendJson(res, 200, await pilot.finishRecette({ recetteId: recetteAction[1], items: b.items, by: user.username }));
     }

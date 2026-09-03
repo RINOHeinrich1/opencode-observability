@@ -34,7 +34,7 @@
 | Dépôt | Chemin hôte | Version actuelle |
 |---|---|---|
 | `opencode-observability` (panneau + docs) | `/root/orchestrator-panel` | `0.8.30` |
-| `opencode-agents` | `~/.config/opencode/agent` | `0.4.6` |
+| `opencode-agents` | `~/.config/opencode/agent` | `0.4.7` |
 | `opencode-notifier` | `~/.config/opencode/notifier` | `0.1.0` |
 | `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.6.8` |
 | `opencode-mcp-plan-manager` | `~/.config/opencode/mcp/plan-manager` | `0.1.0` |
@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.30** (2026-09-02,
-Recettes : une recette = une session ; cartes responsives.
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.31** (2026-09-02,
+atomic-plan : exploration lecture seule sans friction headless.

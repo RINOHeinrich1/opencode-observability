@@ -5,6 +5,27 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.31 — 2026-09-02 · atomic-plan : exploration lecture seule sans friction headless
+
+Correctif d'infrastructure suite au blocage de la planification
+`T-20260903-115954-xrcy` (frontend SPA madatalk) : la décision enregistrée
+comme « permission rejetée » était en réalité un **auto-deny du runtime
+opencode** (fail-closed ~17 ms) sur une commande bash composée (segment
+`xargs grep`) non couverte par les permissions d'atomic-plan, dans une
+sous-session headless sans approbateur interactif.
+
+- `opencode-agents` v0.4.7 : permissions bash lecture seule étendues
+  (`xargs grep*`, `xargs -0 grep*`, `git ls-tree*`, `git cat-file*`,
+  `git show-ref*`, `git for-each-ref*`, `node -e*`) + règle de conduite
+  « privilégier read/grep/glob et les commandes simples ; éviter les pipelines
+  composés » ;
+- registre : événement `PERMISSION_CONTEXT_CORRECTED` tracé sur la tâche
+  (auto-deny, pas un rejet humain).
+
+Dépôts : `opencode-agents` (v0.4.7) · `opencode-observability` (docs v0.8.31).
+
+---
+
 ## v0.8.30 — 2026-09-02 · Recettes : une recette = une session (boutons simplifiés) + cartes responsives
 
 Suite au retour utilisateur sur la v0.8.28, l'UI recette est **simplifiée** :

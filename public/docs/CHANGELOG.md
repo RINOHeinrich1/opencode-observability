@@ -5,6 +5,17 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.41 — 2026-09-04 · Recette + E2E : agent-recette vérifie et déclenche les tests
+
+- agents v0.4.12 : agent-recette utilise e2e_list / e2e_execution_list
+  (rapport TEXTE) pour confronter scénario E2E ↔ comportement réel des tâches
+  couvertes ; signale les divergences en éléments avec référence ; peut
+  déclencher un run via e2e_run. Jamais d'interprétation de vidéo.
+- mcp v0.7.2 : outil e2e_run (runner E2E_EXTERNAL sur repoDir + import auto,
+  creds compte de test dans /root/.config/opencode/e2e.env root-only).
+- SPA madatalk : scaffold Playwright + spec login authentifié PASS (préprod) sur
+  branche build-notify/e2e-playwright + workflow e2e.yml.
+
 ## v0.8.40 — 2026-09-04 · E2E : exécution directe, runner CI, lifecycle & docs (cadrage 07)
 
 - Agents v0.4.11 : analyse d'impact E2E en exécution DIRECTE (sans atomic-plan)

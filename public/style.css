@@ -709,3 +709,6 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 .e2e-rowline { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 2px; }
 .e2e-summary { color: var(--muted, #9aa3b0); }
 .e2e-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
+
+.e2e-speedrow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.e2e-speed.active { background: rgba(79,140,255,.25); border-color: var(--accent); }

@@ -144,7 +144,7 @@ async function renderTasks() {
       <label class="muted filter-check" title="Tâches dont le statut n'est pas « done »"><input type="checkbox" id="f-filter-actif" ${tasksActifOnly ? 'checked' : ''}> Actif</label>
       <button id="new-task-btn" class="launch-btn">+ Nouvelle tâche</button>
     </div>
-    <table><thead><tr><th></th><th>ID</th><th>Projet</th><th>Type</th><th>Priorité</th><th>Statut</th><th>Recette</th><th>Demande</th><th>Session</th><th>Actions</th></tr></thead>
+    <table><thead><tr><th></th><th>ID</th><th>Projet</th><th>Type</th><th>Priorité</th><th>Statut</th><th>Recette</th><th>E2E</th><th>Demande</th><th>Session</th><th>Actions</th></tr></thead>
     <tbody id="tasks-body"></tbody></table>`;
   const statuses = [...new Set(tasks.map((t) => t.status || 'queued'))];
   const projectSel = document.getElementById('f-project');
@@ -209,6 +209,7 @@ async function renderTasks() {
         <td>${esc(t.priority)}</td>
         <td>${badge(t.status)}${t.waiting_human ? '<span class="badge waiting-human" title="Une décision humaine est en attente (validation / review)">⏳ attente humaine</span>' : ''}</td>
         <td>${recetteBadge(t.recette_status)}${recetteBadgeExtra}${orderBadge}${vigBadge}</td>
+        <td>${e2eBadgeCell(t)}</td>
         <td><span title="${esc(t.request || '')}"><strong>${esc((t.title && t.title.trim()) ? t.title : (t.request || '').slice(0, 60))}</strong></span>${(t.title && t.title.trim()) && t.request ? `<span class="muted-sm"> — ${esc(t.request.slice(0, 40))}</span>` : ''}</td>
         <td>${sessionLink(t.session_id)}</td>
         <td>${detailsButtons(t)}</td>
@@ -248,7 +249,7 @@ async function renderTasks() {
           ? 'Autres tâches'
           : (title ? `Recette — ${esc(title)}` : `Recette de ${esc(sourceId)}`);
         const cls = [...new Set(sorted.map((x) => x.recette_class).filter(Boolean))];
-        const head = `<tr class="recette-group-head"><td colspan="11">
+        const head = `<tr class="recette-group-head"><td colspan="12">
           <button class="tree-toggle" data-recette-toggle="${esc(sourceId)}">▸</button>
           <span class="code">${label}</span>
           <span class="muted-sm">— ${sorted.length} tâche(s)${cls.length ? ' · ' + cls.map((c) => RECETTE_CLS_LABEL[c]).join(' / ') : ''}</span>
@@ -261,7 +262,7 @@ async function renderTasks() {
           return Object.keys(byOrder).sort((a, b) => Number(a) - Number(b)).map((o) => {
             const l = byOrder[o];
             const isParallel = l.length > 1;
-            const subHead = `<tr class="recette-order-row" data-recette-child="${esc(sourceId)}"><td colspan="11">
+            const subHead = `<tr class="recette-order-row" data-recette-child="${esc(sourceId)}"><td colspan="12">
               <span class="tree-branch">↳</span> <strong>Ordre ${o === '999' ? '— (non défini)' : esc(o)}</strong>${isParallel ? ` <span class="muted-sm">(${l.length} exécutables en parallèle)</span>` : ''}
             </td></tr>`;
             return subHead + l.map((t) => rowHtml(t, sourceId)).join('');
@@ -271,9 +272,9 @@ async function renderTasks() {
       };
       const groups = Object.entries(bySource).sort((a, b) => b[0].localeCompare(a[0])).map(([s, l]) => groupHtml(s, l)).join('');
       const othersHtml = others.length ? groupHtml('(sans recette)', others) : '';
-      html = (groups + othersHtml) || '<tr><td colspan="11" class="muted">Aucune tâche</td></tr>';
+      html = (groups + othersHtml) || '<tr><td colspan="12" class="muted">Aucune tâche</td></tr>';
     } else {
-      html = rows.map((t) => rowHtml(t, null)).join('') || '<tr><td colspan="11" class="muted">Aucune tâche</td></tr>';
+      html = rows.map((t) => rowHtml(t, null)).join('') || '<tr><td colspan="12" class="muted">Aucune tâche</td></tr>';
     }
 
     document.getElementById('tasks-body').innerHTML = html;
@@ -463,20 +464,52 @@ async function renderTaskE2EBlock(taskId, box) {
   if (!tests.length) { box.innerHTML = ''; return; }
   const execById = {};
   (d.executions || []).forEach((x) => { if (!execById[x.id]) execById[x.id] = x; });
-  box.innerHTML = `<h3>Tests E2E</h3><div class="recette-list">${tests.map((t) => {
+  const hasVideo = (d.executions || []).some((x) => x.videoUrl);
+  box.innerHTML = `<h3>Tests E2E ${hasVideo ? `<a class="ghost" download href="/api/tasks/${encodeURIComponent(taskId)}/e2e/videos.zip" title="Télécharger toutes les vidéos (zip)">⭳ zip vidéos</a>` : ''}</h3><div class="recette-list">${tests.map((t) => {
     const ex = execById[t.lastExecutionId];
     const st = t.lastStatus || '—';
     const relBadge = { CREATED: 'créé', UPDATED: 'modifié', REGRESSION: 'régression', EXISTING: 'existant' }[t.relationType] || (t.relationType || '').toLowerCase();
-    const row = `<div class="recette-item finish-item"><div class="recette-task">
+    const vUrl = ex && ex.videoUrl ? e2eFileUrl(ex.videoUrl) : '';
+    return `<div class="recette-item finish-item"><div class="recette-task">
       <strong><code class="e2e-id">${esc(t.e2eTestId)}</code> ${esc(t.scenario || t.title || '')}</strong>
       <span class="muted-sm">${esc(t.specFile)} · relation : ${esc(relBadge)}</span>
       <div class="e2e-rowline">Statut : ${badge(st)}${ex ? ` · ${esc(ex.durationMs != null ? (ex.durationMs / 1000).toFixed(1) + ' s' : '')} · itération ${esc(ex.attempts || 1)}/3${ex.branch ? ' · ' + esc(ex.branch) : ''}` : ''}</div>
       ${ex && ex.summary ? `<p class="muted-sm e2e-summary">${esc((ex.summary || '').slice(0, 220))}${(ex.summary || '').length > 220 ? '…' : ''}</p>` : ''}
-      <div class="e2e-actions">${ex && ex.logsUrl ? `<a class="ghost" href="${esc(e2eFileUrl(ex.logsUrl))}" target="_blank">Rapport (texte)</a>` : ''}${ex && ex.videoUrl ? `<a class="ghost" href="${esc(e2eFileUrl(ex.videoUrl))}" target="_blank">▶ Voir la vidéo</a>` : ''}${t.reason ? `<span class="muted-sm" title="${esc(t.reason)}">ℹ raison</span>` : ''}</div>
+      <div class="e2e-actions">${ex && ex.logsUrl ? `<a class="ghost" href="${esc(e2eFileUrl(ex.logsUrl))}" target="_blank">Rapport (texte)</a>` : ''}${vUrl ? `<button type="button" class="ghost e2e-video-btn" data-url="${esc(vUrl)}" data-title="${esc(t.e2eTestId + ' — ' + (t.scenario || ''))}">▶ Voir la vidéo</button><a class="ghost" download href="${esc(vUrl)}" title="Télécharger cette vidéo">⭳</a>` : ''}${t.reason ? `<span class="muted-sm" title="${esc(t.reason)}">ℹ raison</span>` : ''}</div>
     </div></div>`;
-    return row;
   }).join('')}</div>`;
+  box.querySelectorAll('.e2e-video-btn').forEach((b) => b.addEventListener('click', () => openE2EVideoModal(b.dataset.url, b.dataset.title)));
 }
+
+// Lecteur vidéo E2E (preuve HUMAINE) : lecture + vitesses + téléchargement.
+function openE2EVideoModal(url, title) {
+  showModal(`
+    <div class="modal modal-wide">
+      <h3>${esc(title || 'Vidéo E2E')}</h3>
+      <video id="e2e-video" controls preload="metadata" style="width:100%; max-height:70vh; border-radius:8px" src="${esc(url)}"></video>
+      <div class="e2e-speedrow"><span class="muted-sm">Vitesse :</span>${[0.25, 0.5, 1, 1.5, 2].map((s) => `<button type="button" class="ghost e2e-speed" data-speed="${s}">${s}x</button>`).join('')}</div>
+      <div class="modal-actions">
+        <a class="launch-btn" download href="${esc(url)}">Télécharger la vidéo</a>
+        <button class="ghost" id="modal-cancel">Fermer</button>
+      </div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  const video = document.getElementById('e2e-video');
+  document.querySelectorAll('.e2e-speed').forEach((b) => b.addEventListener('click', () => {
+    video.playbackRate = Number(b.dataset.speed);
+    [...document.querySelectorAll('.e2e-speed')].forEach((x) => x.classList.toggle('active', x === b));
+  }));
+}
+// Badge E2E compact pour la table des tâches (état agrégé côté serveur : t.e2e).
+function e2eBadgeCell(t) {
+  const e = t.e2e;
+  if (!e || !e.count) return '<span class="muted-sm" title="Aucun test E2E associé">—</span>';
+  const icon = e.state === 'pass' ? '✓' : (e.state === 'fail' ? '✗' : '…');
+  const cls = e.state === 'pass' ? 'approve' : (e.state === 'fail' ? 'danger' : 'queued');
+  const label = e.state === 'pass' ? 'PASS' : (e.state === 'fail' ? 'FAIL' : (e.state === 'pending' ? 'en attente/en cours' : e.state));
+  return `<span class="badge ${cls}" title="E2E : ${e.done}/${e.count} test(s) exécuté(s) — ${label}">E2E ${icon}</span>`;
+}
+
 // Rendu des projets d'une recette (1..N) en puces.
 function recProjChips(projs) {
   const list = (projs && projs.length ? projs : []).filter(Boolean);

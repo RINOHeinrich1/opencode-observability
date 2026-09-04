@@ -2,7 +2,7 @@
 // - Lecture SEULE du registre de tâches (PostgreSQL `task_registry`).
 // - Authentification par formulaire (session cookie) + gestion d'utilisateurs.
 import { createServer } from "node:http";
-import { readFileSync, existsSync, statSync, createReadStream, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, existsSync, statSync, createReadStream, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join, dirname, extname, normalize, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -178,6 +178,31 @@ async function registryTasks(url) {
        FROM tasks t ORDER BY t.created_at DESC`,
     );
     rows = res.rows.filter((r) => !archived.has(r.id));
+    // Agrégat E2E par tâche : nombre de tests liés + dernier statut par test.
+    if (rows.length) {
+      const ids = rows.map((r) => r.id);
+      const cnt = (await db.query("SELECT task_id, COUNT(*) AS n FROM task_e2e WHERE task_id = ANY($1) GROUP BY task_id", [ids])).rows;
+      const last = (await db.query(
+        `SELECT te.task_id, ex.status FROM task_e2e te
+           JOIN e2e_executions ex ON ex.e2e_test_id = te.e2e_test_id AND ex.task_id = te.task_id
+             AND ex.created_at = (SELECT MAX(x.created_at) FROM e2e_executions x
+                                  WHERE x.e2e_test_id = te.e2e_test_id AND x.task_id = te.task_id)
+          WHERE te.task_id = ANY($1)`,
+        [ids],
+      )).rows;
+      const cntMap = {}; cnt.forEach((r) => { cntMap[r.task_id] = Number(r.n); });
+      const stMap = {};
+      for (const r of last) (stMap[r.task_id] = stMap[r.task_id] || []).push(r.status);
+      for (const row of rows) {
+        const n = cntMap[row.id] || 0;
+        const sts = stMap[row.id] || [];
+        if (!n) { row.e2e = null; continue; }
+        let state = "pending";
+        if (sts.some((s) => s === "FAILED" || s === "ERROR")) state = "fail";
+        else if (sts.length === n && sts.every((s) => s === "PASSED")) state = "pass";
+        row.e2e = { state, count: n, done: sts.length };
+      }
+    }
   } catch {
     rows = [];
   }
@@ -664,6 +689,35 @@ const server = createServer(async (req, res) => {
         const b = await readBody(req);
         return sendJson(res, 200, await pilot.editTask({ taskId, ...b }));
       }
+      if (path.endsWith("/e2e/videos.zip") && req.method === "GET") {
+        const db = registry();
+        const rows = (await db.query("SELECT id, video_url FROM e2e_executions WHERE task_id = $1 AND video_url IS NOT NULL ORDER BY created_at DESC", [taskId])).rows.filter((x) => existsSync(x.video_url));
+        if (!rows.length) return sendJson(res, 404, { error: "aucune vidéo" });
+        const tmp = `/tmp/opencode/e2e-zip-${Date.now()}.zip`;
+        try {
+          execFileSync("zip", ["-j", "-q", tmp, ...rows.map((x) => x.video_url)], { timeout: 120000 });
+          const st = statSync(tmp);
+          res.statusCode = 200;
+          res.setHeader("Content-Type", "application/zip");
+          res.setHeader("Content-Disposition", `attachment; filename="e2e-videos-${taskId}.zip"`);
+          res.setHeader("Content-Length", st.size);
+          const rs = createReadStream(tmp);
+          rs.pipe(res);
+          rs.on("end", () => { try { unlinkSync(tmp); } catch {} });
+          return;
+        } catch (e) { return sendJson(res, 500, { error: "échec zip : " + (e.message || e) }); }
+      }
+      if (path.endsWith("/e2e") && req.method === "GET") {
+        const db = registry();
+        const tests = (await db.query(`SELECT t.id, t.project, t.spec_file, t.scenario, t.title, t.status AS test_status, te.relation_type, te.reason,
+          (SELECT x.id FROM e2e_executions x WHERE x.e2e_test_id = t.id AND x.task_id = $1 ORDER BY x.created_at DESC LIMIT 1) AS last_execution_id,
+          (SELECT x.status FROM e2e_executions x WHERE x.e2e_test_id = t.id AND x.task_id = $1 ORDER BY x.created_at DESC LIMIT 1) AS last_status,
+          (SELECT x.duration_ms FROM e2e_executions x WHERE x.e2e_test_id = t.id AND x.task_id = $1 ORDER BY x.created_at DESC LIMIT 1) AS last_duration_ms,
+          (SELECT x.attempts FROM e2e_executions x WHERE x.e2e_test_id = t.id AND x.task_id = $1 ORDER BY x.created_at DESC LIMIT 1) AS last_attempts
+          FROM task_e2e te JOIN e2e_tests t ON t.id = te.e2e_test_id WHERE te.task_id = $1 ORDER BY t.scenario`, [taskId])).rows;
+        const execRows = (await db.query(`SELECT id, e2e_test_id, status, duration_ms, attempts, executed_at, summary, logs_url, video_url, report_artifact_id, commit_sha, branch, pipeline_ref FROM e2e_executions WHERE task_id = $1 ORDER BY created_at DESC LIMIT 100`, [taskId])).rows;
+        return sendJson(res, 200, { taskId, tests: tests.map((r) => ({ e2eTestId: r.id, project: r.project, specFile: r.spec_file, scenario: r.scenario, title: r.title, testStatus: r.test_status, relationType: r.relation_type, reason: r.reason, lastExecutionId: r.last_execution_id, lastStatus: r.last_status, lastDurationMs: r.last_duration_ms, lastAttempts: r.last_attempts })), executions: execRows.map((r) => ({ id: r.id, e2eTestId: r.e2e_test_id, status: r.status, durationMs: r.duration_ms, attempts: r.attempts, executedAt: r.executed_at, summary: r.summary, logsUrl: r.logs_url, videoUrl: r.video_url, reportArtifactId: r.report_artifact_id, commitSha: r.commit_sha, branch: r.branch, pipelineRef: r.pipeline_ref })) });
+      }
       return sendJson(res, 200, await registryTaskDetail(taskId));
     }
     if (path === "/api/events") return sendJson(res, 200, await registryEvents(url));
@@ -821,29 +875,6 @@ const server = createServer(async (req, res) => {
       if (!user.is_admin) return sendJson(res, 403, { error: "réservé admin" });
       const b = await readBody(req);
       return sendJson(res, 200, await pilot.pruneE2EVideos({ days: b.days }));
-    }
-    const taskE2E = path.match(/^\/api\/tasks\/([^/]+)\/e2e$/);
-    if (taskE2E && req.method === "GET") {
-      const db = registry();
-      const tests = (await db.query(
-        `SELECT t.id, t.project, t.spec_file, t.scenario, t.title, t.status AS test_status, te.relation_type, te.reason,
-                (SELECT x.id FROM e2e_executions x WHERE x.e2e_test_id = t.id AND x.task_id = $1 ORDER BY x.created_at DESC LIMIT 1) AS last_execution_id,
-                (SELECT x.status FROM e2e_executions x WHERE x.e2e_test_id = t.id AND x.task_id = $1 ORDER BY x.created_at DESC LIMIT 1) AS last_status,
-                (SELECT x.duration_ms FROM e2e_executions x WHERE x.e2e_test_id = t.id AND x.task_id = $1 ORDER BY x.created_at DESC LIMIT 1) AS last_duration_ms,
-                (SELECT x.attempts FROM e2e_executions x WHERE x.e2e_test_id = t.id AND x.task_id = $1 ORDER BY x.created_at DESC LIMIT 1) AS last_attempts
-         FROM task_e2e te JOIN e2e_tests t ON t.id = te.e2e_test_id
-         WHERE te.task_id = $1 ORDER BY t.scenario`,
-        [taskE2E[1]],
-      )).rows;
-      const execRows = (await db.query(
-        `SELECT id, e2e_test_id, status, duration_ms, attempts, executed_at, summary, logs_url, video_url, report_artifact_id, commit_sha, branch, pipeline_ref
-         FROM e2e_executions WHERE task_id = $1 ORDER BY created_at DESC LIMIT 100`, [taskE2E[1]],
-      )).rows;
-      return sendJson(res, 200, {
-        taskId: taskE2E[1],
-        tests: tests.map((r) => ({ e2eTestId: r.id, project: r.project, specFile: r.spec_file, scenario: r.scenario, title: r.title, testStatus: r.test_status, relationType: r.relation_type, reason: r.reason, lastExecutionId: r.last_execution_id, lastStatus: r.last_status, lastDurationMs: r.last_duration_ms, lastAttempts: r.last_attempts })),
-        executions: execRows.map((r) => ({ id: r.id, e2eTestId: r.e2e_test_id, status: r.status, durationMs: r.duration_ms, attempts: r.attempts, executedAt: r.executed_at, summary: r.summary, logsUrl: r.logs_url, videoUrl: r.video_url, reportArtifactId: r.report_artifact_id, commitSha: r.commit_sha, branch: r.branch, pipelineRef: r.pipeline_ref })),
-      });
     }
     // Fichier de preuve E2E (rapport texte / vidéo humaine) — accès restreint à storage/e2e.
     if (path === "/api/e2e/file" && req.method === "GET") {

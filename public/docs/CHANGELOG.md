@@ -5,6 +5,14 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.39 — 2026-09-04 · Panel : badge E2E en table + lecteur vidéo + téléchargements
+
+- Table des tâches : colonne « E2E » avec badge agrégé E2E ✓ / ✗ / … (ou — si
+  aucun test associé) ; agrégat serveur (dernier statut par test lié).
+- Détail tâche : lecteur vidéo INTÉGRÉ (0.25x/0.5x/1x/1.5x/2x) ; téléchargement
+  d'une vidéo et de TOUTES les vidéos de la tâche en ZIP
+  (GET /api/tasks/:id/e2e/videos.zip, CLI zip). Rapport texte toujours dispo.
+
 ## v0.8.38 — 2026-09-04 · Panel : section « Tests E2E » dans le détail de tâche
 
 Affichage (lecture) des E2E associés à une tâche : id, scénario, spec file,

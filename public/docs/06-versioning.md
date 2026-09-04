@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.38** (2026-09-04,
-Panel : section « Tests E2E » dans le détail de tâche.
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.39** (2026-09-04,
+Panel : badge E2E + lecteur vidéo + téléchargements (1/ZIP).

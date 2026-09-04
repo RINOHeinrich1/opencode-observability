@@ -5,6 +5,23 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.35 — 2026-09-02 · Recette : ajouter/retirer un projet rattaché à une recette existante
+
+Suite multi-projets — gestion des projets **après création** :
+- **MCP task-orchestrator v0.6.10** : outils `recette_project_add` /
+  `recette_project_remove` (refus du dernier projet ; refus si la recette
+  couvre encore des tâches de ce projet ; `recettes.project` legacy bascule sur
+  le 1er projet restant).
+- **Panel v0.8.35** : endpoints `POST /api/recettes/:id/projects` et
+  `DELETE /api/recettes/:id/projects/:project` (pilot) ; dans la modale de
+  détail d'une recette non faite : **ajouter** un projet (liste des projets
+  connus non rattachés) et **retirer** un projet (×, masqué si un seul projet).
+
+Dépôts : `opencode-observability` (v0.8.35) · `opencode-mcp-task-orchestrator`
+(v0.6.10).
+
+---
+
 ## v0.8.34 — 2026-09-02 · agent-recette : prompt multi-projets sans ambiguïté
 
 Correctif de cohérence du prompt `agent-recette` (v0.4.9) après l'introduction

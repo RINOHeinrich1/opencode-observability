@@ -375,6 +375,20 @@ export async function removeRecetteDocument({ documentId }) {
   return taskOrchestrator("recette_doc_remove", { documentId });
 }
 
+// Ajoute un projet à une recette existante (recette multi-projets).
+export async function addRecetteProject({ recetteId, project, by }) {
+  if (!recetteId || !project) throw new Error("recetteId et projet requis");
+  const r = await taskOrchestrator("recette_project_add", { recetteId, project });
+  return { ok: true, recette: r && r.recette };
+}
+
+// Retire un projet d'une recette existante (refus si dernier projet / tâches couvertes).
+export async function removeRecetteProject({ recetteId, project, by }) {
+  if (!recetteId || !project) throw new Error("recetteId et projet requis");
+  const r = await taskOrchestrator("recette_project_remove", { recetteId, project });
+  return { ok: true, recette: r && r.recette };
+}
+
 // Clôt la recette : crée une tâche par élément confirmé (via task_register) puis confirme.
 export async function finishRecette({ recetteId, items, by }) {
   if (!recetteId) throw new Error("recetteId requis");

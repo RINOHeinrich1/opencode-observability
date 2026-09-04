@@ -36,7 +36,7 @@
 | `opencode-observability` (panneau + docs) | `/root/orchestrator-panel` | `0.8.30` |
 | `opencode-agents` | `~/.config/opencode/agent` | `0.4.9` |
 | `opencode-notifier` | `~/.config/opencode/notifier` | `0.1.0` |
-| `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.6.9` |
+| `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.6.10` |
 | `opencode-mcp-plan-manager` | `~/.config/opencode/mcp/plan-manager` | `0.1.0` |
 | `opencode-mcp-audit-manager` | `~/.config/opencode/mcp/audit-manager` | `0.1.0` |
 | `opencode-mcp-coder-workspaces` | `~/.config/opencode/mcp/coder-workspaces` | `0.1.0` |
@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.34** (2026-09-02,
-agent-recette : prompt multi-projets sans ambiguïté.
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.35** (2026-09-02,
+Recette : ajouter/retirer un projet rattaché à une recette existante.

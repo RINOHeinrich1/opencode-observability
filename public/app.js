@@ -506,11 +506,17 @@ async function recetteDetailModal(recetteId) {
   const rec = d.recette || {};
   const tasks = rec.tasks || [];
   const items = rec.items || [];
+  const recProjList = (rec.projects && rec.projects.length) ? rec.projects : (rec.project ? [rec.project] : []);
   showModal(`
     <div class="modal modal-wide">
       <h2>${esc(rec.title || recetteId)}</h2>
-      <p class="muted">${badge(rec.status)} · Projets ${recProjChips(rec.projects || (rec.project ? [rec.project] : []))}${rec.confirmed_at ? ` · confirmée ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}</p>
+      <p class="muted">${badge(rec.status)} · Projets ${recProjChips(recProjList)}${rec.confirmed_at ? ` · confirmée ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}</p>
       ${rec.description ? `<p class="modal-request">${esc(rec.description)}</p>` : ''}
+      ${rec.status !== 'done' ? `<div class="actions-section"><h3>Projets rattachés <span class="muted-sm">(1..N)</span></h3>
+        <div class="rec-proj-manage">
+          <div class="rec-proj-chips">${recProjList.map((p) => `<span class="chip-project rec-proj-chip">${esc(p)}${recProjList.length > 1 ? `<button type="button" class="chip-x" data-rec-proj-del="${esc(p)}" title="Retirer ce projet">×</button>` : ''}</span>`).join('')}</div>
+          <div class="rec-proj-addrow"><select id="rec-proj-add"><option value="">+ Ajouter un projet…</option></select></div>
+        </div></div>` : ''}
       ${tasks.length ? `<div class="actions-section"><h3>Tâches couvertes (${tasks.length})</h3><div class="recette-list">${tasks.map((t) => {
         const tid = (t && typeof t === 'object') ? (t.taskId || t.task_id || '') : (t || '');
         const ttl = (t && typeof t === 'object') ? (t.title || '') : '';
@@ -522,6 +528,30 @@ async function recetteDetailModal(recetteId) {
       <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
+  if (rec.status !== 'done') {
+    // Gestion des projets rattachés (add/remove) via les endpoints HTTP.
+    const attached = recProjList;
+    (async () => {
+      let all = [];
+      try { all = ((await api('/api/projects')).projects || []).map((p) => p.id); } catch {}
+      const addSel = document.getElementById('rec-proj-add');
+      addSel.innerHTML = `<option value="">+ Ajouter un projet…</option>` + all.filter((p) => !attached.includes(p)).map((p) => `<option>${esc(p)}</option>`).join('');
+      addSel.addEventListener('change', async () => {
+        const p = addSel.value;
+        if (!p) return;
+        try {
+          await api(`/api/recettes/${encodeURIComponent(recetteId)}/projects`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: p }) });
+          closeModal(); recetteDetailModal(recetteId);
+        } catch (e) { alert('Échec : ' + (e.message || e)); addSel.value = ''; }
+      });
+    })();
+    document.querySelectorAll('#modal-backdrop [data-rec-proj-del]').forEach((b) => b.addEventListener('click', async () => {
+      try {
+        await api(`/api/recettes/${encodeURIComponent(recetteId)}/projects/${encodeURIComponent(b.dataset.recProjDel)}`, { method: 'DELETE' });
+        closeModal(); recetteDetailModal(recetteId);
+      } catch (e) { alert('Échec : ' + (e.message || e)); }
+    }));
+  }
 }
 
 // Documents d'une recette : liste, ajout (import / artefact), lecture, retrait.

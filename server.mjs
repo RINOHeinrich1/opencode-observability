@@ -749,6 +749,17 @@ const server = createServer(async (req, res) => {
       const b = await readBody(req);
       return sendJson(res, 200, await pilot.finishRecette({ recetteId: recetteAction[1], items: b.items, by: user.username }));
     }
+    const recetteProjAdd = path.match(/^\/api\/recettes\/([^/]+)\/projects$/);
+    if (recetteProjAdd && req.method === "POST") {
+      const b = await readBody(req);
+      const r = await pilot.addRecetteProject({ recetteId: recetteProjAdd[1], project: b.project, by: user.username });
+      return sendJson(res, 200, r);
+    }
+    const recetteProjDel = path.match(/^\/api\/recettes\/([^/]+)\/projects\/([^/]+)$/);
+    if (recetteProjDel && req.method === "DELETE") {
+      const r = await pilot.removeRecetteProject({ recetteId: recetteProjDel[1], project: decodeURIComponent(recetteProjDel[2]), by: user.username });
+      return sendJson(res, 200, r);
+    }
     const recetteDocView = path.match(/^\/api\/recettes\/([^/]+)\/documents\/([0-9]+)\/view$/);
     if (recetteDocView && req.method === "GET") {
       const d = (await registry().query("SELECT * FROM recette_documents WHERE id = $1", [Number(recetteDocView[2])])).rows[0];

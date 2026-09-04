@@ -690,3 +690,11 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 .rm-projects { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-bottom: 8px; }
 .rm-projects .filter-check { margin-left: 0; }
 #rm-load-cands { font-size: 12px; }
+
+/* ===== Gestion projets rattachés d'une recette (v0.9.0) ===== */
+.rec-proj-manage { display: flex; flex-direction: column; gap: 8px; }
+.rec-proj-chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.rec-proj-chip { display: inline-flex; align-items: center; gap: 2px; }
+.rec-proj-chip .chip-x { background: none; border: 0; color: inherit; cursor: pointer; font-size: 13px; padding: 0 3px; border-radius: 8px; }
+.rec-proj-chip .chip-x:hover { background: rgba(255,255,255,0.18); }
+.rec-proj-addrow select { max-width: 240px; }

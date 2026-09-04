@@ -588,7 +588,7 @@ async function recetteDetailModal(recetteId) {
         const tproj = (t && typeof t === 'object') ? (t.project || '') : '';
         return `<div class="recette-item"><code class="muted-sm">${esc(tid)}</code><div class="recette-task">${tproj ? `<code class="chip-project">${esc(tproj)}</code>` : ''}<strong>${esc(ttl)}</strong>${req ? `<p class="muted-sm">${esc(req)}</p>` : ''}</div>${rec.status !== 'done' ? `<button type="button" class="ghost rec-task-del" data-rec-task-del="${esc(tid)}" title="Détacher cette tâche (elle reste intacte)">✕ retirer</button>` : ''}</div>`;
       }).join('')}</div>${rec.status !== 'done' ? `<div class="rec-tasks-add"><select id="rec-task-add"><option value="">+ Ajouter une tâche couverte…</option></select></div>` : ''}</div></div>` : '<p class="muted-sm">Aucune tâche couverte (recette exploratoire).</p>'}
-      ${items.length ? `<div class="actions-section"><h3>Éléments (${items.length})</h3><div class="recette-list">${items.map((it) => `<div class="recette-item"><span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span>${it.project ? `<code class="chip-project">${esc(it.project)}</code>` : ''}${it.execOrder != null ? `<span class="badge order-badge" title="Ordre d'exécution">ordre ${esc(it.execOrder)}</span>` : ''}${it.vigilance ? `<span class="badge danger" title="${esc(it.vigilance)}">⚠ vigilance</span>` : ''}<span>${esc(it.title || it.content.slice(0, 80))}</span></div>`).join('')}</div></div>` : ''}
+      ${items.length ? `<div class="actions-section"><h3>Éléments (${items.length})</h3><div class="recette-list">${items.map((it) => `<div class="recette-item"><span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span>${it.project ? `<code class="chip-project">${esc(it.project)}</code>` : ''}${it.execOrder != null ? `<span class="badge order-badge" title="Ordre d'exécution">ordre ${esc(it.execOrder)}</span>` : ''}${it.vigilance ? `<span class="badge danger" title="${esc(it.vigilance)}">⚠ vigilance</span>` : ''}<span>${esc(it.title || it.content.slice(0, 80))}</span>${rec.status !== 'done' && it.status !== 'task_created' ? `<button type="button" class="ghost rec-item-del" data-rec-item-del="${it.id}" title="Retirer cet élément (fusion/consolidation)">✕</button>` : ''}</div>`).join('')}</div></div>` : ''}
       <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
@@ -639,6 +639,13 @@ async function recetteDetailModal(recetteId) {
     document.querySelectorAll('#modal-backdrop [data-rec-task-del]').forEach((b) => b.addEventListener('click', async () => {
       try {
         await api(`/api/recettes/${encodeURIComponent(recetteId)}/tasks/${encodeURIComponent(b.dataset.recTaskDel)}`, { method: 'DELETE' });
+        closeModal(); recetteDetailModal(recetteId);
+      } catch (e) { alert('Échec : ' + (e.message || e)); }
+    }));
+    document.querySelectorAll('#modal-backdrop [data-rec-item-del]').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('Retirer cet élément de recette ? (utilisé pour la fusion/consolidation d\'éléments)')) return;
+      try {
+        await api(`/api/recettes/${encodeURIComponent(recetteId)}/items/${b.dataset.recItemDel}`, { method: 'DELETE' });
         closeModal(); recetteDetailModal(recetteId);
       } catch (e) { alert('Échec : ' + (e.message || e)); }
     }));

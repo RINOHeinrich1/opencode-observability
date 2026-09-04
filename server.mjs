@@ -815,6 +815,10 @@ const server = createServer(async (req, res) => {
     if (recetteTaskDel && req.method === "DELETE") {
       return sendJson(res, 200, await pilot.removeRecetteTask({ recetteId: recetteTaskDel[1], taskId: decodeURIComponent(recetteTaskDel[2]) }));
     }
+    const recetteItemDel = path.match(/^\/api\/recettes\/([^/]+)\/items\/([0-9]+)$/);
+    if (recetteItemDel && req.method === "DELETE") {
+      return sendJson(res, 200, await pilot.removeRecetteItem({ recetteId: recetteItemDel[1], itemId: Number(recetteItemDel[2]) }));
+    }
     const recetteProjAdd = path.match(/^\/api\/recettes\/([^/]+)\/projects$/);
     if (recetteProjAdd && req.method === "POST") {
       const b = await readBody(req);

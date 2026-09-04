@@ -403,6 +403,13 @@ export async function removeRecetteTask({ recetteId, taskId }) {
   return { ok: true, recette: r && r.recette };
 }
 
+// Supprime un élément de recette (garde : refus si tâche déjà créée depuis).
+export async function removeRecetteItem({ recetteId, itemId }) {
+  if (!itemId) throw new Error("itemId requis");
+  const r = await taskOrchestrator("recette_item_delete", { itemId: Number(itemId) });
+  return { ok: true };
+}
+
 // Clôt la recette : crée une tâche par élément confirmé (via task_register) puis confirme.
 export async function finishRecette({ recetteId, items, by }) {
   if (!recetteId) throw new Error("recetteId requis");

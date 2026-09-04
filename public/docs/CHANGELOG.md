@@ -5,6 +5,14 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.42 — 2026-09-04 · Recette : retirer un élément (recette_item_delete / bouton panneau)
+
+- MCP v0.7.3 : outil recette_item_delete (itemId) — utilisé pour fusionner /
+  consolider des éléments (ex. regrouper des doublons en un seul élément).
+  Garde : refus si une tâche a déjà été créée depuis l'élément (task_created).
+- Panel : bouton « ✕ » par élément dans la modale de détail d'une recette NON
+  faite (masqué si item task_created) + endpoint DELETE /api/recettes/:id/items/:itemId.
+
 ## v0.8.41 — 2026-09-04 · Recette + E2E : agent-recette vérifie et déclenche les tests
 
 - agents v0.4.12 : agent-recette utilise e2e_list / e2e_execution_list

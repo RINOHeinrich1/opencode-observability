@@ -446,6 +446,37 @@ async function renderArtifacts() {
 // --- Recettes (v0.8.0) : objet de projet -----------------------------------
 const RECETTE_STATUS_LABEL = { pending: 'pas faite', in_progress: 'en cours', done: 'faite' };
 
+// URL d'accès à un fichier de preuve E2E (storage/e2e) — rapport texte ou vidéo.
+function e2eFileUrl(absPath) {
+  if (!absPath) return '';
+  const i = absPath.indexOf('/storage/e2e/');
+  const rel = i >= 0 ? absPath.slice(i + '/storage/e2e/'.length) : absPath;
+  return `/api/e2e/file?p=${encodeURIComponent(rel)}`;
+}
+
+// Rendu de la section « Tests E2E » du détail de tâche (rempli async).
+async function renderTaskE2EBlock(taskId, box) {
+  if (!box) return;
+  let d;
+  try { d = await api(`/api/tasks/${encodeURIComponent(taskId)}/e2e`); } catch { return; }
+  const tests = d.tests || [];
+  if (!tests.length) { box.innerHTML = ''; return; }
+  const execById = {};
+  (d.executions || []).forEach((x) => { if (!execById[x.id]) execById[x.id] = x; });
+  box.innerHTML = `<h3>Tests E2E</h3><div class="recette-list">${tests.map((t) => {
+    const ex = execById[t.lastExecutionId];
+    const st = t.lastStatus || '—';
+    const relBadge = { CREATED: 'créé', UPDATED: 'modifié', REGRESSION: 'régression', EXISTING: 'existant' }[t.relationType] || (t.relationType || '').toLowerCase();
+    const row = `<div class="recette-item finish-item"><div class="recette-task">
+      <strong><code class="e2e-id">${esc(t.e2eTestId)}</code> ${esc(t.scenario || t.title || '')}</strong>
+      <span class="muted-sm">${esc(t.specFile)} · relation : ${esc(relBadge)}</span>
+      <div class="e2e-rowline">Statut : ${badge(st)}${ex ? ` · ${esc(ex.durationMs != null ? (ex.durationMs / 1000).toFixed(1) + ' s' : '')} · itération ${esc(ex.attempts || 1)}/3${ex.branch ? ' · ' + esc(ex.branch) : ''}` : ''}</div>
+      ${ex && ex.summary ? `<p class="muted-sm e2e-summary">${esc((ex.summary || '').slice(0, 220))}${(ex.summary || '').length > 220 ? '…' : ''}</p>` : ''}
+      <div class="e2e-actions">${ex && ex.logsUrl ? `<a class="ghost" href="${esc(e2eFileUrl(ex.logsUrl))}" target="_blank">Rapport (texte)</a>` : ''}${ex && ex.videoUrl ? `<a class="ghost" href="${esc(e2eFileUrl(ex.videoUrl))}" target="_blank">▶ Voir la vidéo</a>` : ''}${t.reason ? `<span class="muted-sm" title="${esc(t.reason)}">ℹ raison</span>` : ''}</div>
+    </div></div>`;
+    return row;
+  }).join('')}</div>`;
+}
 // Rendu des projets d'une recette (1..N) en puces.
 function recProjChips(projs) {
   const list = (projs && projs.length ? projs : []).filter(Boolean);
@@ -1571,6 +1602,8 @@ async function taskActionsModal(taskId) {
 
       ${status === 'done' ? recetteSectionHtml(recette, detail) : ''}
 
+      <div class="actions-section" id="e2e-block"></div>
+
       <div class="actions-section">
         <h3>Opérations</h3>
         <div class="actions-buttons">
@@ -1650,6 +1683,7 @@ async function taskActionsModal(taskId) {
       } catch (err) { alert('Échec : ' + (err.message || err)); }
     });
   });
+  renderTaskE2EBlock(taskId, document.getElementById('e2e-block'));
 }
 
 async function taskEditModal(taskId, detail) {

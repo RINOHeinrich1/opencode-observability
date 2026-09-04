@@ -5,6 +5,14 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.38 — 2026-09-04 · Panel : section « Tests E2E » dans le détail de tâche
+
+Affichage (lecture) des E2E associés à une tâche : id, scénario, spec file,
+relation (créé/modifié/régression/existant), statut de la dernière exécution,
+durée, itération (i/3), synthèse textuelle, boutons « Rapport (texte) » et
+« ▶ Voir la vidéo » (stream restreint storage/e2e via /api/e2e/file). Rempli
+async depuis GET /api/tasks/:id/e2e ; masqué si aucun test associé.
+
 ## v0.8.37 — 2026-09-04 · Tests E2E : collecteur hôte + lecture (début d'intégration cadrage 07)
 
 Première tranche de l'intégration E2E (cadrage 07-tests-e2e.md) côté orchestration :

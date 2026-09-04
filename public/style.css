@@ -703,3 +703,9 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 .rec-tasks-add { margin-top: 8px; }
 .rec-tasks-add select { width: 100%; max-width: 460px; }
 .rec-task-del { font-size: 12px; padding: 2px 8px; }
+
+/* ===== Tests E2E — section détail tâche (cadrage 07) ===== */
+.e2e-id { color: var(--accent, #9ecbff); font-size: 12px; }
+.e2e-rowline { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 2px; }
+.e2e-summary { color: var(--muted, #9aa3b0); }
+.e2e-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 4px; }

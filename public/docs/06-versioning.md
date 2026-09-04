@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.37** (2026-09-04,
-Tests E2E : collecteur hôte + lecture (cadrage 07).
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.38** (2026-09-04,
+Panel : section « Tests E2E » dans le détail de tâche.

@@ -5,6 +5,19 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.34 — 2026-09-02 · agent-recette : prompt multi-projets sans ambiguïté
+
+Correctif de cohérence du prompt `agent-recette` (v0.4.9) après l'introduction
+des recettes multi-projets : suppression des formulations mono-projet
+contradictoires restantes (« rattaché à un PROJET »), alignement du contexte
+(`recette_get` → `projects[]`, pas de projet principal), **projet cible** affiché
+dans la liste consolidée de clôture, et règle de lecture FS bornée aux projets
+couverts.
+
+Dépôt : `opencode-agents` (v0.4.9) · docs `opencode-observability` (v0.8.34).
+
+---
+
 ## v0.8.33 — 2026-09-02 · Recette multi-projets (1..N) + item rattaché à un projet
 
 Une recette peut désormais être rattachée à **un ou plusieurs projets** (plus

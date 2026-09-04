@@ -34,7 +34,7 @@
 | Dépôt | Chemin hôte | Version actuelle |
 |---|---|---|
 | `opencode-observability` (panneau + docs) | `/root/orchestrator-panel` | `0.8.30` |
-| `opencode-agents` | `~/.config/opencode/agent` | `0.4.8` |
+| `opencode-agents` | `~/.config/opencode/agent` | `0.4.9` |
 | `opencode-notifier` | `~/.config/opencode/notifier` | `0.1.0` |
 | `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.6.9` |
 | `opencode-mcp-plan-manager` | `~/.config/opencode/mcp/plan-manager` | `0.1.0` |
@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.33** (2026-09-02,
-Recette multi-projets (1..N) + item rattaché à un projet.
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.34** (2026-09-02,
+agent-recette : prompt multi-projets sans ambiguïté.

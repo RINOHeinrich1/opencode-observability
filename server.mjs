@@ -749,6 +749,15 @@ const server = createServer(async (req, res) => {
       const b = await readBody(req);
       return sendJson(res, 200, await pilot.finishRecette({ recetteId: recetteAction[1], items: b.items, by: user.username }));
     }
+    const recetteTaskAdd = path.match(/^\/api\/recettes\/([^/]+)\/tasks$/);
+    if (recetteTaskAdd && req.method === "POST") {
+      const b = await readBody(req);
+      return sendJson(res, 200, await pilot.addRecetteTask({ recetteId: recetteTaskAdd[1], taskId: b.taskId }));
+    }
+    const recetteTaskDel = path.match(/^\/api\/recettes\/([^/]+)\/tasks\/([^/]+)$/);
+    if (recetteTaskDel && req.method === "DELETE") {
+      return sendJson(res, 200, await pilot.removeRecetteTask({ recetteId: recetteTaskDel[1], taskId: decodeURIComponent(recetteTaskDel[2]) }));
+    }
     const recetteProjAdd = path.match(/^\/api\/recettes\/([^/]+)\/projects$/);
     if (recetteProjAdd && req.method === "POST") {
       const b = await readBody(req);

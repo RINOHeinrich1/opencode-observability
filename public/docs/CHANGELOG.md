@@ -5,6 +5,21 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.36 — 2026-09-02 · Recette : rattacher/détacher des tâches couvertes après création
+
+- **MCP task-orchestrator v0.6.11** : outil `recette_unlink_task` ; garde sur
+  `recette_link_task` — la tâche ajoutée doit appartenir à l'un des projets
+  rattachés à la recette.
+- **Panel v0.8.36** : endpoints `POST /api/recettes/:id/tasks` et
+  `DELETE /api/recettes/:id/tasks/:taskId` ; modale de détail d'une recette non
+  faite : **✕ retirer** sur chaque tâche couverte et sélecteur **« + Ajouter une
+  tâche couverte… »** (candidates des projets rattachés, non déjà couvertes).
+
+Dépôts : `opencode-observability` (v0.8.36) · `opencode-mcp-task-orchestrator`
+(v0.6.11).
+
+---
+
 ## v0.8.35 — 2026-09-02 · Recette : ajouter/retirer un projet rattaché à une recette existante
 
 Suite multi-projets — gestion des projets **après création** :

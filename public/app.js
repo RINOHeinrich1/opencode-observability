@@ -522,8 +522,8 @@ async function recetteDetailModal(recetteId) {
         const ttl = (t && typeof t === 'object') ? (t.title || '') : '';
         const req = (t && typeof t === 'object') ? (t.request || '') : '';
         const tproj = (t && typeof t === 'object') ? (t.project || '') : '';
-        return `<div class="recette-item"><code class="muted-sm">${esc(tid)}</code><div class="recette-task">${tproj ? `<code class="chip-project">${esc(tproj)}</code>` : ''}<strong>${esc(ttl)}</strong>${req ? `<p class="muted-sm">${esc(req)}</p>` : ''}</div></div>`;
-      }).join('')}</div></div>` : '<p class="muted-sm">Aucune tâche couverte (recette exploratoire).</p>'}
+        return `<div class="recette-item"><code class="muted-sm">${esc(tid)}</code><div class="recette-task">${tproj ? `<code class="chip-project">${esc(tproj)}</code>` : ''}<strong>${esc(ttl)}</strong>${req ? `<p class="muted-sm">${esc(req)}</p>` : ''}</div>${rec.status !== 'done' ? `<button type="button" class="ghost rec-task-del" data-rec-task-del="${esc(tid)}" title="Détacher cette tâche (elle reste intacte)">✕ retirer</button>` : ''}</div>`;
+      }).join('')}</div>${rec.status !== 'done' ? `<div class="rec-tasks-add"><select id="rec-task-add"><option value="">+ Ajouter une tâche couverte…</option></select></div>` : ''}</div></div>` : '<p class="muted-sm">Aucune tâche couverte (recette exploratoire).</p>'}
       ${items.length ? `<div class="actions-section"><h3>Éléments (${items.length})</h3><div class="recette-list">${items.map((it) => `<div class="recette-item"><span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span>${it.project ? `<code class="chip-project">${esc(it.project)}</code>` : ''}${it.execOrder != null ? `<span class="badge order-badge" title="Ordre d'exécution">ordre ${esc(it.execOrder)}</span>` : ''}${it.vigilance ? `<span class="badge danger" title="${esc(it.vigilance)}">⚠ vigilance</span>` : ''}<span>${esc(it.title || it.content.slice(0, 80))}</span></div>`).join('')}</div></div>` : ''}
       <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
     </div>`);
@@ -548,6 +548,33 @@ async function recetteDetailModal(recetteId) {
     document.querySelectorAll('#modal-backdrop [data-rec-proj-del]').forEach((b) => b.addEventListener('click', async () => {
       try {
         await api(`/api/recettes/${encodeURIComponent(recetteId)}/projects/${encodeURIComponent(b.dataset.recProjDel)}`, { method: 'DELETE' });
+        closeModal(); recetteDetailModal(recetteId);
+      } catch (e) { alert('Échec : ' + (e.message || e)); }
+    }));
+    // Gestion des tâches couvertes : ajout (candidates des projets rattachés) + retrait.
+    const coveredIds = new Set((tasks || []).map((t) => (t && (t.taskId || t.task_id)) || t));
+    const taskAddSel = document.getElementById('rec-task-add');
+    if (taskAddSel) {
+      (async () => {
+        try {
+          const q = recProjList.map((p) => `project=${encodeURIComponent(p)}`).join('&');
+          const d = await api(`/api/recettes/candidates?${q}`);
+          const cands = (d.candidates || []).filter((c) => !coveredIds.has(c.id));
+          taskAddSel.innerHTML = `<option value="">+ Ajouter une tâche couverte…</option>` + cands.map((c) => `<option value="${esc(c.id)}">[${esc(c.project)}] ${esc((c.title || c.request || c.id).slice(0, 70))}</option>`).join('');
+        } catch {}
+        taskAddSel.addEventListener('change', async () => {
+          const t = taskAddSel.value;
+          if (!t) return;
+          try {
+            await api(`/api/recettes/${encodeURIComponent(recetteId)}/tasks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: t }) });
+            closeModal(); recetteDetailModal(recetteId);
+          } catch (e) { alert('Échec : ' + (e.message || e)); taskAddSel.value = ''; }
+        });
+      })();
+    }
+    document.querySelectorAll('#modal-backdrop [data-rec-task-del]').forEach((b) => b.addEventListener('click', async () => {
+      try {
+        await api(`/api/recettes/${encodeURIComponent(recetteId)}/tasks/${encodeURIComponent(b.dataset.recTaskDel)}`, { method: 'DELETE' });
         closeModal(); recetteDetailModal(recetteId);
       } catch (e) { alert('Échec : ' + (e.message || e)); }
     }));

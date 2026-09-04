@@ -389,6 +389,20 @@ export async function removeRecetteProject({ recetteId, project, by }) {
   return { ok: true, recette: r && r.recette };
 }
 
+// Rattache une tâche couverte à une recette (garde projet vérifiée côté MCP).
+export async function addRecetteTask({ recetteId, taskId }) {
+  if (!recetteId || !taskId) throw new Error("recetteId et taskId requis");
+  const r = await taskOrchestrator("recette_link_task", { recetteId, taskId });
+  return { ok: true, recette: r && r.recette };
+}
+
+// Détache une tâche couverte d'une recette (la tâche reste intacte).
+export async function removeRecetteTask({ recetteId, taskId }) {
+  if (!recetteId || !taskId) throw new Error("recetteId et taskId requis");
+  const r = await taskOrchestrator("recette_unlink_task", { recetteId, taskId });
+  return { ok: true, recette: r && r.recette };
+}
+
 // Clôt la recette : crée une tâche par élément confirmé (via task_register) puis confirme.
 export async function finishRecette({ recetteId, items, by }) {
   if (!recetteId) throw new Error("recetteId requis");

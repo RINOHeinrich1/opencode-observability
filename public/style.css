@@ -698,3 +698,8 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 .rec-proj-chip .chip-x { background: none; border: 0; color: inherit; cursor: pointer; font-size: 13px; padding: 0 3px; border-radius: 8px; }
 .rec-proj-chip .chip-x:hover { background: rgba(255,255,255,0.18); }
 .rec-proj-addrow select { max-width: 240px; }
+
+/* ===== Gestion tâches couvertes d'une recette (v0.9.0) ===== */
+.rec-tasks-add { margin-top: 8px; }
+.rec-tasks-add select { width: 100%; max-width: 460px; }
+.rec-task-del { font-size: 12px; padding: 2px 8px; }

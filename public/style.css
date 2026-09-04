@@ -671,3 +671,8 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
   .status-tagfilter { width: 100%; flex: 1 1 100%; }
   #f-status-add { max-width: none; flex: 1 1 100%; }
 }
+
+/* ===== Onglet Décisions : colonnes actionnables (canal B, v0.8.32) ===== */
+.decision-detail { min-width: 260px; max-width: 480px; }
+.dec-act { display: flex; flex-direction: column; gap: 6px; min-width: 150px; }
+.dec-act .decision-remarks { width: 100%; box-sizing: border-box; padding: 4px 6px; font-size: 12px; }

@@ -5,6 +5,30 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.32 — 2026-09-02 · Décisions humaines « canal B » visibles et actionnables dans le panneau
+
+Deux canaux de décision coexistaient mais étaient confondus : les **permissions
+d'outil** (bash/edit…, `permission_id` présent, résolues **dans la session de
+l'agent**) et les **décisions humaines « besoin »** (prérequis infra,
+autorisations hors commande — demandées par un agent via `decision_request`,
+**sans `permission_id`**). Les secondes, souvent typées `kind=permission`,
+étaient **invisibles et non actionnables** (ni en session, ni au panneau).
+
+Correctif — critère unique et fiable : **`awaiting` + `permission_id IS NULL`
++ `kind <> 'recette'`** =
+« décision humaine actionnable » (canal B), quel que soit le `kind`.
+- détail de tâche : la section « Validation (décisions en attente) » inclut
+  désormais ces décisions (fini l'exclusion par `kind='permission'`) ;
+- **onglet « Décisions humaines »** : colonne d'action (remarques + Approuver /
+  Rejeter) sur les décisions canal B — l'onglet n'est plus lecture seule ;
+- badge « ⏳ attente humaine » de la table des tâches étendu au canal B.
+- Les permissions d'outil (`permission_id` présent) restent réservées à la
+  session de l'agent (non actionnables au panneau).
+
+Dépôt : `opencode-observability` (v0.8.32).
+
+---
+
 ## v0.8.31 — 2026-09-02 · atomic-plan : exploration lecture seule sans friction headless
 
 Correctif d'infrastructure suite au blocage de la planification

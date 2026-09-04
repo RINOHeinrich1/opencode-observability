@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.31** (2026-09-02,
-atomic-plan : exploration lecture seule sans friction headless.
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.32** (2026-09-02,
+Décisions humaines « canal B » visibles et actionnables dans le panneau.

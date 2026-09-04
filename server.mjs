@@ -171,7 +171,7 @@ async function registryTasks(url) {
          (SELECT ri.exec_order FROM recette_items ri WHERE ri.created_task_id = t.id ORDER BY ri.id LIMIT 1) AS recette_order,
          (SELECT ri.vigilance FROM recette_items ri WHERE ri.created_task_id = t.id ORDER BY ri.id LIMIT 1) AS recette_vigilance,
          EXISTS (SELECT 1 FROM decisions d WHERE d.task_id = t.id AND d.status = 'awaiting'
-                 AND d.kind IN ('validation','review')) AS waiting_human
+                 AND d.permission_id IS NULL AND d.kind <> 'recette') AS waiting_human
        FROM tasks t ORDER BY t.created_at DESC`,
     );
     rows = res.rows.filter((r) => !archived.has(r.id));

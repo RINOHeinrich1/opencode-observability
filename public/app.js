@@ -364,12 +364,39 @@ async function renderDeployments() {
 async function renderDecisions() {
   const data = await api('/api/decisions' + taskQuery());
   const dec = data.decisions || [];
+  // Actionnable = awaiting, hors recette, sans permission_id (canal B).
+  const actionable = (d) => d.status === 'awaiting' && d.kind !== 'recette' && !d.permission_id;
   document.getElementById('pane-decisions').innerHTML = `
     <h2>Décisions humaines</h2>
     ${filterBar()}
-    <table><thead><tr><th>Tâche</th><th>Type</th><th>Statut</th><th>Détail</th><th>Échéance</th><th>Résolution</th></tr></thead>
-    <tbody>${dec.map((d) => `<tr><td class="code">${esc(d.task_id)}</td><td>${esc(d.kind)}</td><td>${badge(d.status)}</td><td>${esc(d.detail || '—')}</td><td class="code">${esc((d.expires_at || '—').replace('T', ' ').slice(0, 19))}</td><td>${esc(d.resolution || '—')}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Aucune décision</td></tr>'}</tbody></table>`;
+    <table><thead><tr><th>Tâche</th><th>Type</th><th>Statut</th><th>Détail</th><th>Échéance</th><th>Résolution</th><th></th></tr></thead>
+    <tbody>${dec.map((d) => `<tr class="decision-row">
+      <td class="code">${esc(d.task_id)}</td><td>${esc(d.kind)}</td><td>${badge(d.status)}</td>
+      <td class="decision-detail">${esc(d.detail || '—')}</td>
+      <td class="code">${esc((d.expires_at || '—').replace('T', ' ').slice(0, 19))}</td>
+      <td>${esc(d.resolution || '—')}</td>
+      <td>${actionable(d) ? `<div class="dec-act">
+        <input class="decision-remarks" placeholder="remarques (optionnel)">
+        <button class="approve" data-approve="${esc(d.decision_id)}">Approuver</button>
+        <button class="danger" data-reject="${esc(d.decision_id)}">Rejeter</button>
+      </div>` : '<span class="muted-sm">—</span>'}</td>
+    </tr>`).join('') || '<tr><td colspan="7" class="muted">Aucune décision</td></tr>'}</tbody></table>`;
   bindTaskFilter();
+  document.querySelectorAll('#pane-decisions [data-approve], #pane-decisions [data-reject]').forEach((b) => {
+    b.addEventListener('click', async () => {
+      const decisionId = b.dataset.approve || b.dataset.reject;
+      const st = b.dataset.approve ? 'approved' : 'rejected';
+      const input = b.closest('.decision-row').querySelector('.decision-remarks');
+      const resolution = input ? input.value.trim() : '';
+      try {
+        await api(`/api/decisions/${encodeURIComponent(decisionId)}/resolve`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: st, resolution }),
+        });
+        refreshActive();
+      } catch (err) { alert('Échec : ' + (err.message || err)); }
+    });
+  });
 }
 
 // --- Utilisateurs (admin) --------------------------------------------------
@@ -1423,7 +1450,10 @@ async function taskActionsModal(taskId) {
   const status = execs[0]?.status || task.status || 'queued';
   const recette = task.recette_status || 'pending';
   const decisions = detail.decisions || [];
-  const awaiting = decisions.filter((d) => d.status === 'awaiting' && d.kind !== 'permission' && d.kind !== 'recette');
+  // Décisions humaines ACTIONNABLES = awaiting sans permission_id (canal B :
+  // besoin/prérequis/validation demandés par un agent) — les permissions d'outil
+  // (permission_id présent) restent résolues dans la session de l'agent.
+  const awaiting = decisions.filter((d) => d.status === 'awaiting' && d.kind !== 'recette' && !d.permission_id);
   const linked = detail.linkedTasks || [];
 
   showModal(`

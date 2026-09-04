@@ -5,6 +5,16 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.40 — 2026-09-04 · E2E : exécution directe, runner CI, lifecycle & docs (cadrage 07)
+
+- Agents v0.4.11 : analyse d'impact E2E en exécution DIRECTE (sans atomic-plan)
+  + trace événements E2E_* ; gate « pas de done sans E2E PASS ou NA justifié ».
+- opencode-scripts v0.2.0 : e2e-runner.mjs (instance éphémère Playwright →
+  manifest + vidéos pour le collecteur).
+- Docs 07-tests-e2e.md : contrat du manifest CI + état d'implémentation.
+- Statut E2E séparé du statut tâche ; vidéo = preuve humaine ; humain sollicité
+  via decision_request (awaiting_validation) en cas d'échec non résolu.
+
 ## v0.8.39 — 2026-09-04 · Panel : badge E2E en table + lecteur vidéo + téléchargements
 
 - Table des tâches : colonne « E2E » avec badge agrégé E2E ✓ / ✗ / … (ou — si

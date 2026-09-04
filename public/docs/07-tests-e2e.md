@@ -289,3 +289,61 @@ HTML5 dans le panneau : lecture/pause, volume, vitesses **0.25 / 0.5 / 1 /
   humaine).
 - **Couverture E2E** : scénarios exécutés et passés / scénarios prévus pour la
   demande (fonctionnel, pas de code).
+
+---
+
+## 13. Contrat du run CI (manifest)
+
+Le CI (instance éphémère, `webServer` Playwright) produit pour chaque run un
+dossier `storage/e2e/inbox/<runId>/` :
+
+```
+<runId>/
+  manifest.json
+  video-<runId>-<n>.webm   (une par exécution avec vidéo)
+```
+
+`manifest.json` :
+
+```json
+{
+  "runId": "run-20260904-0001",
+  "project": "mada-talk",
+  "taskId": "T-…",
+  "attempts": 1,
+  "executedAt": "2026-09-04T10:00:00Z",
+  "results": [
+    { "specFile": "tests/e2e/auth/login.spec.ts", "scenario": "Connexion OK",
+      "title": "Connexion avec identifiants valides", "status": "PASSED",
+      "durationMs": 18200, "videoFile": "video-run-…-1.webm",
+      "error": null, "summary": "PASS Connexion avec identifiants valides" }
+  ]
+}
+```
+
+Le **collecteur** (`POST /api/e2e/collect` panel ou MCP `e2e_collect`) importe ce
+manifest : `e2e_test_register` (1/`test()`) → `task_e2e` (liens) →
+`e2e_executions` (rapport texte conservé sous `storage/e2e/runs/<runId>/`,
+vidéo copiée pour l'humain) → purge de l'inbox.
+
+Exécuteur de référence : `scripts/e2e-runner.mjs` (`opencode-scripts` v0.2.0) —
+lance `npx playwright test --reporter=json` sur la branche, parse statuts/vidéos
+(attachments) et écrit le manifest.
+
+---
+
+## 14. État d'implémentation (2026-09-04)
+
+| Composant | État |
+|---|---|
+| Registre + outils MCP (`e2e_tests`/`task_e2e`/`e2e_executions`, collecteur) | ✅ `opencode-mcp-task-orchestrator` v0.7.0 / v0.7.1 |
+| Collecteur hôte + endpoints panel | ✅ `opencode-observability` v0.8.37 |
+| Section détail tâche + badge + lecteur vidéo + téléchargements (1/ZIP) | ✅ `opencode-observability` v0.8.38 / v0.8.39 |
+| Agents : impact atomic-plan + exécution DIRECTE + verdict build-notify | ✅ `opencode-agents` v0.4.10 / v0.4.11 |
+| Runner CI réutilisable | ✅ `opencode-scripts` v0.2.0 (`e2e-runner.mjs`) |
+| **Workflow GitHub Actions par app + scaffold Playwright** | ⏳ À appliquer à la création de la SPA **madatalk** (puis rollout) |
+| Gate machine à états / notifier / auditor | 📋 Règles portées par les prompts (gate : pas de `done` sans E2E PASS ou NA ; humain via `decision_request`) |
+
+Règles IA rappelées : l'IA ne traite **que le texte** ; la vidéo est une preuve
+**humaine** (jamais interprétée) ; statut E2E **séparé** du statut tâche ;
+`E2E NA` justifié pour audits / tâches techniques.

@@ -211,9 +211,10 @@ async function registryTaskDetail(id) {
      WHERE rt.task_id = $1 ORDER BY r.created_at DESC LIMIT 1`, [id],
   ))[0];
   if (rec) {
-    const items = mapRecetteItems(await q("SELECT id, content, classification, discussion, scope, title, acceptance, exec_order, vigilance, status, created_task_id, created_at FROM recette_items WHERE recette_id = $1 ORDER BY id ASC", [rec.recette_id]));
+    const items = mapRecetteItems(await q("SELECT id, project, content, classification, discussion, scope, title, acceptance, exec_order, vigilance, status, created_task_id, created_at FROM recette_items WHERE recette_id = $1 ORDER BY id ASC", [rec.recette_id]));
     const tasks = (await q("SELECT task_id FROM recette_tasks WHERE recette_id = $1", [rec.recette_id])).map((x) => x.task_id);
-    recette = { recetteId: rec.recette_id, project: rec.project, title: rec.title, sessionId: rec.session_id, status: rec.status, confirmedAt: rec.confirmed_at, confirmedBy: rec.confirmed_by, tasks, items };
+    const projs = (await q("SELECT project FROM recette_projects WHERE recette_id = $1 ORDER BY project", [rec.recette_id])).map((x) => x.project);
+    recette = { recetteId: rec.recette_id, project: rec.project, projects: projs.length ? projs : (rec.project ? [rec.project] : []), title: rec.title, sessionId: rec.session_id, status: rec.status, confirmedAt: rec.confirmed_at, confirmedBy: rec.confirmed_by, tasks, items };
   }
   return { task, executions, events, deployments, decisions, artifacts, sessions, linkedTasks, recette, archived: (await archivedTaskIds()).has(id) };
 }
@@ -513,6 +514,7 @@ function mapRecetteItems(rows) {
     classification: i.classification,
     discussion: i.discussion,
     scope: i.scope ? JSON.parse(i.scope) : [],
+    project: i.project ?? null,
     title: i.title ?? null,
     acceptance: i.acceptance ?? null,
     execOrder: i.exec_order ?? null,
@@ -521,6 +523,18 @@ function mapRecetteItems(rows) {
     createdTaskId: i.created_task_id ?? null,
     createdAt: i.created_at,
   }));
+}
+
+// Projets rattachés à une recette (recette_projects) — indexé par recette_id.
+async function recetteProjectsByIds(ids) {
+  if (!ids || !ids.length) return {};
+  const rows = (await registry().query(
+    "SELECT recette_id, project FROM recette_projects WHERE recette_id = ANY($1) ORDER BY project",
+    [ids],
+  )).rows;
+  const map = {};
+  for (const x of rows) (map[x.recette_id] = map[x.recette_id] || []).push(x.project);
+  return map;
 }
 
 // --- Router ----------------------------------------------------------------
@@ -693,29 +707,37 @@ const server = createServer(async (req, res) => {
            (SELECT COUNT(*) FROM recette_tasks rt WHERE rt.recette_id = r.recette_id) AS tasks_count,
            (SELECT COUNT(*) FROM recette_items i WHERE i.recette_id = r.recette_id) AS items_count,
            (SELECT COUNT(*) FROM recette_documents d WHERE d.recette_id = r.recette_id) AS documents_count
-         FROM recettes r ${project ? "WHERE r.project = $1" : ""} ORDER BY r.created_at DESC`,
+         FROM recettes r
+         ${project ? "WHERE EXISTS (SELECT 1 FROM recette_projects rp WHERE rp.recette_id = r.recette_id AND rp.project = $1)" : ""}
+         ORDER BY r.created_at DESC`,
         project ? [project] : [],
       )).rows;
+      const pmap = await recetteProjectsByIds(rows.map((x) => x.recette_id));
+      for (const row of rows) row.projects = pmap[row.recette_id] || (row.project ? [row.project] : []);
       return sendJson(res, 200, { recettes: rows });
     }
     // Candidats : tâches NON encore couvertes par une recette (recette_status != done, non présentes dans recette_tasks).
+    // Multi-projets : répéter le paramètre ?project=a&project=b (ou un seul).
     if (path === "/api/recettes/candidates" && req.method === "GET") {
-      const project = url.searchParams.get("project");
+      const projects = url.searchParams.getAll("project").filter(Boolean);
+      const where = [
+        "t.recette_status = 'pending'",
+        "NOT EXISTS (SELECT 1 FROM recette_tasks rt WHERE rt.task_id = t.id)",
+      ];
+      if (projects.length) where.push("t.project = ANY($1)");
       const rows = (await registry().query(
-        `SELECT t.id, t.title, t.request, t.recette_status, t.created_at,
+        `SELECT t.id, t.project, t.title, t.request, t.recette_status, t.created_at,
                 (SELECT x.status FROM executions x WHERE x.task_id = t.id ORDER BY attempt DESC LIMIT 1) AS status
          FROM tasks t
-         WHERE t.recette_status = 'pending'
-           AND NOT EXISTS (SELECT 1 FROM recette_tasks rt WHERE rt.task_id = t.id)
-           ${project ? "AND t.project = $1" : ""}
+         WHERE ${where.join(" AND ")}
          ORDER BY t.created_at DESC`,
-        project ? [project] : [],
+        projects.length ? [projects] : [],
       )).rows;
       return sendJson(res, 200, { candidates: rows });
     }
     if (path === "/api/recettes" && req.method === "POST") {
       const b = await readBody(req);
-      return sendJson(res, 200, await pilot.createRecette({ project: b.project, title: b.title, description: b.description, taskIds: b.taskIds, documents: b.documents, by: user.username }));
+      return sendJson(res, 200, await pilot.createRecette({ project: b.project, projects: b.projects, title: b.title, description: b.description, taskIds: b.taskIds, documents: b.documents, by: user.username }));
     }
     const recetteAction = path.match(/^\/api\/recettes\/([^/]+)\/(session|finish)$/);
     if (recetteAction && req.method === "POST") {
@@ -752,19 +774,20 @@ const server = createServer(async (req, res) => {
       )).rows[0];
       if (!r) return sendJson(res, 404, { error: "recette inconnue" });
       const items = mapRecetteItems((await registry().query(
-        "SELECT id, content, classification, discussion, scope, title, acceptance, exec_order, vigilance, status, created_task_id, created_at FROM recette_items WHERE recette_id = $1 ORDER BY id ASC",
+        "SELECT id, project, content, classification, discussion, scope, title, acceptance, exec_order, vigilance, status, created_task_id, created_at FROM recette_items WHERE recette_id = $1 ORDER BY id ASC",
         [r.recette_id],
       )).rows);
       const tasks = (await registry().query(
-        `SELECT rt.task_id, t.title, t.request FROM recette_tasks rt LEFT JOIN tasks t ON t.id = rt.task_id
+        `SELECT rt.task_id, t.project, t.title, t.request FROM recette_tasks rt LEFT JOIN tasks t ON t.id = rt.task_id
          WHERE rt.recette_id = $1 ORDER BY rt.task_id`, [r.recette_id],
-      )).rows.map((x) => ({ taskId: x.task_id, title: x.title || x.task_id, request: x.request || '' }));
+      )).rows.map((x) => ({ taskId: x.task_id, project: x.project || '', title: x.title || x.task_id, request: x.request || '' }));
       const docs = (await registry().query(
         `SELECT d.id, d.title, d.nature, d.source, d.path, d.artifact_id, d.created_at, a.title AS artifact_title, a.task_id AS artifact_task
          FROM recette_documents d LEFT JOIN artifacts a ON a.artifact_id = d.artifact_id
          WHERE d.recette_id = $1 ORDER BY d.id ASC`, [r.recette_id],
       )).rows;
-      return sendJson(res, 200, { recette: { ...r, tasks, items, documents: docs } });
+      const projs = (await registry().query("SELECT project FROM recette_projects WHERE recette_id = $1 ORDER BY project", [r.recette_id])).rows.map((x) => x.project);
+      return sendJson(res, 200, { recette: { ...r, projects: projs.length ? projs : (r.project ? [r.project] : []), tasks, items, documents: docs } });
     }
     // Phase 3 (hors worktree) — qualité : funnel, rework, cost vs throughput
     if (path === "/api/metrics/quality" && req.method === "GET") return sendJson(res, 200, await metrics.quality(registry()));

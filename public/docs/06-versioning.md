@@ -34,9 +34,9 @@
 | Dépôt | Chemin hôte | Version actuelle |
 |---|---|---|
 | `opencode-observability` (panneau + docs) | `/root/orchestrator-panel` | `0.8.30` |
-| `opencode-agents` | `~/.config/opencode/agent` | `0.4.7` |
+| `opencode-agents` | `~/.config/opencode/agent` | `0.4.8` |
 | `opencode-notifier` | `~/.config/opencode/notifier` | `0.1.0` |
-| `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.6.8` |
+| `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.6.9` |
 | `opencode-mcp-plan-manager` | `~/.config/opencode/mcp/plan-manager` | `0.1.0` |
 | `opencode-mcp-audit-manager` | `~/.config/opencode/mcp/audit-manager` | `0.1.0` |
 | `opencode-mcp-coder-workspaces` | `~/.config/opencode/mcp/coder-workspaces` | `0.1.0` |
@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.32** (2026-09-02,
-Décisions humaines « canal B » visibles et actionnables dans le panneau.
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.33** (2026-09-02,
+Recette multi-projets (1..N) + item rattaché à un projet.

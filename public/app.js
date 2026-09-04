@@ -446,6 +446,12 @@ async function renderArtifacts() {
 // --- Recettes (v0.8.0) : objet de projet -----------------------------------
 const RECETTE_STATUS_LABEL = { pending: 'pas faite', in_progress: 'en cours', done: 'faite' };
 
+// Rendu des projets d'une recette (1..N) en puces.
+function recProjChips(projs) {
+  const list = (projs && projs.length ? projs : []).filter(Boolean);
+  return list.length ? list.map((p) => `<code class="chip-project" title="Projet rattaché">${esc(p)}</code>`).join(' ') : '<span class="muted-sm">—</span>';
+}
+
 // Ouvre la session de recette : reprend la session rattachée si elle existe
 // (jamais de doublon) ; `force = true` démarre une nouvelle session.
 async function openRecetteSession(recetteId, force) {
@@ -461,7 +467,7 @@ function recetteCard(r) {
   const canSession = r.status === 'pending' || r.status === 'in_progress';
   const canFinish = r.status === 'in_progress';
   return `<article class="project-card">
-    <div class="project-card-head"><strong class="recette-title" data-rec-detail="${esc(r.recette_id)}" title="Voir le détail">${esc(r.title || r.recette_id)}</strong> <code class="muted-sm">${esc(r.project)}</code> ${badge(r.status)}</div>
+    <div class="project-card-head"><strong class="recette-title" data-rec-detail="${esc(r.recette_id)}" title="Voir le détail">${esc(r.title || r.recette_id)}</strong> <span class="rec-card-projs">${recProjChips(r.projects || (r.project ? [r.project] : []))}</span> ${badge(r.status)}</div>
     <div class="project-card-body">
       ${r.description ? `<div class="project-kv"><span class="lbl">Description</span><span class="muted-sm">${esc(r.description.slice(0, 100))}${r.description.length > 100 ? '…' : ''}</span></div>` : ''}
       <div class="project-kv"><span class="lbl">Tâches couvertes</span><span>${r.tasks_count || 0}</span></div>
@@ -482,7 +488,7 @@ async function renderRecettes() {
   const recs = data.recettes || [];
   document.getElementById('pane-recettes').innerHTML = `
     <h2>Recettes</h2>
-    <p class="muted-sm">Opérations de vérification par projet — couvrent 0..N tâches, avec titre et session dédiée.</p>
+    <p class="muted-sm">Opérations de vérification — chaque recette couvre 1..N projets et 0..N tâches, avec titre et session dédiée.</p>
     <div class="filters"><button id="new-recette-btn" class="launch-btn">+ Nouvelle recette</button></div>
     <div class="project-cards">${recs.map(recetteCard).join('') || '<p class="muted">Aucune recette.</p>'}</div>`;
   document.getElementById('new-recette-btn').addEventListener('click', () => recetteCreateModal());
@@ -503,15 +509,16 @@ async function recetteDetailModal(recetteId) {
   showModal(`
     <div class="modal modal-wide">
       <h2>${esc(rec.title || recetteId)}</h2>
-      <p class="muted">${badge(rec.status)} · Projet <span class="code">${esc(rec.project || '')}</span>${rec.confirmed_at ? ` · confirmée ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}</p>
+      <p class="muted">${badge(rec.status)} · Projets ${recProjChips(rec.projects || (rec.project ? [rec.project] : []))}${rec.confirmed_at ? ` · confirmée ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}</p>
       ${rec.description ? `<p class="modal-request">${esc(rec.description)}</p>` : ''}
       ${tasks.length ? `<div class="actions-section"><h3>Tâches couvertes (${tasks.length})</h3><div class="recette-list">${tasks.map((t) => {
         const tid = (t && typeof t === 'object') ? (t.taskId || t.task_id || '') : (t || '');
         const ttl = (t && typeof t === 'object') ? (t.title || '') : '';
         const req = (t && typeof t === 'object') ? (t.request || '') : '';
-        return `<div class="recette-item"><code class="muted-sm">${esc(tid)}</code><div class="recette-task"><strong>${esc(ttl)}</strong>${req ? `<p class="muted-sm">${esc(req)}</p>` : ''}</div></div>`;
+        const tproj = (t && typeof t === 'object') ? (t.project || '') : '';
+        return `<div class="recette-item"><code class="muted-sm">${esc(tid)}</code><div class="recette-task">${tproj ? `<code class="chip-project">${esc(tproj)}</code>` : ''}<strong>${esc(ttl)}</strong>${req ? `<p class="muted-sm">${esc(req)}</p>` : ''}</div></div>`;
       }).join('')}</div></div>` : '<p class="muted-sm">Aucune tâche couverte (recette exploratoire).</p>'}
-      ${items.length ? `<div class="actions-section"><h3>Éléments (${items.length})</h3><div class="recette-list">${items.map((it) => `<div class="recette-item"><span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span>${it.execOrder != null ? `<span class="badge order-badge" title="Ordre d'exécution">ordre ${esc(it.execOrder)}</span>` : ''}${it.vigilance ? `<span class="badge danger" title="${esc(it.vigilance)}">⚠ vigilance</span>` : ''}<span>${esc(it.title || it.content.slice(0, 80))}</span></div>`).join('')}</div></div>` : ''}
+      ${items.length ? `<div class="actions-section"><h3>Éléments (${items.length})</h3><div class="recette-list">${items.map((it) => `<div class="recette-item"><span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span>${it.project ? `<code class="chip-project">${esc(it.project)}</code>` : ''}${it.execOrder != null ? `<span class="badge order-badge" title="Ordre d'exécution">ordre ${esc(it.execOrder)}</span>` : ''}${it.vigilance ? `<span class="badge danger" title="${esc(it.vigilance)}">⚠ vigilance</span>` : ''}<span>${esc(it.title || it.content.slice(0, 80))}</span></div>`).join('')}</div></div>` : ''}
       <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
@@ -618,11 +625,15 @@ async function recetteCreateModal() {
     <div class="modal modal-wide">
       <h2>Nouvelle recette</h2>
       <form id="recette-modal-form" class="pilot-form">
-        <select id="rm-project" required><option value="">— projet —</option>${projects.map((p) => `<option value="${esc(p.id)}">${esc(p.name || p.id)}</option>`).join('')}</select>
+        <fieldset class="pilot-fieldset">
+          <legend>Projets rattachés <span class="muted-sm">(1..N — une recette peut couvrir plusieurs projets)</span></legend>
+          <div class="rm-projects">${projects.map((p) => `<label class="filter-check"><input type="checkbox" class="rm-project" value="${esc(p.id)}"> ${esc(p.name || p.id)}</label>`).join('') || '<p class="muted-sm">Aucun projet enregistré.</p>'}</div>
+          <button type="button" class="ghost" id="rm-load-cands">Charger les tâches disponibles</button>
+        </fieldset>
         <input id="rm-title" placeholder="titre court (ex: Recette du module chatbot)" required>
         <textarea id="rm-description" class="modal-textarea" placeholder="description longue (détail du périmètre vérifié) — optionnel"></textarea>
-        <label class="modal-field">Tâches couvertes <span class="muted-sm">(0..N — tâches non encore recettées)</span></label>
-        <div id="rm-candidates" class="recette-candidates"><p class="muted-sm">Sélectionnez un projet pour charger les tâches disponibles.</p></div>
+        <label class="modal-field">Tâches couvertes <span class="muted-sm">(0..N — tâches non encore recettées, tous projets sélectionnés)</span></label>
+        <div id="rm-candidates" class="recette-candidates"><p class="muted-sm">Cochez ≥ 1 projet puis « Charger les tâches disponibles ».</p></div>
         <div class="links-editor">
           <div class="links-head"><label class="modal-field" style="margin:0">Documents <span class="muted-sm">(importés ou liés, avec nature)</span></label>
           <button type="button" class="ghost" id="rm-add-doc">+ Ajouter</button></div>
@@ -637,23 +648,32 @@ async function recetteCreateModal() {
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
   const candBox = document.getElementById('rm-candidates');
+  const selectedProjects = () => [...candBox.closest('#modal-backdrop').querySelectorAll('.rm-project:checked')].map((x) => x.value);
+  const kept = new Set(); // tâches déjà cochées, conservées entre rechargements
   const loadCandidates = async () => {
-    const proj = document.getElementById('rm-project').value;
+    const projs = selectedProjects();
     candBox.innerHTML = '<p class="muted-sm">Chargement…</p>';
-    if (!proj) { candBox.innerHTML = '<p class="muted-sm">Sélectionnez un projet.</p>'; return; }
+    if (!projs.length) { candBox.innerHTML = '<p class="muted-sm">Cochez au moins un projet.</p>'; return; }
     try {
-      const d = await api(`/api/recettes/candidates?project=${encodeURIComponent(proj)}`);
+      const q = projs.map((p) => `project=${encodeURIComponent(p)}`).join('&');
+      const d = await api(`/api/recettes/candidates?${q}`);
       const c = d.candidates || [];
       candBox.innerHTML = c.length
         ? `<div class="recette-cand-list">${c.map((t) => `
             <label class="recette-cand">
-              <input type="checkbox" class="rm-cand" value="${esc(t.id)}">
-              <span><strong>${esc(t.title || (t.request || '').slice(0, 60))}</strong> <code class="muted-sm">${esc(t.id)}</code> ${badge(t.status || 'queued')}</span>
+              <input type="checkbox" class="rm-cand" value="${esc(t.id)}" ${kept.has(t.id) ? 'checked' : ''}>
+              <span><code class="muted-sm">${esc(t.project)}</code> <strong>${esc(t.title || (t.request || '').slice(0, 60))}</strong> <code class="muted-sm">${esc(t.id)}</code> ${badge(t.status || 'queued')}</span>
             </label>`).join('')}</div>`
-        : '<p class="muted-sm">Aucune tâche non recettée dans ce projet.</p>';
+        : '<p class="muted-sm">Aucune tâche non recettée dans les projets sélectionnés.</p>';
+      candBox.querySelectorAll('.rm-cand').forEach((x) => x.addEventListener('change', () => {
+        if (x.checked) kept.add(x.value); else kept.delete(x.value);
+      }));
     } catch (e) { candBox.innerHTML = '<p class="muted-sm">Erreur de chargement : ' + esc(e.message || e) + '</p>'; }
   };
-  document.getElementById('rm-project').addEventListener('change', loadCandidates);
+  document.getElementById('rm-load-cands').addEventListener('click', loadCandidates);
+  document.querySelectorAll('.rm-project').forEach((cb) => cb.addEventListener('change', () => {
+    if (!selectedProjects().length) candBox.innerHTML = '<p class="muted-sm">Cochez ≥ 1 projet puis « Charger les tâches disponibles ».</p>';
+  }));
 
   // Éditeur de documents (import / artefact + nature).
   let allArtifacts = [];
@@ -694,6 +714,8 @@ async function recetteCreateModal() {
     e.preventDefault();
     const msg = document.getElementById('recette-modal-msg');
     try {
+      const projs = selectedProjects();
+      if (!projs.length) throw new Error('Sélectionnez au moins un projet.');
       const taskIds = [...candBox.querySelectorAll('.rm-cand:checked')].map((x) => x.value);
       const documents = [];
       for (const row of docsList.querySelectorAll('.link-row')) {
@@ -712,7 +734,8 @@ async function recetteCreateModal() {
         }
       }
       await api('/api/recettes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-        project: document.getElementById('rm-project').value,
+        project: projs[0],
+        projects: projs,
         title: document.getElementById('rm-title').value.trim(),
         description: document.getElementById('rm-description').value.trim() || undefined,
         taskIds,
@@ -738,6 +761,7 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
     const show = truncated ? full.slice(0, 120) + '…' : full;
     return `<div class="recette-item finish-item">
       <span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span>
+      ${it.project ? `<code class="chip-project">${esc(it.project)}</code>` : ''}
       <div class="recette-task">
         <strong>${esc(it.title || it.content.slice(0, 60))}</strong>
         ${it.execOrder != null ? `<span class="badge order-badge" title="Ordre d'exécution">ordre ${esc(it.execOrder)}</span>` : ''}
@@ -762,7 +786,7 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
     <div class="modal modal-wide modal-finish" id="finish-modal">
       <div class="finish-head"><h2 style="margin:0">${readOnly ? 'Détail de la recette' : 'Terminer la recette'}</h2>
         <button class="ghost" id="finish-fullscreen" title="Plein écran">⛶</button></div>
-      <p class="muted">${esc(rec.title || recetteId)} — <span class="code">${esc(rec.project)}</span>${readOnly && rec.confirmed_at ? ` · clôturée le ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}</p>
+      <p class="muted">${esc(rec.title || recetteId)} — Projets ${recProjChips(rec.projects || (rec.project ? [rec.project] : []))}${readOnly && rec.confirmed_at ? ` · clôturée le ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}</p>
       ${intro}
       ${items.length ? `<div class="recette-list">${items.map(itemCard).join('')}</div>` : ''}
       <div class="modal-actions">
@@ -1776,6 +1800,7 @@ function recetteItemRow(it) {
   return `<div class="recette-item">
     <code class="muted-sm">#${it.id || it.itemId}</code>
     <span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span>
+    ${it.project ? `<code class="chip-project">${esc(it.project)}</code>` : ''}
     ${it.execOrder != null ? `<span class="badge order-badge" title="Ordre d'exécution (même numéro = parallèle)">ordre ${esc(it.execOrder)}</span>` : ''}
     ${it.vigilance ? `<span class="badge danger" title="Point de vigilance / écart sémantique : ${esc(it.vigilance)}">⚠ vigilance</span>` : ''}
     <span>${esc(it.content)}</span>
@@ -1803,7 +1828,7 @@ function recetteSectionHtml(recetteStatus, detail) {
     </div>` : '');
   const statusTxt = st === 'done' ? `faite${rec.confirmed_at ? ` le ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}` : RECETTE_STATUS_LABEL[st] || st;
   return `<div class="actions-section"><h3>Recette — ${statusTxt}</h3>
-    <p class="muted-sm"><strong>${esc(title)}</strong> <span class="code">${esc(rec.project || '')}</span></p>
+    <p class="muted-sm"><strong>${esc(title)}</strong> ${recProjChips(rec.projects || (rec.project ? [rec.project] : []))}</p>
     ${items.length ? `<div class="recette-list">${items.map(recetteItemRow).join('')}</div>` : '<p class="muted-sm">Aucun élément relevé.</p>'}
     ${btns}
   </div>`;

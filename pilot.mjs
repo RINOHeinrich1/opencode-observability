@@ -288,11 +288,13 @@ export async function relaunchTask({ taskId }) {
 // ===========================================================================
 
 // Crée une recette de PROJET (titre + tâches couvertes 0..N) + documents éventuels.
-export async function createRecette({ project, title, description, taskIds, documents, by }) {
-  if (!project) throw new Error("projet requis pour créer une recette");
+export async function createRecette({ project, projects, title, description, taskIds, documents, by }) {
+  const projs = [...new Set(((projects && projects.length ? projects : (project ? [project] : [])).map((p) => p && String(p).trim()).filter(Boolean)))];
+  if (!projs.length) throw new Error("au moins un projet requis pour créer une recette");
   if (!title || !String(title).trim()) throw new Error("titre requis pour créer une recette");
   const r = await taskOrchestrator("recette_start", {
-    project,
+    project: projs[0],
+    projects: projs,
     title: String(title).trim(),
     description: description ? String(description).trim() : undefined,
     taskIds: (taskIds || []).filter(Boolean),
@@ -333,9 +335,16 @@ export async function launchRecetteSession({ recetteId, force = false }) {
     return { recetteId, sessionId: rec.sessionId, resumed: true };
   }
 
-  const dir = await projectGitPath(rec.project);
-  const prompt = buildRecettePrompt({ project: rec.project, title: rec.title, taskIds: rec.tasks || [] });
-  const { sessionId } = await launchSession({ dir, agent: "agent-recette", prompt, title: `Recette ${rec.title || rec.project}` });
+  // Multi-projets : pas de « projet principal » métier. Pour le lancement de la
+  // session (simple ancrage), on prend le 1er projet rattaché qui a un gitPath.
+  const projs = (rec.projects && rec.projects.length ? rec.projects : (rec.project ? [rec.project] : []));
+  let dir = null;
+  for (const p of projs) {
+    const g = await projectGitPath(p);
+    if (g) { dir = g; break; }
+  }
+  const prompt = buildRecettePrompt({ project: projs[0] || rec.project, projects: projs, title: rec.title, taskIds: rec.tasks || [] });
+  const { sessionId } = await launchSession({ dir, agent: "agent-recette", prompt, title: `Recette ${rec.title || projs.join(", ")}` });
   if (!sessionId || !/^ses_/.test(sessionId)) {
     throw new Error("échec de lancement de la session de recette (agent-recette indisponible ?)");
   }
@@ -376,15 +385,22 @@ export async function finishRecette({ recetteId, items, by }) {
 
   const created = [];
   const CLASS_LABEL = { rework: "Rework", bug: "Bug", improvement: "Improvement", feature: "Feature" };
+  // Projets de la recette (aucun « projet principal ») : un item = un projet cible.
+  const recProjs = (rec.projects && rec.projects.length ? rec.projects : (rec.project ? [rec.project] : []));
+  const projByItem = {};
+  for (const i of rec.items || []) if (i.itemId) projByItem[i.itemId] = i.project;
   for (const it of items || []) {
     if (!it || !it.content) continue;
     const cls = ["rework", "bug", "improvement", "feature"].includes(it.classification) ? it.classification : "rework";
     const type = cls === "bug" ? "debug" : "feature";
+    const itemProject = (it.project && recProjs.includes(it.project)) ? it.project
+      : (projByItem[Number(it.itemId)] && recProjs.includes(projByItem[Number(it.itemId)])) ? projByItem[Number(it.itemId)]
+      : (recProjs[0] || rec.project);
     const request = `[${CLASS_LABEL[cls]} — issu de la recette ${recetteId}] ${it.content}`;
     const reg = await taskOrchestrator("task_register", {
       request,
       title: it.title || `[${CLASS_LABEL[cls]}] ${it.content.slice(0, 60)}`,
-      project: rec.project,
+      project: itemProject,
       type,
       priority: "normal",
       scope: Array.isArray(it.scope) && it.scope.length ? it.scope : undefined,

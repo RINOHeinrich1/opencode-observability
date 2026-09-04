@@ -5,6 +5,32 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.33 — 2026-09-02 · Recette multi-projets (1..N) + item rattaché à un projet
+
+Une recette peut désormais être rattachée à **un ou plusieurs projets** (plus
+aucun « projet principal » métier) et chaque élément relevé cible **un projet**
+(celui où la tâche sera créée à la clôture).
+
+- **MCP task-orchestrator v0.6.9** : table `recette_projects` (recette_id,
+  project) + colonne `recette_items.project` ; `recette_start(projects≥1)`,
+  `recette_item_add/update(project)`, retours enrichis (`projects`, items avec
+  `project`) ; migration idempotente + backfill des recettes/items existants
+  (projet legacy = 1er projet).
+- **Panel v0.8.33** : création multi-projets **en une étape** (cocher les
+  projets → « Charger les tâches disponibles » tous projets, tâches étiquetées
+  par projet) ; puces projet sur les cartes recettes, détail, section recette du
+  détail tâche et sur chaque item ; à la clôture chaque tâche est créée dans le
+  **projet de son item** (fallback 1er projet) ; `/api/recettes/candidates`
+  multi-projets (`?project=a&project=b`), liste/filtre recettes via
+  `recette_projects`, détail enrichi.
+- **Agent-recette v0.4.8** : `project` obligatoire par item (parmi les projets
+  de la recette) ; prompt de session multi-projets (`buildRecettePrompt`).
+
+Dépôts : `opencode-observability` (v0.8.33) · `opencode-mcp-task-orchestrator`
+(v0.6.9) · `opencode-agents` (v0.4.8).
+
+---
+
 ## v0.8.32 — 2026-09-02 · Décisions humaines « canal B » visibles et actionnables dans le panneau
 
 Deux canaux de décision coexistaient mais étaient confondus : les **permissions

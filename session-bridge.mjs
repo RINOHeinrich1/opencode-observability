@@ -280,18 +280,21 @@ export function buildReworkPrompt({ taskId, remarks, by }) {
  * La recette est un objet de PROJET (titre + 0..N tâches couvertes).
  * Mission + cadre, jamais méthode.
  */
-export function buildRecettePrompt({ project, title, taskIds }) {
+export function buildRecettePrompt({ project, projects, title, taskIds }) {
+  const projs = (projects && projects.length ? projects : (project ? [project] : []));
+  const first = projs[0] || project || "";
   return [
-    `Ouvre la recette **« ${title || project} »** du projet **${project}** (v0.8.0).`,
+    `Ouvre la recette **« ${title || first} »** (projets : ${projs.join(", ")}) (v0.9.0).`,
     "",
     taskIds && taskIds.length ? `Tâches couvertes par cette recette : ${taskIds.join(", ")}.` : "Cette recette ne couvre aucune tâche (parcours global / exploratoire).",
-    "La recette est un objet de premier niveau rattaché au projet — les tâches couvertes restent HISTORIQUEMENT INTACTES : tu ne les modifies jamais (aucune transition, aucun rework direct).",
+    "Une recette peut couvrir **un ou plusieurs projets** (pas de projet principal). Chaque élément relevé est rattaché à **UN projet cible** (celui où la future tâche sera créée) — renseigne `project` dans `recette_item_add`, obligatoirement parmi les projets de la recette.",
+    "Les tâches couvertes restent HISTORIQUEMENT INTACTES : tu ne les modifies jamais (aucune transition, aucun rework direct).",
     "Mission :",
-    "- Récupère le contexte : `recette_get(<recetteId>)` (titre, projet, tâches couvertes, éléments), et pour chaque tâche couverte `task_get` (plans, commits, artefacts, tâches liées), `artifact_list`, `events_list`.",
+    "- Récupère le contexte : `recette_get(<recetteId>)` (titre, projets, tâches couvertes, éléments), et pour chaque tâche couverte `task_get` (plans, commits, artefacts, tâches liées), `artifact_list`, `events_list`.",
     "- Accompagne l'utilisateur dans la vérification du périmètre : réponds à ses questions, aide-le à comprendre ce qui a été réalisé.",
-    "- Enregistre chaque élément détecté via `recette_item_add` avec **classification** (`rework`/`bug`/`improvement`/`feature`), **scope** (chemins), **titre court** et **critère d'acceptation** (ce qui permettra de considérer la tâche créée comme terminée).",
+    "- Enregistre chaque élément détecté via `recette_item_add` avec **classification** (`rework`/`bug`/`improvement`/`feature`), **project** (projet cible de l'élément), **scope** (chemins), **titre court** et **critère d'acceptation** (ce qui permettra de considérer la tâche créée comme terminée).",
     "- Regroupe les remarques liées ; **ne crée AUCUNE tâche pendant la discussion** (les tâches seront créées à la confirmation finale, via le panneau).",
-    "- Prépare la synthèse consolidée des éléments (type + action) pour la présenter à l'utilisateur.",
+    "- Prépare la synthèse consolidée des éléments (type + action + projet) pour la présenter à l'utilisateur.",
     "",
     "Cadre : session dédiée à la recette ; l'utilisateur déclenchera « Terminer la recette » puis confirmera la liste.",
   ].join("\n");

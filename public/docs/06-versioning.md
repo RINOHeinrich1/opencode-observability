@@ -36,7 +36,7 @@
 | `opencode-observability` (panneau + docs) | `/root/orchestrator-panel` | `0.8.30` |
 | `opencode-agents` | `~/.config/opencode/agent` | `0.4.9` |
 | `opencode-notifier` | `~/.config/opencode/notifier` | `0.1.0` |
-| `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.6.11` |
+| `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.7.0` |
 | `opencode-mcp-plan-manager` | `~/.config/opencode/mcp/plan-manager` | `0.1.0` |
 | `opencode-mcp-audit-manager` | `~/.config/opencode/mcp/audit-manager` | `0.1.0` |
 | `opencode-mcp-coder-workspaces` | `~/.config/opencode/mcp/coder-workspaces` | `0.1.0` |
@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.36** (2026-09-02,
-Recette : rattacher/détacher des tâches couvertes après création.
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.37** (2026-09-04,
+Tests E2E : collecteur hôte + lecture (cadrage 07).

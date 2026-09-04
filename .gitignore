@@ -18,3 +18,6 @@ npm-debug.log*
 
 # Documents uploadés par les sessions recette (données runtime, hors versioning)
 storage/recette-docs/
+
+# Résultats E2E Playwright (runs/vidéos — données runtime)
+storage/e2e/

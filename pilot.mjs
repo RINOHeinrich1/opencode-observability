@@ -447,3 +447,115 @@ export async function finishRecette({ recetteId, items, by }) {
   const confirmed = await taskOrchestrator("recette_confirm", { recetteId, confirmedBy: by || "human" });
   return { ok: true, recetteId, created, recette: confirmed.recette };
 }
+
+// ===========================================================================
+// Tests E2E — collecteur hôte (cadrage 07). Importe les résultats Playwright
+// produits par le CI (instance éphémère) depuis storage/e2e/inbox/<runId>.
+// ===========================================================================
+const E2E_STORAGE = "/root/orchestrator-panel/storage/e2e";
+const E2E_INBOX = `${E2E_STORAGE}/inbox`;
+const E2E_RUNS = `${E2E_STORAGE}/runs`;
+
+function e2eStableId(project, specFile, scenario) {
+  let h = 0x811c9dc5;
+  for (const part of [project, specFile, scenario]) {
+    for (let i = 0; i < part.length; i++) { h ^= part.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  }
+  const hash = (h >>> 0).toString(36).slice(0, 8);
+  const proj = String(project).toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "APP";
+  return `E2E-${proj}-${hash}`;
+}
+
+const execFileSync = (await import("node:child_process")).execFileSync;
+const fs = (await import("node:fs"));
+const path = (await import("node:path"));
+
+async function e2eRunRecorded(runId) {
+  const marker = path.join(E2E_RUNS, runId, "imported.json");
+  return fs.existsSync(marker);
+}
+
+// Prune rétention mensuelle des vidéos (fichiers + url) au-delà de N jours.
+export async function pruneE2EVideos({ days = 35 } = {}) {
+  const cutoff = Date.now() - (Number(days) || 35) * 86400000;
+  const rows = (await taskOrchestrator("e2e_execution_list", { limit: 5000 })).executions || [];
+  let removed = 0;
+  for (const ex of rows) {
+    if (!ex.videoUrl || !ex.createdAt) continue;
+    if (new Date(ex.createdAt).getTime() < cutoff) {
+      try { fs.unlinkSync(ex.videoUrl); } catch {}
+      try {
+        await taskOrchestrator("e2e_execution_update", { executionId: ex.id, videoUrl: null });
+        removed++;
+      } catch {}
+    }
+  }
+  return { removedVideos: removed };
+}
+
+// Importe un run CI (manifest + résultats) dans le registre E2E.
+export async function collectE2EResults({ runId }) {
+  if (!runId) throw new Error("runId requis");
+  const runDir = path.join(E2E_INBOX, runId);
+  const manifestPath = path.join(runDir, "manifest.json");
+  if (!fs.existsSync(manifestPath)) throw new Error(`manifest introuvable : ${manifestPath}`);
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  const { taskId, project, env, commitSha, branch, pipelineRef, attempts = 1 } = manifest;
+  const results = Array.isArray(manifest.results) ? manifest.results : [];
+  if (!results.length) throw new Error("aucun résultat dans le manifest");
+
+  // Répertoire de travail stable du run (conservé pour preuves humaines).
+  const outDir = path.join(E2E_RUNS, runId);
+  fs.mkdirSync(outDir, { recursive: true });
+
+  const imported = [];
+  for (const res of results) {
+    if (!res.specFile || !res.scenario) continue;
+    const reg = await taskOrchestrator("e2e_test_register", { project, specFile: res.specFile, scenario: res.scenario, title: res.title });
+    const e2eTestId = reg && reg.test && reg.test.id;
+    if (!e2eTestId) continue;
+    if (taskId) {
+      await taskOrchestrator("e2e_test_link", { taskId, e2eTestId, relationType: res.relation || "REGRESSION", reason: res.reason || "Associé à l'exécution CI" });
+    }
+    const rec = await taskOrchestrator("e2e_execution_record", {
+      e2eTestId, taskId, deploymentId: manifest.deploymentId, planId: manifest.planId,
+      env, commitSha, branch, pipelineRef, attempts,
+    });
+    const executionId = rec && rec.execution && rec.execution.id;
+    if (!executionId) continue;
+
+    // Rapport texte (IA + humain) : conservé sous storage/e2e/runs/<runId>/.
+    const reportName = `report-${executionId}.json`;
+    const reportPath = path.join(outDir, reportName);
+    fs.writeFileSync(reportPath, JSON.stringify({ runId, executionId, e2eTestId, specFile: res.specFile, scenario: res.scenario, status: res.status, durationMs: res.durationMs, error: res.error || null, attempts }, null, 2));
+
+    // Vidéo (preuve humaine) si présente dans le run.
+    let videoUrl = null;
+    if (res.videoFile && fs.existsSync(path.join(runDir, res.videoFile))) {
+      const ext = path.extname(res.videoFile) || ".webm";
+      const dest = path.join(outDir, `video-${executionId}${ext}`);
+      fs.copyFileSync(path.join(runDir, res.videoFile), dest);
+      videoUrl = dest;
+    }
+
+    await taskOrchestrator("e2e_execution_update", {
+      executionId,
+      status: res.status || "ERROR",
+      durationMs: res.durationMs || null,
+      logsUrl: reportPath,
+      videoUrl,
+      summary: (res.summary || (res.error ? `Échec : ${String(res.error).slice(0, 400)}` : `PASS ${res.scenario}`)).slice(0, 2000),
+      verdictBy: "build-notify",
+      executedAt: manifest.executedAt || new Date().toISOString(),
+    });
+    imported.push({ e2eTestId, executionId, status: res.status || "ERROR" });
+  }
+
+  // Marqueur d'import (évite les doubles imports du même run).
+  fs.writeFileSync(path.join(outDir, "imported.json"), JSON.stringify({ runId, importedAt: new Date().toISOString(), count: imported.length }, null, 2));
+  // Nettoyage de l'inbox pour ce run.
+  try { fs.rmSync(runDir, { recursive: true, force: true }); } catch {}
+
+  const failures = imported.filter((i) => i.status === "FAILED").length;
+  return { ok: true, runId, imported, count: imported.length, failures };
+}

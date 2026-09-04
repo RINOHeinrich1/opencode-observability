@@ -5,6 +5,21 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.37 — 2026-09-04 · Tests E2E : collecteur hôte + lecture (début d'intégration cadrage 07)
+
+Première tranche de l'intégration E2E (cadrage 07-tests-e2e.md) côté orchestration :
+- MCP task-orchestrator v0.7.0 : registre e2e_tests (1/test()), liens task_e2e
+  (N:N, relation+reason), exécutions e2e_executions (rapport texte partagé
+  IA+humain, vidéo humaine) + outils e2e_test_register/link/unlink, e2e_list,
+  e2e_execution_record/update/list.
+- Panel : collecteur hôte pilot.collectE2EResults(runId) — importe un run CI
+  (storage/e2e/inbox/<runId>/manifest.json + résultats) vers le registre,
+  conserve rapports (texte) et vidéos (humain) sous storage/e2e/runs/ ;
+  rétention mensuelle pruneE2EVideos(days).
+- Endpoints : POST /api/e2e/collect, POST /api/e2e/prune (admin),
+  GET /api/tasks/:id/e2e (tests + exécutions), GET /api/e2e/file (stream
+  rapport/vidéo, accès restreint). .gitignore storage/e2e.
+
 ## v0.8.36 — 2026-09-02 · Recette : rattacher/détacher des tâches couvertes après création
 
 - **MCP task-orchestrator v0.6.11** : outil `recette_unlink_task` ; garde sur

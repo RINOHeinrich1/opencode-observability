@@ -18,6 +18,9 @@ import { marked } from "marked";
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const E2E_STORAGE_DIR = join(__dirname, "storage", "e2e");
+mkdirSync(join(E2E_STORAGE_DIR, "inbox"), { recursive: true });
+mkdirSync(join(E2E_STORAGE_DIR, "runs"), { recursive: true });
 const PUBLIC_DIR = join(__dirname, "public");
 const PORT = Number(process.env.PORT || 4000);
 const HOST = process.env.HOST || "127.0.0.1";
@@ -808,6 +811,65 @@ const server = createServer(async (req, res) => {
       )).rows;
       const projs = (await registry().query("SELECT project FROM recette_projects WHERE recette_id = $1 ORDER BY project", [r.recette_id])).rows.map((x) => x.project);
       return sendJson(res, 200, { recette: { ...r, projects: projs.length ? projs : (r.project ? [r.project] : []), tasks, items, documents: docs } });
+    }
+    // --- Tests E2E (cadrage 07) : collecteur hôte + lecture ---
+    if (path === "/api/e2e/collect" && req.method === "POST") {
+      const b = await readBody(req);
+      return sendJson(res, 200, await pilot.collectE2EResults({ runId: b.runId }));
+    }
+    if (path === "/api/e2e/prune" && req.method === "POST") {
+      if (!user.is_admin) return sendJson(res, 403, { error: "réservé admin" });
+      const b = await readBody(req);
+      return sendJson(res, 200, await pilot.pruneE2EVideos({ days: b.days }));
+    }
+    const taskE2E = path.match(/^\/api\/tasks\/([^/]+)\/e2e$/);
+    if (taskE2E && req.method === "GET") {
+      const db = registry();
+      const tests = (await db.query(
+        `SELECT t.id, t.project, t.spec_file, t.scenario, t.title, t.status AS test_status, te.relation_type, te.reason,
+                (SELECT x.id FROM e2e_executions x WHERE x.e2e_test_id = t.id AND x.task_id = $1 ORDER BY x.created_at DESC LIMIT 1) AS last_execution_id,
+                (SELECT x.status FROM e2e_executions x WHERE x.e2e_test_id = t.id AND x.task_id = $1 ORDER BY x.created_at DESC LIMIT 1) AS last_status,
+                (SELECT x.duration_ms FROM e2e_executions x WHERE x.e2e_test_id = t.id AND x.task_id = $1 ORDER BY x.created_at DESC LIMIT 1) AS last_duration_ms,
+                (SELECT x.attempts FROM e2e_executions x WHERE x.e2e_test_id = t.id AND x.task_id = $1 ORDER BY x.created_at DESC LIMIT 1) AS last_attempts
+         FROM task_e2e te JOIN e2e_tests t ON t.id = te.e2e_test_id
+         WHERE te.task_id = $1 ORDER BY t.scenario`,
+        [taskE2E[1]],
+      )).rows;
+      const execRows = (await db.query(
+        `SELECT id, e2e_test_id, status, duration_ms, attempts, executed_at, summary, logs_url, video_url, report_artifact_id, commit_sha, branch, pipeline_ref
+         FROM e2e_executions WHERE task_id = $1 ORDER BY created_at DESC LIMIT 100`, [taskE2E[1]],
+      )).rows;
+      return sendJson(res, 200, {
+        taskId: taskE2E[1],
+        tests: tests.map((r) => ({ e2eTestId: r.id, project: r.project, specFile: r.spec_file, scenario: r.scenario, title: r.title, testStatus: r.test_status, relationType: r.relation_type, reason: r.reason, lastExecutionId: r.last_execution_id, lastStatus: r.last_status, lastDurationMs: r.last_duration_ms, lastAttempts: r.last_attempts })),
+        executions: execRows.map((r) => ({ id: r.id, e2eTestId: r.e2e_test_id, status: r.status, durationMs: r.duration_ms, attempts: r.attempts, executedAt: r.executed_at, summary: r.summary, logsUrl: r.logs_url, videoUrl: r.video_url, reportArtifactId: r.report_artifact_id, commitSha: r.commit_sha, branch: r.branch, pipelineRef: r.pipeline_ref })),
+      });
+    }
+    // Fichier de preuve E2E (rapport texte / vidéo humaine) — accès restreint à storage/e2e.
+    if (path === "/api/e2e/file" && req.method === "GET") {
+      const rel = url.searchParams.get("p") || "";
+      const abs = normalize(join(E2E_STORAGE_DIR, rel));
+      if (!abs.startsWith(E2E_STORAGE_DIR + "/") || !existsSync(abs)) return sendJson(res, 404, { error: "introuvable" });
+      const type = /\.(webm|mp4)$/i.test(abs) ? "video/webm" : (/\.json$/i.test(abs) ? "application/json" : "text/plain");
+      res.setHeader("Content-Type", type);
+      res.setHeader("Content-Disposition", `inline; filename="${basename(abs)}"`);
+      const st = statSync(abs);
+      const range = req.headers.range;
+      if (range) {
+        const m = /bytes=(\d*)-(\d*)/.exec(range);
+        const start = m && m[1] ? parseInt(m[1], 10) : 0;
+        const end = m && m[2] ? parseInt(m[2], 10) : st.size - 1;
+        res.statusCode = 206;
+        res.setHeader("Accept-Ranges", "bytes");
+        res.setHeader("Content-Range", `bytes ${start}-${end}/${st.size}`);
+        res.setHeader("Content-Length", end - start + 1);
+        createReadStream(abs, { start, end }).pipe(res);
+      } else {
+        res.statusCode = 200;
+        res.setHeader("Content-Length", st.size);
+        createReadStream(abs).pipe(res);
+      }
+      return;
     }
     // Phase 3 (hors worktree) — qualité : funnel, rework, cost vs throughput
     if (path === "/api/metrics/quality" && req.method === "GET") return sendJson(res, 200, await metrics.quality(registry()));

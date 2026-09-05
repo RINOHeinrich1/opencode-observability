@@ -739,11 +739,34 @@ async function handleE2ECreate(res, b) {
   return sendJson(res, 201, { ok: true, test: r && r.test });
 }
 
+// Défauts E2E d'un projet : e2e_repo_dir / e2e_base_url du registre (mapping
+// explicite renseigné via Projets), repli sur la convention de checkout hôte
+// /root/<projet>-preprod pour les projets applicatifs.
+async function e2eDefaultsForProject(project) {
+  const fallback = { repoDir: `/root/${project}-preprod`, baseUrl: null };
+  if (!project) return fallback;
+  try {
+    const r = (await registry().query("SELECT e2e_repo_dir, e2e_base_url FROM projects WHERE id = $1", [project])).rows[0];
+    if (!r) return fallback;
+    return {
+      repoDir: (r.e2e_repo_dir && String(r.e2e_repo_dir).trim()) || `/root/${project}-preprod`,
+      baseUrl: (r.e2e_base_url && String(r.e2e_base_url).trim()) || null,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
 async function handleE2ERun(res, id, b) {
   const t = await registryE2ETest(id);
   if (!t) return sendJson(res, 404, { error: "test E2E inconnu" });
   const { repoDir, baseUrl, origin, taskId, specPattern, playwrightConfig, pwArgs, paramValues } = b || {};
-  if (!repoDir || !String(repoDir).trim()) return sendJson(res, 400, { error: "repoDir requis (dépôt applicatif à exécuter)" });
+  // RepoDir/baseUrl par défaut : mapping E2E du projet (registre projects) puis
+  // convention hôte /root/<projet>-preprod pour les projets applicatifs connus.
+  const projDefaults = await e2eDefaultsForProject(t.project);
+  const finalRepoDir = (repoDir && String(repoDir).trim()) || projDefaults.repoDir;
+  const finalBaseUrl = (baseUrl && String(baseUrl).trim()) || projDefaults.baseUrl || undefined;
+  if (!finalRepoDir) return sendJson(res, 400, { error: "repoDir requis (dépôt applicatif à exécuter) — renseigner le checkout E2E du projet (Projets → Modifier, champ e2eRepoDir)" });
   // SÉCURITÉ : un paramètre secret ne peut pas être surchargé en clair (il ne
   // doit jamais transiter ni être persisté dans param_values).
   if (paramValues && typeof paramValues === "object") {
@@ -758,8 +781,8 @@ async function handleE2ERun(res, id, b) {
   try {
     const r = await pilot.runE2ETest({
       project: t.project,
-      repoDir: String(repoDir).trim(),
-      baseUrl: baseUrl || undefined,
+      repoDir: String(finalRepoDir).trim(),
+      baseUrl: finalBaseUrl,
       e2eTestId: t.id,
       origin: runOrigin,
       taskId: taskId || undefined,
@@ -768,7 +791,7 @@ async function handleE2ERun(res, id, b) {
       pwArgs,
       paramValues,
     });
-    return sendJson(res, 200, r);
+    return sendJson(res, 200, { ...(r || {}), defaults: { project: t.project, repoDir: finalRepoDir, baseUrl: finalBaseUrl } });
   } catch (e) {
     const msg = String((e && e.message) || e);
     // Le run peut dépasser le timeout MCP (30 s côté mcp-client) : explicite.

@@ -714,6 +714,13 @@ async function e2eRunModal(e2eTestId) {
   let test = {};
   try { const d = await api(`/api/e2e-tests/${encodeURIComponent(e2eTestId)}`); test = d.test || {}; }
   catch (e) { alert('Impossible de charger le test : ' + (e.message || e)); return; }
+  // Défauts du repo source du test : mapping E2E du projet (e2e_repo_dir /
+  // e2e_base_url), repli convention de checkout hôte /root/<projet>-preprod.
+  const repoProject = test.project || '';
+  let proj = null;
+  try { const pr = await api('/api/projects'); proj = (pr.projects || []).find((p) => p.id === repoProject) || null; } catch {}
+  const defRepoDir = (proj && proj.e2eRepoDir) || `/root/${repoProject}-preprod`;
+  const defBaseUrl = (proj && proj.e2eBaseUrl) || '';
   const params = test.params || [];
   const paramFields = params.map((p) => `
     <label class="modal-field">${esc(p.name)} <span class="muted-sm">(${esc(p.kind)}${p.required ? ' · requis' : ''})</span>
@@ -724,13 +731,13 @@ async function e2eRunModal(e2eTestId) {
   showModal(`
     <div class="modal modal-wide">
       <h2>Lancer une exécution</h2>
-      <p class="muted"><code class="e2e-id">${esc(test.e2eTestId || e2eTestId)}</code> · ${esc(test.scenario || test.title || '')}</p>
+      <p class="muted"><code class="e2e-id">${esc(test.e2eTestId || e2eTestId)}</code> · ${esc(test.scenario || test.title || '')} <span class="muted-sm">· repo source : <code>${esc(repoProject)}</code></span></p>
       <form id="e2e-run-form" class="pilot-form">
-        <label class="modal-field">Dépôt applicatif (repoDir) <span class="muted-sm">— obligatoire</span>
-          <input id="er-repodir" placeholder="ex: /root/mada-talk-preprod" required>
+        <label class="modal-field">Dépôt applicatif (repoDir) <span class="muted-sm">— pré-rempli depuis le projet (${esc(repoProject)}) ; corrigeable</span>
+          <input id="er-repodir" value="${esc(defRepoDir)}" required>
         </label>
-        <label class="modal-field">URL cible (baseUrl) <span class="muted-sm">— défaut : e2e.env E2E_BASE_URL</span>
-          <input id="er-baseurl" placeholder="ex: https://preprod.madatalk.fr">
+        <label class="modal-field">URL cible (baseUrl) <span class="muted-sm">— pré-remplie depuis le projet ; défaut sinon e2e.env</span>
+          <input id="er-baseurl" value="${esc(defBaseUrl)}" placeholder="ex: https://preprod.madatalk.fr">
         </label>
         <div class="actions-buttons" style="align-items:flex-end">
           <label class="modal-field" style="flex:1">Origine du run
@@ -1823,6 +1830,8 @@ async function renderProjects() {
             <div class="project-kv"><span class="lbl">Workspace Coder</span><span>${esc(p.workspace || '—')}</span></div>
             <div class="project-kv"><span class="lbl">Branche git principale</span>${p.mainBranch ? `<code class="muted-sm">${esc(p.mainBranch)}</code>` : '<span class="badge danger">manquante — déploiement bloqué</span>'}</div>
             <div class="project-kv"><span class="lbl">Chemin git</span><code class="muted-sm">${esc(p.gitPath || '—')}</code></div>
+            <div class="project-kv"><span class="lbl">Checkout E2E</span><code class="muted-sm">${esc(p.e2eRepoDir || '—')}</code></div>
+            <div class="project-kv"><span class="lbl">URL de test (E2E)</span>${p.e2eBaseUrl ? `<code class="muted-sm">${esc(p.e2eBaseUrl)}</code>` : '<span class="muted-sm">— (défaut : champ baseUrl du run)</span>'}</div>
             <div class="project-kv"><span class="lbl">Créé le</span><span class="muted-sm">${esc((p.createdAt || '').replace('T', ' ').slice(0, 19))}</span></div>
           </div>
           <div class="project-card-actions">
@@ -1858,6 +1867,12 @@ async function projectFormModal(project) {
         <label class="modal-field">Branche git principale <span class="muted-sm">(obligatoire pour déployer)</span>
           <input id="pm-main-branch" placeholder="ex: main, oniria-preprod" value="${esc(project?.mainBranch || '')}" required>
         </label>
+        <label class="modal-field">Checkout E2E (e2eRepoDir) <span class="muted-sm">— dossier hôte où s'exécutent les runs E2E</span>
+          <input id="pm-e2e-repodir" placeholder="ex: /root/oniria-preprod" value="${esc(project?.e2eRepoDir || '')}">
+        </label>
+        <label class="modal-field">URL de test (e2eBaseUrl) <span class="muted-sm">— cible par défaut des runs E2E de ce projet</span>
+          <input id="pm-e2e-baseurl" placeholder="ex: https://preprod.madatalk.fr" value="${esc(project?.e2eBaseUrl || '')}">
+        </label>
         <div class="modal-actions">
           <button type="button" class="ghost" id="modal-cancel">Annuler</button>
           <button type="submit" class="launch-btn">${editing ? 'Enregistrer' : 'Créer'}</button>
@@ -1876,6 +1891,8 @@ async function projectFormModal(project) {
         workspace: document.getElementById('pm-workspace').value,
         gitPath: document.getElementById('pm-gitpath').value.trim() || undefined,
         mainBranch: document.getElementById('pm-main-branch').value.trim(),
+        e2eRepoDir: document.getElementById('pm-e2e-repodir').value.trim() || undefined,
+        e2eBaseUrl: document.getElementById('pm-e2e-baseurl').value.trim() || undefined,
       }) });
       closeModal();
       refreshActive();

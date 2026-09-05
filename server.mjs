@@ -565,6 +565,253 @@ async function recetteProjectsByIds(ids) {
   return map;
 }
 
+// --- Tests E2E (entités de 1er niveau) : lecture SQL + écritures via pilot --
+function mapE2ETestRow(r) {
+  return {
+    e2eTestId: r.id,
+    project: r.project,
+    specFile: r.spec_file,
+    scenario: r.scenario,
+    title: r.title,
+    description: r.description,
+    status: r.status,
+    version: r.version,
+    firstSeenAt: r.first_seen_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+function mapE2EExecRow(r) {
+  return {
+    id: r.id,
+    e2eTestId: r.e2e_test_id,
+    origin: r.origin,
+    taskId: r.task_id,
+    deploymentId: r.deployment_id,
+    planId: r.plan_id,
+    env: r.env,
+    commitSha: r.commit_sha,
+    branch: r.branch,
+    pipelineRef: r.pipeline_ref,
+    status: r.status,
+    durationMs: r.duration_ms,
+    attempts: r.attempts,
+    executedAt: r.executed_at,
+    reportArtifactId: r.report_artifact_id,
+    logsUrl: r.logs_url,
+    videoUrl: r.video_url,
+    summary: r.summary,
+    verdictBy: r.verdict_by,
+    createdAt: r.created_at,
+    paramValues: r.param_values,
+  };
+}
+
+// Ligne e2e_tests (existence + repo source) pour les routes /:id.
+async function registryE2ETest(id) {
+  try {
+    return (await registry().query("SELECT id, project, spec_file, scenario FROM e2e_tests WHERE id = $1", [id])).rows[0] || null;
+  } catch { return null; }
+}
+
+// Projets couverts indexés par test (fallback repo source côté appelant).
+async function e2eProjectsByTestIds(ids) {
+  const map = {};
+  if (!ids || !ids.length) return map;
+  try {
+    const rows = (await registry().query(
+      "SELECT e2e_test_id, project FROM e2e_test_projects WHERE e2e_test_id = ANY($1) ORDER BY project", [ids],
+    )).rows;
+    for (const x of rows) (map[x.e2e_test_id] = map[x.e2e_test_id] || []).push(x.project);
+  } catch {}
+  return map;
+}
+
+async function registryE2ETests(url) {
+  const db = registry();
+  const project = url.searchParams.get("project");
+  const status = url.searchParams.get("status");
+  const search = url.searchParams.get("search");
+  const taskId = url.searchParams.get("taskId");
+  const conds = [];
+  const params = [];
+  if (project) {
+    params.push(String(project));
+    const i = params.length;
+    // Projet couvert : présent dans e2e_test_projects OU repo source du test.
+    conds.push(`(EXISTS (SELECT 1 FROM e2e_test_projects ep WHERE ep.e2e_test_id = t.id AND ep.project = $${i}) OR t.project = $${i})`);
+  }
+  if (status) { params.push(String(status)); conds.push(`t.status = $${params.length}`); }
+  if (search) {
+    params.push(`%${String(search)}%`);
+    const i = params.length;
+    conds.push(`(t.title ILIKE $${i} OR t.scenario ILIKE $${i} OR t.spec_file ILIKE $${i})`);
+  }
+  if (taskId) {
+    params.push(String(taskId));
+    conds.push(`EXISTS (SELECT 1 FROM task_e2e te WHERE te.e2e_test_id = t.id AND te.task_id = $${params.length})`);
+  }
+  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+  let rows = [];
+  try {
+    rows = (await db.query(
+      `SELECT t.id, t.project, t.spec_file, t.scenario, t.title, t.description, t.status, t.version, t.meta, t.first_seen_at, t.updated_at,
+              (SELECT COUNT(*) FROM task_e2e te WHERE te.e2e_test_id = t.id)::int AS task_count,
+              (SELECT x.status FROM e2e_executions x WHERE x.e2e_test_id = t.id ORDER BY x.created_at DESC LIMIT 1) AS last_status,
+              (SELECT x.origin FROM e2e_executions x WHERE x.e2e_test_id = t.id ORDER BY x.created_at DESC LIMIT 1) AS last_origin,
+              (SELECT x.created_at FROM e2e_executions x WHERE x.e2e_test_id = t.id ORDER BY x.created_at DESC LIMIT 1) AS last_run_at
+       FROM e2e_tests t ${where}
+       ORDER BY t.updated_at DESC`,
+      params,
+    )).rows;
+  } catch { rows = []; }
+  const projMap = await e2eProjectsByTestIds(rows.map((r) => r.id));
+  const tests = rows.map((r) => ({
+    ...mapE2ETestRow(r),
+    // Projets couverts agrégés (triés) ; fallback : repo source.
+    projects: projMap[r.id] || (r.project ? [r.project] : []),
+    taskCount: Number(r.task_count) || 0,
+    lastStatus: r.last_status || null,
+    lastOrigin: r.last_origin || null,
+    lastRunAt: r.last_run_at || null,
+  }));
+  return { tests };
+}
+
+async function registryE2ETestDetail(res, id) {
+  const db = registry();
+  let row = null;
+  try { row = (await db.query("SELECT * FROM e2e_tests WHERE id = $1", [id])).rows[0]; } catch { row = null; }
+  if (!row) return sendJson(res, 404, { error: "test E2E inconnu" });
+  const q = async (sql, p = []) => (await db.query(sql, p).catch(() => ({ rows: [] }))).rows;
+  const projects = (await q("SELECT project FROM e2e_test_projects WHERE e2e_test_id = $1 ORDER BY project", [id])).map((x) => x.project);
+  const params = (await q("SELECT name, kind, default_value, secret_ref, required FROM e2e_test_params WHERE e2e_test_id = $1 ORDER BY name", [id])).map((x) => ({
+    name: x.name,
+    kind: x.kind,
+    // SÉCURITÉ : un paramètre secret ne renvoie JAMAIS de valeur (defaultValue).
+    defaultValue: x.kind === "secret" ? null : x.default_value,
+    secretRef: x.secret_ref,
+    required: !!x.required,
+  }));
+  const linkedTasks = (await q(
+    `SELECT te.task_id, te.relation_type, te.reason,
+            t.project AS task_project, t.title AS task_title, t.request AS task_request,
+            (SELECT x.status FROM executions x WHERE x.task_id = te.task_id ORDER BY attempt DESC LIMIT 1) AS task_status
+     FROM task_e2e te LEFT JOIN tasks t ON t.id = te.task_id
+     WHERE te.e2e_test_id = $1 ORDER BY te.task_id`,
+    [id],
+  )).map((x) => ({
+    taskId: x.task_id,
+    relationType: x.relation_type,
+    reason: x.reason,
+    taskProject: x.task_project,
+    taskTitle: x.task_title,
+    taskRequest: x.task_request,
+    taskStatus: x.task_status,
+  }));
+  const executions = (await q("SELECT * FROM e2e_executions WHERE e2e_test_id = $1 ORDER BY created_at DESC LIMIT 100", [id])).map(mapE2EExecRow);
+  const test = {
+    ...mapE2ETestRow(row),
+    projects: projects.length ? projects : (row.project ? [row.project] : []),
+    params,
+    linkedTasks,
+  };
+  return sendJson(res, 200, { test, executions });
+}
+
+// Garde d'écriture : rejette toute valeur secrète concrète dans defaultValue.
+function e2eParamsGuard(params) {
+  for (const p of params || []) {
+    if (!p || p.name == null) continue;
+    if (String(p.kind || "string") === "secret" && (p.defaultValue != null || p.default_value != null)) {
+      return `paramètre secret « ${p.name} » : fournir secretRef, jamais de defaultValue (valeur concrète)`;
+    }
+  }
+  return null;
+}
+
+async function handleE2ECreate(res, b) {
+  const { project, specFile, scenario, title, description, coveredProjects, params } = b || {};
+  if (!project || !specFile || !scenario) return sendJson(res, 400, { error: "project, specFile et scenario requis" });
+  const guard = e2eParamsGuard(params);
+  if (guard) return sendJson(res, 400, { error: guard });
+  const r = await pilot.createE2ETest({ project, specFile, scenario, title, description, coveredProjects, params });
+  return sendJson(res, 201, { ok: true, test: r && r.test });
+}
+
+async function handleE2ERun(res, id, b) {
+  const t = await registryE2ETest(id);
+  if (!t) return sendJson(res, 404, { error: "test E2E inconnu" });
+  const { repoDir, baseUrl, origin, taskId, specPattern, playwrightConfig, pwArgs, paramValues } = b || {};
+  if (!repoDir || !String(repoDir).trim()) return sendJson(res, 400, { error: "repoDir requis (dépôt applicatif à exécuter)" });
+  // SÉCURITÉ : un paramètre secret ne peut pas être surchargé en clair (il ne
+  // doit jamais transiter ni être persisté dans param_values).
+  if (paramValues && typeof paramValues === "object") {
+    let secretNames = [];
+    try {
+      secretNames = (await registry().query("SELECT name FROM e2e_test_params WHERE e2e_test_id = $1 AND kind = 'secret'", [id])).rows.map((x) => x.name);
+    } catch {}
+    const forbidden = Object.keys(paramValues).filter((k) => secretNames.includes(k));
+    if (forbidden.length) return sendJson(res, 400, { error: `paramètre(s) secret(s) non surchargeables : ${forbidden.join(", ")}` });
+  }
+  const runOrigin = ["manual", "task", "recette", "ci", "session"].includes(origin) ? origin : "manual";
+  try {
+    const r = await pilot.runE2ETest({
+      project: t.project,
+      repoDir: String(repoDir).trim(),
+      baseUrl: baseUrl || undefined,
+      e2eTestId: t.id,
+      origin: runOrigin,
+      taskId: taskId || undefined,
+      specPattern: specPattern || undefined,
+      playwrightConfig: playwrightConfig || undefined,
+      pwArgs,
+      paramValues,
+    });
+    return sendJson(res, 200, r);
+  } catch (e) {
+    const msg = String((e && e.message) || e);
+    // Le run peut dépasser le timeout MCP (30 s côté mcp-client) : explicite.
+    if (/timeout/i.test(msg)) return sendJson(res, 502, { error: "run trop long — vérifier dans l'historique du test" });
+    if (/requis|invalide|non disponible|introuvable|absents/i.test(msg)) return sendJson(res, 400, { error: msg });
+    return sendJson(res, 500, { error: msg });
+  }
+}
+
+async function handleE2EParamSet(res, id, b) {
+  const t = await registryE2ETest(id);
+  if (!t) return sendJson(res, 404, { error: "test E2E inconnu" });
+  const params = (b && b.params) || [];
+  const guard = e2eParamsGuard(params);
+  if (guard) return sendJson(res, 400, { error: guard });
+  return sendJson(res, 200, await pilot.setE2ETestParams({ e2eTestId: id, params }));
+}
+
+async function handleE2ELink(res, id, b) {
+  const t = await registryE2ETest(id);
+  if (!t) return sendJson(res, 404, { error: "test E2E inconnu" });
+  const { taskId, relationType, reason } = b || {};
+  if (!taskId) return sendJson(res, 400, { error: "taskId requis" });
+  let taskExists = false;
+  try { taskExists = (await registry().query("SELECT 1 FROM tasks WHERE id = $1", [String(taskId)])).rows.length > 0; } catch {}
+  if (!taskExists) return sendJson(res, 404, { error: "tâche inconnue" });
+  return sendJson(res, 200, await pilot.linkE2ETest({ taskId, e2eTestId: id, relationType, reason }));
+}
+
+async function handleE2EUnlink(res, id, b) {
+  const t = await registryE2ETest(id);
+  if (!t) return sendJson(res, 404, { error: "test E2E inconnu" });
+  const { taskId } = b || {};
+  if (!taskId) return sendJson(res, 400, { error: "taskId requis" });
+  return sendJson(res, 200, await pilot.unlinkE2ETest({ taskId, e2eTestId: id }));
+}
+
+async function handleE2EObsolete(res, id) {
+  const t = await registryE2ETest(id);
+  if (!t) return sendJson(res, 404, { error: "test E2E inconnu" });
+  return sendJson(res, 200, await pilot.obsoleteE2ETest(id));
+}
+
 // --- Router ----------------------------------------------------------------
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
@@ -716,7 +963,9 @@ const server = createServer(async (req, res) => {
           (SELECT x.attempts FROM e2e_executions x WHERE x.e2e_test_id = t.id AND x.task_id = $1 ORDER BY x.created_at DESC LIMIT 1) AS last_attempts
           FROM task_e2e te JOIN e2e_tests t ON t.id = te.e2e_test_id WHERE te.task_id = $1 ORDER BY t.scenario`, [taskId])).rows;
         const execRows = (await db.query(`SELECT id, e2e_test_id, status, duration_ms, attempts, executed_at, summary, logs_url, video_url, report_artifact_id, commit_sha, branch, pipeline_ref FROM e2e_executions WHERE task_id = $1 ORDER BY created_at DESC LIMIT 100`, [taskId])).rows;
-        return sendJson(res, 200, { taskId, tests: tests.map((r) => ({ e2eTestId: r.id, project: r.project, specFile: r.spec_file, scenario: r.scenario, title: r.title, testStatus: r.test_status, relationType: r.relation_type, reason: r.reason, lastExecutionId: r.last_execution_id, lastStatus: r.last_status, lastDurationMs: r.last_duration_ms, lastAttempts: r.last_attempts })), executions: execRows.map((r) => ({ id: r.id, e2eTestId: r.e2e_test_id, status: r.status, durationMs: r.duration_ms, attempts: r.attempts, executedAt: r.executed_at, summary: r.summary, logsUrl: r.logs_url, videoUrl: r.video_url, reportArtifactId: r.report_artifact_id, commitSha: r.commit_sha, branch: r.branch, pipelineRef: r.pipeline_ref })) });
+        // Projets couverts par test (fallback : repo source) — ajout compatible.
+        const projMap = await e2eProjectsByTestIds(tests.map((r) => r.id));
+        return sendJson(res, 200, { taskId, task_id: taskId, tests: tests.map((r) => ({ e2eTestId: r.id, project: r.project, projects: projMap[r.id] || (r.project ? [r.project] : []), specFile: r.spec_file, scenario: r.scenario, title: r.title, testStatus: r.test_status, relationType: r.relation_type, reason: r.reason, lastExecutionId: r.last_execution_id, lastStatus: r.last_status, lastDurationMs: r.last_duration_ms, lastAttempts: r.last_attempts })), executions: execRows.map((r) => ({ id: r.id, e2eTestId: r.e2e_test_id, status: r.status, durationMs: r.duration_ms, attempts: r.attempts, executedAt: r.executed_at, summary: r.summary, logsUrl: r.logs_url, videoUrl: r.video_url, reportArtifactId: r.report_artifact_id, commitSha: r.commit_sha, branch: r.branch, pipelineRef: r.pipeline_ref })) });
       }
       return sendJson(res, 200, await registryTaskDetail(taskId));
     }
@@ -869,6 +1118,38 @@ const server = createServer(async (req, res) => {
       )).rows;
       const projs = (await registry().query("SELECT project FROM recette_projects WHERE recette_id = $1 ORDER BY project", [r.recette_id])).rows.map((x) => x.project);
       return sendJson(res, 200, { recette: { ...r, projects: projs.length ? projs : (r.project ? [r.project] : []), tasks, items, documents: docs } });
+    }
+    // --- Tests E2E (v0.9.0) : entités de 1er niveau, indépendantes des tâches
+    if (path === "/api/e2e-tests" && req.method === "GET") return sendJson(res, 200, await registryE2ETests(url));
+    if (path === "/api/e2e-tests" && req.method === "POST") {
+      const b = await readBody(req);
+      return handleE2ECreate(res, b);
+    }
+    const e2eDetailMatch = path.match(/^\/api\/e2e-tests\/([^/]+)$/);
+    if (e2eDetailMatch && req.method === "GET") return registryE2ETestDetail(res, e2eDetailMatch[1]);
+    const e2eRunMatch = path.match(/^\/api\/e2e-tests\/([^/]+)\/run$/);
+    if (e2eRunMatch && req.method === "POST") {
+      const b = await readBody(req);
+      return handleE2ERun(res, e2eRunMatch[1], b);
+    }
+    const e2eParamsMatch = path.match(/^\/api\/e2e-tests\/([^/]+)\/params$/);
+    if (e2eParamsMatch && req.method === "POST") {
+      const b = await readBody(req);
+      return handleE2EParamSet(res, e2eParamsMatch[1], b);
+    }
+    const e2eLinkMatch = path.match(/^\/api\/e2e-tests\/([^/]+)\/link-task$/);
+    if (e2eLinkMatch && req.method === "POST") {
+      const b = await readBody(req);
+      return handleE2ELink(res, e2eLinkMatch[1], b);
+    }
+    const e2eUnlinkMatch = path.match(/^\/api\/e2e-tests\/([^/]+)\/unlink-task$/);
+    if (e2eUnlinkMatch && req.method === "POST") {
+      const b = await readBody(req);
+      return handleE2EUnlink(res, e2eUnlinkMatch[1], b);
+    }
+    const e2eObsoleteMatch = path.match(/^\/api\/e2e-tests\/([^/]+)\/obsolete$/);
+    if (e2eObsoleteMatch && req.method === "POST") {
+      return handleE2EObsolete(res, e2eObsoleteMatch[1]);
     }
     // --- Tests E2E (cadrage 07) : collecteur hôte + lecture ---
     if (path === "/api/e2e/collect" && req.method === "POST") {

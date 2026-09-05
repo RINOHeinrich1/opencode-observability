@@ -456,6 +456,77 @@ export async function finishRecette({ recetteId, items, by }) {
 }
 
 // ===========================================================================
+// Tests E2E — entités de 1er niveau (v0.9.0). Toute écriture transite par le
+// MCP task-orchestrator (source de vérité unique) : enregistrement, run,
+// paramètres, liens tâche↔test, obsolescence.
+// ===========================================================================
+
+// Enregistre (ou réactive) un test E2E + paramètres éventuels. project = REPO
+// SOURCE. Renvoie le test à jour (via e2e_test_get) afin que la réponse
+// contienne projets couverts + paramètres une fois ceux-ci posés.
+export async function createE2ETest({ project, specFile, scenario, title, description, coveredProjects, params }) {
+  if (!project || !specFile || !scenario) throw new Error("project (repo source), specFile et scenario requis");
+  const r = await taskOrchestrator("e2e_test_register", {
+    project,
+    specFile,
+    scenario,
+    title: title ? String(title).trim() : undefined,
+    description: description ? String(description).trim() : undefined,
+    coveredProjects: Array.isArray(coveredProjects) && coveredProjects.length ? coveredProjects.map((p) => p && String(p).trim()).filter(Boolean) : undefined,
+  });
+  const test = r && r.test;
+  const id = test && (test.e2eTestId || test.id);
+  if (Array.isArray(params) && params.length && id) {
+    await taskOrchestrator("e2e_test_param_set", { e2eTestId: id, params });
+    const g = await taskOrchestrator("e2e_test_get", { e2eTestId: id });
+    return { ok: true, test: g && g.test };
+  }
+  return r;
+}
+
+// Lance une exécution E2E sur un test (entité 1er niveau). project = repo
+// source du test, e2eTestId résout le specPattern + défauts des paramètres.
+export async function runE2ETest(args) {
+  if (!args || !args.repoDir || !String(args.repoDir).trim()) throw new Error("repoDir requis (dépôt applicatif à exécuter)");
+  return taskOrchestrator("e2e_run", {
+    project: args.project,
+    repoDir: String(args.repoDir).trim(),
+    baseUrl: args.baseUrl || undefined,
+    e2eTestId: args.e2eTestId,
+    origin: args.origin || undefined,
+    taskId: args.taskId || undefined,
+    specPattern: args.specPattern || undefined,
+    playwrightConfig: args.playwrightConfig || undefined,
+    pwArgs: Array.isArray(args.pwArgs) && args.pwArgs.length ? args.pwArgs : undefined,
+    paramValues: args.paramValues || undefined,
+  });
+}
+
+// Déclare/remplace les paramètres d'un test (valeurs défaut NON sensibles).
+export async function setE2ETestParams({ e2eTestId, params }) {
+  if (!e2eTestId) throw new Error("e2eTestId requis");
+  return taskOrchestrator("e2e_test_param_set", { e2eTestId, params: params || [] });
+}
+
+// Associe un test E2E à une tâche (N:N pure association, relation typée).
+export async function linkE2ETest({ taskId, e2eTestId, relationType, reason }) {
+  if (!taskId || !e2eTestId) throw new Error("taskId et e2eTestId requis");
+  return taskOrchestrator("e2e_test_link", { taskId, e2eTestId, relationType: relationType || "REGRESSION", reason: reason || undefined });
+}
+
+// Détache un test E2E d'une tâche (le test reste enregistré).
+export async function unlinkE2ETest({ taskId, e2eTestId }) {
+  if (!taskId || !e2eTestId) throw new Error("taskId et e2eTestId requis");
+  return taskOrchestrator("e2e_test_unlink", { taskId, e2eTestId });
+}
+
+// Marque un test E2E OBSOLETE (spec disparu du repo). Jamais de suppression.
+export async function obsoleteE2ETest(e2eTestId) {
+  if (!e2eTestId) throw new Error("e2eTestId requis");
+  return taskOrchestrator("e2e_test_obsolete", { e2eTestId });
+}
+
+// ===========================================================================
 // Tests E2E — collecteur hôte (cadrage 07). Importe les résultats Playwright
 // produits par le CI (instance éphémère) depuis storage/e2e/inbox/<runId>.
 // ===========================================================================

@@ -280,6 +280,7 @@ async function renderTasks() {
     document.getElementById('tasks-body').innerHTML = html;
     document.querySelectorAll('#tasks-body [data-actions]').forEach((b) => b.addEventListener('click', () => taskActionsModal(b.dataset.actions)));
     document.querySelectorAll('#tasks-body [data-commits]').forEach((b) => b.addEventListener('click', () => renderPlanCommitsModal(b.dataset.commits)));
+    document.querySelectorAll('#tasks-body [data-goto-e2e]').forEach((b) => b.addEventListener('click', () => goToTab('e2etests', b.dataset.gotoE2e)));
     document.querySelectorAll('#tasks-body [data-toggle]').forEach((b) => b.addEventListener('click', () => {
       const id = b.dataset.toggle;
       const children = document.querySelectorAll(`#tasks-body [data-child="${id}"]`);
@@ -501,19 +502,427 @@ function openE2EVideoModal(url, title) {
   }));
 }
 // Badge E2E compact pour la table des tâches (état agrégé côté serveur : t.e2e).
+// Cliquable quand des tests sont associés → onglet Tests E2E pré-filtré sur la tâche.
 function e2eBadgeCell(t) {
   const e = t.e2e;
   if (!e || !e.count) return '<span class="muted-sm" title="Aucun test E2E associé">—</span>';
   const icon = e.state === 'pass' ? '✓' : (e.state === 'fail' ? '✗' : '…');
   const cls = e.state === 'pass' ? 'approve' : (e.state === 'fail' ? 'danger' : 'queued');
   const label = e.state === 'pass' ? 'PASS' : (e.state === 'fail' ? 'FAIL' : (e.state === 'pending' ? 'en attente/en cours' : e.state));
-  return `<span class="badge ${cls}" title="E2E : ${e.done}/${e.count} test(s) exécuté(s) — ${label}">E2E ${icon}</span>`;
+  return `<button type="button" class="badge ${cls} e2e-badge-goto" data-goto-e2e="${esc(t.id)}" title="E2E : ${e.done}/${e.count} test(s) exécuté(s) — ${label}. Cliquer pour ouvrir les tests">E2E ${icon}</button>`;
 }
 
 // Rendu des projets d'une recette (1..N) en puces.
 function recProjChips(projs) {
   const list = (projs && projs.length ? projs : []).filter(Boolean);
   return list.length ? list.map((p) => `<code class="chip-project" title="Projet rattaché">${esc(p)}</code>`).join(' ') : '<span class="muted-sm">—</span>';
+}
+
+// ===========================================================================
+// Tests E2E (v0.9.0) — entités de 1er niveau, indépendantes des tâches
+// ===========================================================================
+const E2E_TEST_STATUS_LABEL = { ACTIVE: 'actif', OBSOLETE: 'obsolète', QUARANTINE: 'quarantaine', DRAFT: 'brouillon' };
+const E2E_STATUS_OPTIONS = Object.entries(E2E_TEST_STATUS_LABEL).map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('');
+const E2E_REL_BADGE = { CREATED: 'approved', UPDATED: 'in_progress', REGRESSION: 'danger', EXISTING: 'queued' };
+const E2E_REL_LABEL = { CREATED: 'créé', UPDATED: 'modifié', REGRESSION: 'régression', EXISTING: 'existant' };
+let e2eFilterProject = '';   // filtre projet couvert (listé) de l'onglet
+let e2eFilterStatus = '';    // filtre statut du test
+let e2eFilterSearch = '';    // recherche texte (titre / scénario / spec)
+
+function fmtTS(s) {
+  const t = String(s || '');
+  return t ? t.replace('T', ' ').slice(0, 19) : '—';
+}
+
+function e2eQuery() {
+  const q = new URLSearchParams();
+  if (taskFilter) q.set('taskId', taskFilter);
+  if (e2eFilterProject) q.set('project', e2eFilterProject);
+  if (e2eFilterStatus) q.set('status', e2eFilterStatus);
+  if (e2eFilterSearch.trim()) q.set('search', e2eFilterSearch.trim());
+  const s = q.toString();
+  return s ? '?' + s : '';
+}
+
+function e2eTestStatusBadge(st) {
+  const cls = { ACTIVE: 'approved', OBSOLETE: 'queued', QUARANTINE: 'danger', DRAFT: 'queued' }[st] || 'queued';
+  return `<span class="badge ${cls}" title="Statut du test">${esc(E2E_TEST_STATUS_LABEL[st] || st || '—')}</span>`;
+}
+
+// Badge d'un run E2E (statuts Playwright) — classes CSS existantes.
+function e2eRunBadge(st) {
+  const cls = { PASSED: 'approved', FAILED: 'rejected', ERROR: 'rejected', SKIPPED: 'queued', FLAKY: 'awaiting', RUNNING: 'in_progress', PENDING: 'queued' }[st] || 'queued';
+  return `<span class="badge ${cls}">${esc(st || '—')}</span>`;
+}
+
+function e2eOriginLabel(o) {
+  return { task: 'tâche', recette: 'recette', ci: 'CI', manual: 'manuelle', session: 'session' }[o] || o || '—';
+}
+
+// Étape 3 — la modale d'actions d'une tâche ne liste PLUS les tests E2E : un
+// simple lien renvoie vers l'onglet Tests E2E pré-filtré sur la tâche.
+async function renderTaskE2ELink(taskId) {
+  const hint = document.getElementById('e2e-actions-hint');
+  if (!hint) return;
+  let n = 0;
+  try { const d = await api(`/api/tasks/${encodeURIComponent(taskId)}/e2e`); n = (d.tests || []).length; } catch {}
+  if (!n) { const section = hint.closest('.actions-section'); if (section) section.hidden = true; return; }
+  const label = `Voir les tests E2E associés (${n})`;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'ghost';
+  btn.textContent = label;
+  btn.title = `${n} test(s) E2E associé(s) à cette tâche — ouvrir l'onglet Tests E2E filtré`;
+  btn.addEventListener('click', () => { closeModal(); goToTab('e2etests', taskId); });
+  hint.replaceWith(btn);
+}
+
+async function renderE2ETests() {
+  const [data, projsRes] = await Promise.all([
+    api('/api/e2e-tests' + e2eQuery()),
+    api('/api/projects').catch(() => ({ projects: [] })),
+  ]);
+  const tests = data.tests || [];
+  const projects = [...new Set([
+    ...((projsRes.projects || []).map((p) => p.id).filter(Boolean)),
+    ...tests.map((t) => t.project).filter(Boolean),
+    ...tests.flatMap((t) => t.projects || []),
+  ])].sort();
+  if (e2eFilterProject && !projects.includes(e2eFilterProject)) projects.push(e2eFilterProject);
+  document.getElementById('pane-e2etests').innerHTML = `
+    <h2>Tests E2E <span class="muted-sm">— entités de 1er niveau</span></h2>
+    <p class="muted-sm">Un test Playwright est enregistré indépendamment des tâches ; les exécutions lui appartiennent (origine tâche / recette / CI / manuelle).</p>
+    ${filterBar()}
+    <div class="filters">
+      <select id="e2e-f-project" title="Filtrer par projet couvert"><option value="">Tous les projets</option>${projects.map((p) => `<option value="${esc(p)}" ${e2eFilterProject === p ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>
+      <select id="e2e-f-status" title="Filtrer par statut du test"><option value="">Tous les statuts</option>${E2E_STATUS_OPTIONS}</select>
+      <input id="e2e-f-search" placeholder="recherche (titre / scénario / spec)…" value="${esc(e2eFilterSearch)}">
+      <button id="new-e2e-btn" class="launch-btn">+ Nouveau test</button>
+    </div>
+    <table><thead><tr><th>Titre / Comportement</th><th>Projets couverts</th><th>Repo source · spec</th><th>Scénario</th><th>Statut</th><th>Dernier run</th><th>Actions</th></tr></thead>
+    <tbody>${tests.map(e2eTableRow).join('') || `<tr><td colspan="7" class="muted">${taskFilter ? 'Aucun test E2E associé à la tâche <code>' + esc(taskFilter) + '</code>.' : 'Aucun test E2E enregistré.'}</td></tr>`}</tbody></table>`;
+  bindTaskFilter();
+  document.getElementById('e2e-f-project').addEventListener('change', (ev) => { e2eFilterProject = ev.target.value; refreshActive(); });
+  const statusSel = document.getElementById('e2e-f-status');
+  statusSel.value = e2eFilterStatus;
+  statusSel.addEventListener('change', (ev) => { e2eFilterStatus = ev.target.value; refreshActive(); });
+  const searchInp = document.getElementById('e2e-f-search');
+  searchInp.addEventListener('change', () => { e2eFilterSearch = searchInp.value; refreshActive(); });
+  document.getElementById('new-e2e-btn').addEventListener('click', () => e2eCreateModal());
+  document.querySelectorAll('#pane-e2etests [data-e2e-detail]').forEach((b) => b.addEventListener('click', () => e2eDetailModal(b.dataset.e2eDetail)));
+  document.querySelectorAll('#pane-e2etests [data-e2e-run]').forEach((b) => b.addEventListener('click', () => e2eRunModal(b.dataset.e2eRun)));
+  document.querySelectorAll('#pane-e2etests [data-e2e-obsolete]').forEach((b) => b.addEventListener('click', () => e2eObsoleteModal(b.dataset.e2eObsolete)));
+}
+
+function e2eTableRow(t) {
+  const title = (t.title && t.title.trim()) ? t.title : (t.scenario || t.e2eTestId);
+  const lastRun = t.lastStatus
+    ? `${e2eRunBadge(t.lastStatus)}<span class="muted-sm"> · ${esc(e2eOriginLabel(t.lastOrigin))}${t.lastRunAt ? ' · ' + esc(fmtTS(t.lastRunAt)) : ''}</span>`
+    : '<span class="muted-sm">—</span>';
+  return `<tr>
+    <td><strong>${esc(title)}</strong><div><code class="e2e-id">${esc(t.e2eTestId)}</code></div></td>
+    <td>${recProjChips(t.projects || (t.project ? [t.project] : []))}</td>
+    <td class="code muted-sm">${esc(t.project)}<div class="muted-sm">${esc(t.specFile || '')}</div></td>
+    <td class="muted-sm">${esc(t.scenario || '—')}</td>
+    <td>${e2eTestStatusBadge(t.status)}</td>
+    <td>${lastRun}</td>
+    <td><div class="icon-actions">
+      <button class="icon-btn" data-e2e-detail="${esc(t.e2eTestId)}" title="Voir le détail du test">Détail</button>
+      <button class="icon-btn" data-e2e-run="${esc(t.e2eTestId)}" title="Lancer une exécution">▶ Lancer</button>
+      ${t.status === 'ACTIVE' ? `<button class="icon-btn danger-btn" data-e2e-obsolete="${esc(t.e2eTestId)}" title="Marquer obsolète (spec disparu)">⚠ Obsolète</button>` : ''}
+    </div></td>
+  </tr>`;
+}
+
+async function e2eDetailModal(e2eTestId) {
+  let d;
+  try { d = await api(`/api/e2e-tests/${encodeURIComponent(e2eTestId)}`); }
+  catch (e) { alert('Impossible de charger le test : ' + (e.message || e)); return; }
+  const test = d.test || {};
+  const execs = d.executions || [];
+  const projs = (test.projects && test.projects.length) ? test.projects : (test.project ? [test.project] : []);
+  const params = test.params || [];
+  const linked = test.linkedTasks || [];
+  const execHtml = execs.map((x) => e2eExecItem(x, test)).join('');
+  showModal(`
+    <div class="modal modal-wide">
+      <h2>${esc(test.title || test.scenario || e2eTestId)}</h2>
+      <p class="muted"><code class="e2e-id">${esc(test.e2eTestId || e2eTestId)}</code> · ${e2eTestStatusBadge(test.status)} · Projets ${recProjChips(projs)}</p>
+      <div class="actions-section">
+        <div class="project-kv"><span class="lbl">Repo source</span><code class="muted-sm">${esc(test.project || '—')}</code></div>
+        <div class="project-kv"><span class="lbl">Spec file</span><code class="muted-sm">${esc(test.specFile || '—')}</code></div>
+        <div class="project-kv"><span class="lbl">Scénario</span><span class="muted-sm">${esc(test.scenario || '—')}</span></div>
+        <div class="project-kv"><span class="lbl">Suivi</span><span class="muted-sm">vu depuis ${esc(fmtTS(test.firstSeenAt))} · màj ${esc(fmtTS(test.updatedAt))} · ${(test.taskCount != null ? test.taskCount : linked.length)} tâche(s) liée(s)</span></div>
+      </div>
+      ${test.description ? `<div class="modal-request">${esc(test.description)}</div>` : ''}
+      ${params.length ? `<div class="actions-section"><h3>Paramètres (${params.length})</h3>
+        <div class="table-scroll"><table><thead><tr><th>Nom</th><th>Type</th><th>Défaut</th><th>Référence secrète</th><th>Requis</th></tr></thead>
+        <tbody>${params.map((p) => `<tr>
+          <td class="code">${esc(p.name)}</td>
+          <td>${esc(p.kind)}</td>
+          <td>${p.kind === 'secret' ? '<span class="muted-sm">— (jamais en clair)</span>' : esc(p.defaultValue ?? '—')}</td>
+          <td>${p.kind === 'secret' ? `<code class="muted-sm">${esc(p.secretRef || 'manquant')}</code>` : '<span class="muted-sm">—</span>'}</td>
+          <td>${p.required ? '<span class="badge approved">requis</span>' : '<span class="muted-sm">non</span>'}</td>
+        </tr>`).join('')}</tbody></table></div></div>` : ''}
+      <div class="actions-section"><h3>Tâches liées (${linked.length})</h3>
+        ${linked.length ? `<div class="recette-list">${linked.map((l) => `<div class="recette-item">
+          <code class="muted-sm">${esc(l.taskId)}</code>
+          <span class="badge ${E2E_REL_BADGE[l.relationType] || 'queued'}" title="Relation : ${esc(l.relationType || '')}">${esc(E2E_REL_LABEL[l.relationType] || l.relationType || 'lié')}</span>
+          ${l.reason ? `<span class="muted-sm" title="${esc(l.reason)}">${esc((l.reason || '').slice(0, 70))}</span>` : ''}
+          <button type="button" class="ghost" data-e2e-task-goto="${esc(l.taskId)}">Ouvrir la tâche</button>
+        </div>`).join('')}</div>` : '<p class="muted-sm">Aucune tâche associée — le test est indépendant (association pure N:N).</p>'}
+      </div>
+      <div class="actions-section"><h3>Exécutions — historique (${execs.length})</h3>
+        ${execs.length ? `<div class="recette-list">${execHtml}</div>` : '<p class="muted-sm">Aucune exécution enregistrée pour ce test.</p>'}
+      </div>
+      <div class="modal-actions">
+        <button class="ghost" id="modal-cancel">Fermer</button>
+        <button class="launch-btn" id="e2e-launch-btn" title="Lancer une exécution sur ce test">Lancer une exécution</button>
+      </div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('e2e-launch-btn').onclick = () => { closeModal(); e2eRunModal(e2eTestId); };
+  document.querySelectorAll('#modal-backdrop [data-e2e-task-goto]').forEach((b) => b.addEventListener('click', () => { closeModal(); taskActionsModal(b.dataset.e2eTaskGoto); }));
+  document.querySelectorAll('#modal-backdrop [data-e2e-video]').forEach((b) => b.addEventListener('click', () => openE2EVideoModal(b.dataset.e2eVideo, b.dataset.title)));
+}
+
+function e2eExecItem(x, test) {
+  const vUrl = x.videoUrl ? e2eFileUrl(x.videoUrl) : '';
+  const lUrl = x.logsUrl ? e2eFileUrl(x.logsUrl) : '';
+  const dur = x.durationMs != null ? (x.durationMs / 1000).toFixed(1) + ' s' : '';
+  const raw = x.summary || '';
+  const summary = raw.slice(0, 160);
+  const title = (test && (test.title || test.scenario)) || x.e2eTestId || 'Exécution E2E';
+  return `<div class="recette-item finish-item"><div class="recette-task">
+    <div class="e2e-rowline">${e2eRunBadge(x.status)}
+      <span class="muted-sm">origine ${esc(e2eOriginLabel(x.origin))}</span>
+      <span class="muted-sm">${esc(fmtTS(x.createdAt))}</span>
+      ${dur ? `<span class="muted-sm">· durée ${dur}</span>` : ''}
+      ${x.attempts ? `<span class="muted-sm">· itération ${esc(x.attempts)}</span>` : ''}
+      ${x.taskId ? `<code class="muted-sm">· ${esc(x.taskId)}</code>` : ''}
+      ${x.verdictBy ? `<span class="muted-sm">· verdict ${esc(x.verdictBy)}</span>` : ''}
+    </div>
+    ${summary ? `<p class="muted-sm e2e-summary">${esc(summary)}${raw.length > 160 ? '…' : ''}</p>` : ''}
+    <div class="e2e-actions">
+      ${lUrl ? `<a class="ghost" href="${esc(lUrl)}" target="_blank" rel="noopener" title="Rapport texte (IA + humain)">Rapport (texte)</a>` : ''}
+      ${vUrl ? `<button type="button" class="ghost" data-e2e-video="${esc(vUrl)}" data-title="${esc(title + ' — ' + fmtTS(x.createdAt))}">▶ Voir la vidéo</button><a class="ghost" download href="${esc(vUrl)}" title="Télécharger la vidéo (preuve humaine)">⭳</a>` : ''}
+    </div>
+  </div></div>`;
+}
+
+async function e2eRunModal(e2eTestId) {
+  let test = {};
+  try { const d = await api(`/api/e2e-tests/${encodeURIComponent(e2eTestId)}`); test = d.test || {}; }
+  catch (e) { alert('Impossible de charger le test : ' + (e.message || e)); return; }
+  const params = test.params || [];
+  const paramFields = params.map((p) => `
+    <label class="modal-field">${esc(p.name)} <span class="muted-sm">(${esc(p.kind)}${p.required ? ' · requis' : ''})</span>
+      ${p.kind === 'secret'
+        ? `<input type="text" value="" disabled placeholder="secret — référencé via ${esc(p.secretRef || 'secretRef')} — non surchargeable ici">`
+        : `<input type="text" data-pv="${esc(p.name)}" placeholder="${esc(p.defaultValue ?? '(vide = défaut du test)')}">`}
+    </label>`).join('');
+  showModal(`
+    <div class="modal modal-wide">
+      <h2>Lancer une exécution</h2>
+      <p class="muted"><code class="e2e-id">${esc(test.e2eTestId || e2eTestId)}</code> · ${esc(test.scenario || test.title || '')}</p>
+      <form id="e2e-run-form" class="pilot-form">
+        <label class="modal-field">Dépôt applicatif (repoDir) <span class="muted-sm">— obligatoire</span>
+          <input id="er-repodir" placeholder="ex: /root/mada-talk-preprod" required>
+        </label>
+        <label class="modal-field">URL cible (baseUrl) <span class="muted-sm">— défaut : e2e.env E2E_BASE_URL</span>
+          <input id="er-baseurl" placeholder="ex: https://preprod.madatalk.fr">
+        </label>
+        <div class="actions-buttons" style="align-items:flex-end">
+          <label class="modal-field" style="flex:1">Origine du run
+            <select id="er-origin"><option value="manual">manuelle</option><option value="task">tâche</option><option value="recette">recette</option></select>
+          </label>
+          <label class="modal-field" style="flex:2">Tâche origine (taskId) <span class="muted-sm">— optionnel</span>
+            <input id="er-taskid" placeholder="T-…">
+          </label>
+        </div>
+        <label class="modal-field">Config Playwright dédiée (playwrightConfig) <span class="muted-sm">— optionnel</span>
+          <input id="er-pwconfig" placeholder="ex: playwright.madatalk-requests.recette.config.ts">
+        </label>
+        <label class="modal-field">Filtre de spec (specPattern) <span class="muted-sm">— défaut : spec du test</span>
+          <input id="er-specpattern" placeholder="regex Playwright">
+        </label>
+        <label class="modal-field">Arguments Playwright (pwArgs) <span class="muted-sm">— optionnels, séparés par des espaces</span>
+          <input id="er-pwargs" placeholder="ex: --project=authenticated --retries=1">
+        </label>
+        ${params.length ? `<fieldset class="pilot-fieldset"><legend>Valeurs des paramètres <span class="muted-sm">(vide = défaut du test — les secrets ne sont jamais saisis ici)</span></legend>${paramFields}</fieldset>` : ''}
+        <div class="modal-actions">
+          <button type="button" class="ghost" id="modal-cancel">Annuler</button>
+          <button type="submit" class="launch-btn">Lancer</button>
+        </div>
+      </form>
+      <div id="e2e-run-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('e2e-run-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const msg = document.getElementById('e2e-run-msg');
+    msg.textContent = 'Lancement en cours… le run peut prendre du temps (historique du test ensuite).';
+    msg.className = 'msg';
+    const paramValues = {};
+    document.querySelectorAll('#modal-backdrop [data-pv]').forEach((inp) => {
+      const v = inp.value.trim();
+      if (v) paramValues[inp.dataset.pv] = v;
+    });
+    const pwRaw = document.getElementById('er-pwargs').value.trim();
+    const pwArgs = pwRaw ? pwRaw.split(/\s+/).filter(Boolean) : [];
+    try {
+      const r = await api(`/api/e2e-tests/${encodeURIComponent(e2eTestId)}/run`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          repoDir: document.getElementById('er-repodir').value.trim(),
+          baseUrl: document.getElementById('er-baseurl').value.trim() || undefined,
+          origin: document.getElementById('er-origin').value,
+          taskId: document.getElementById('er-taskid').value.trim() || undefined,
+          specPattern: document.getElementById('er-specpattern').value.trim() || undefined,
+          playwrightConfig: document.getElementById('er-pwconfig').value.trim() || undefined,
+          pwArgs,
+          paramValues,
+        }),
+      });
+      msg.textContent = r && r.runId
+        ? `Run ${r.runId} importé — ${r.count != null ? r.count + ' exécution(s)' : 'résultats enregistrés'}. Rafraîchissement de l'historique…`
+        : 'Run envoyé (résultat non détaillé).';
+      msg.className = 'msg ok';
+      if (r && r.runId) setTimeout(() => { closeModal(); e2eDetailModal(e2eTestId); }, 800);
+    } catch (err) {
+      msg.textContent = err.message || String(err);
+      msg.className = 'msg error';
+    }
+  });
+}
+
+function e2eObsoleteModal(e2eTestId) {
+  showModal(`
+    <div class="modal">
+      <h2>Marquer le test obsolète</h2>
+      <p class="muted">Test <span class="code">${esc(e2eTestId)}</span></p>
+      <p>Le test passera au statut <strong>OBSOLETE</strong> (spec disparu du repo). Son historique est conservé ; un nouvel enregistrement du même spec le réactivera.</p>
+      <div class="modal-actions">
+        <button class="ghost" id="modal-cancel">Annuler</button>
+        <button class="danger" id="modal-confirm">Marquer obsolète</button>
+      </div>
+      <div id="e2e-obsolete-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('modal-confirm').onclick = async () => {
+    const msg = document.getElementById('e2e-obsolete-msg');
+    try {
+      await api(`/api/e2e-tests/${encodeURIComponent(e2eTestId)}/obsolete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+      closeModal();
+      refreshActive();
+    } catch (e) { msg.textContent = e.message || String(e); msg.className = 'msg error'; }
+  };
+}
+
+async function e2eCreateModal() {
+  let projects = [];
+  try { projects = ((await api('/api/projects')).projects || []); } catch {}
+  showModal(`
+    <div class="modal modal-wide">
+      <h2>Nouveau test E2E</h2>
+      <form id="e2e-create-form" class="pilot-form">
+        <label class="modal-field">Projet (repo source) <span class="muted-sm">— dépôt où vit le spec</span>
+          <select id="ec-project" required><option value="">— projet —</option>${projects.map((p) => `<option value="${esc(p.id)}">${esc(p.name || p.id)}</option>`).join('') || '<option value="">— aucun projet enregistré —</option>'}</select>
+        </label>
+        <label class="modal-field">Spec file <span class="muted-sm">— chemin du spec Playwright</span>
+          <input id="ec-specfile" placeholder="ex: tests/e2e/auth/login.spec.ts" required>
+        </label>
+        <label class="modal-field">Scénario <span class="muted-sm">— titre du test()</span>
+          <input id="ec-scenario" placeholder="ex: connexion réussie" required>
+        </label>
+        <label class="modal-field">Titre court / comportement (optionnel)
+          <input id="ec-title" placeholder="ex: Connexion — parcours nominal">
+        </label>
+        <label class="modal-field">Description (optionnel)
+          <textarea id="ec-description" class="modal-textarea" rows="2" placeholder="comportement vérifié (éventuellement multi-projets)"></textarea>
+        </label>
+        <fieldset class="pilot-fieldset">
+          <legend>Projets couverts <span class="muted-sm">— le repo source est toujours inclus</span></legend>
+          <div class="rm-projects">${projects.map((p) => `<label class="filter-check"><input type="checkbox" class="ec-covered" value="${esc(p.id)}"> ${esc(p.name || p.id)}</label>`).join('') || '<p class="muted-sm">Aucun projet enregistré.</p>'}</div>
+        </fieldset>
+        <div class="links-editor">
+          <div class="links-head"><label class="modal-field" style="margin:0">Paramètres <span class="muted-sm">(défauts NON sensibles — secret = secretRef uniquement)</span></label>
+          <button type="button" class="ghost" id="ec-add-param">+ Ajouter</button></div>
+          <div id="ec-params-list"></div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="ghost" id="modal-cancel">Annuler</button>
+          <button type="submit" class="launch-btn">Créer</button>
+        </div>
+      </form>
+      <div id="e2e-create-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  const paramsList = document.getElementById('ec-params-list');
+  const addParamRow = () => {
+    const row = document.createElement('div');
+    row.className = 'link-row ec-param-row';
+    row.innerHTML = `
+      <input type="text" class="ec-p-name" placeholder="nom (ex: baseUrl)" style="flex:1;min-width:110px">
+      <select class="ec-p-kind" style="width:105px">
+        <option value="string">string</option><option value="url">url</option><option value="int">int</option>
+        <option value="bool">bool</option><option value="secret">secret</option>
+      </select>
+      <input type="text" class="ec-p-default" placeholder="défaut" style="flex:1;min-width:110px">
+      <input type="text" class="ec-p-secretref" placeholder="secretRef (secret)" style="flex:1;min-width:110px" hidden>
+      <label class="filter-check" title="Paramètre requis pour l'exécution"><input type="checkbox" class="ec-p-required"> requis</label>
+      <button type="button" class="ghost ec-p-del" title="Retirer">✕</button>`;
+    const kindSel = row.querySelector('.ec-p-kind');
+    const defaultInp = row.querySelector('.ec-p-default');
+    const refInp = row.querySelector('.ec-p-secretref');
+    const sync = () => {
+      const isSecret = kindSel.value === 'secret';
+      refInp.hidden = !isSecret;
+      defaultInp.placeholder = isSecret ? '— secret : valeur via secretRef —' : 'défaut (vide = aucun)';
+      if (isSecret) defaultInp.value = ''; // jamais de valeur en clair pour un secret
+    };
+    kindSel.addEventListener('change', sync);
+    sync();
+    row.querySelector('.ec-p-del').addEventListener('click', () => row.remove());
+    paramsList.appendChild(row);
+  };
+  document.getElementById('ec-add-param').addEventListener('click', addParamRow);
+  document.getElementById('e2e-create-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const msg = document.getElementById('e2e-create-msg');
+    const project = document.getElementById('ec-project').value;
+    const specFile = document.getElementById('ec-specfile').value.trim();
+    const scenario = document.getElementById('ec-scenario').value.trim();
+    if (!project || !specFile || !scenario) { msg.textContent = 'project (repo source), specFile et scenario sont requis.'; msg.className = 'msg error'; return; }
+    const coveredProjects = [...document.querySelectorAll('#modal-backdrop .ec-covered:checked')].map((x) => x.value);
+    const params = [];
+    for (const row of paramsList.querySelectorAll('.ec-param-row')) {
+      const name = row.querySelector('.ec-p-name').value.trim();
+      if (!name) continue;
+      const kind = row.querySelector('.ec-p-kind').value;
+      const defaultValue = row.querySelector('.ec-p-default').value.trim();
+      const secretRef = row.querySelector('.ec-p-secretref').value.trim();
+      if (kind === 'secret' && defaultValue) {
+        msg.textContent = 'Paramètre secret « ' + name + ' » : aucune valeur en clair (secretRef uniquement).';
+        msg.className = 'msg error';
+        return;
+      }
+      params.push({ name, kind, defaultValue: defaultValue || undefined, secretRef: secretRef || undefined, required: row.querySelector('.ec-p-required').checked });
+    }
+    try {
+      await api('/api/e2e-tests', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        project,
+        specFile,
+        scenario,
+        title: document.getElementById('ec-title').value.trim() || undefined,
+        description: document.getElementById('ec-description').value.trim() || undefined,
+        coveredProjects,
+        params,
+      }) });
+      closeModal();
+      refreshActive();
+    } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
+  });
 }
 
 // Ouvre la session de recette : reprend la session rattachée si elle existe
@@ -1642,7 +2051,10 @@ async function taskActionsModal(taskId) {
 
       ${status === 'done' ? recetteSectionHtml(recette, detail) : ''}
 
-      <div class="actions-section" id="e2e-block"></div>
+      <div class="actions-section">
+        <h3>Tests E2E</h3>
+        <p class="muted-sm" id="e2e-actions-hint">Chargement…</p>
+      </div>
 
       <div class="actions-section">
         <h3>Opérations</h3>
@@ -1723,7 +2135,7 @@ async function taskActionsModal(taskId) {
       } catch (err) { alert('Échec : ' + (err.message || err)); }
     });
   });
-  renderTaskE2EBlock(taskId, document.getElementById('e2e-block'));
+  renderTaskE2ELink(taskId);
 }
 
 async function taskEditModal(taskId, detail) {
@@ -2284,7 +2696,7 @@ async function renderObservability() {
 }
 
 const RENDER = {
-  overview: renderOverview, observability: renderObservability, projects: renderProjects, tasks: renderTasks, recettes: renderRecettes,
+  overview: renderOverview, observability: renderObservability, projects: renderProjects, tasks: renderTasks, e2etests: renderE2ETests, recettes: renderRecettes,
   events: renderEvents, deployments: renderDeployments, decisions: renderDecisions, artifacts: renderArtifacts, plans: renderPlans, archives: renderArchives, ecosystem: renderEcosystem, users: renderUsers,
 };
 

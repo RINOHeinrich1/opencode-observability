@@ -5,6 +5,43 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.9.0 — 2026-09-05 · Tests E2E en entités de 1er niveau — implémentation (cadrage 08)
+
+Mise en œuvre du cadrage `08-tests-e2e-independants.md` : les tests E2E sont des
+entités indépendantes des tâches (multi-projets, exécutions propriété du test,
+paramètres, onglet dédié).
+
+- **MCP task-orchestrator v0.8.0** : schéma + outils — `e2e_tests` (+description),
+  `e2e_test_projects` (projets couverts N:N, fallback repo source),
+  `e2e_test_params` (kind url/string/secret/int/bool, default non sensible,
+  secretRef hors registre), `e2e_executions` propriété du test (`origin`
+  task|recette|ci|manual|session, task_id optionnel, param_values). Outils :
+  `e2e_test_register` enrichi (coveredProjects/description), `e2e_test_update`/
+  `get`/`obsolete`/`param_set`, `e2e_list` global (taskId/project/status/search),
+  exécutions avec origin, `e2e_run` par `e2eTestId` (+ résolution spec/params,
+  origin dérivé), `e2e_collect` origin=ci.
+- **MCP task-orchestrator v0.8.1** : `e2e_sync_repo` (T10) — scan des spec files
+  Playwright → upsert ACTIVE / OBSOLETE si disparu ; idempotent, historique
+  conservé. Validé mada-talk (unchanged) + oniria-preprod (14 tests legacy créés).
+- **Panel v0.9.0** : onglet **« Tests E2E »** — liste (projets couverts, dernier
+  run, filtres projet/statut/recherche + pré-filtre par tâche), détail (infos,
+  paramètres, tâches liées, historique + preuves texte/vidéo), créer/lancer/
+  obsolète/lier-détacher une tâche. Colonne E2E de la table Tâches cliquable →
+  onglet pré-filtré ; **liste retirée** de la modale d'actions (lien « Voir les
+  tests E2E associés (N) »). Endpoints REST lecture SQL + écritures MCP ;
+  sécurité : secrets jamais renvoyés ni surchargeables en clair.
+- **Agents v0.5.0** : atomic-plan/build-notify enregistrent le test dès qu'un
+  spec existe (`coveredProjects`, params, lien tâche en association) ; exécution
+  par test avec origine ; orchestrateur §13 **gate doux** (T9) — décision humaine
+  à la clôture si tests liés non PASSED ; agent-recette par `e2eTestId`
+  (origin=recette).
+- **Backfill (T8)** : origin posé sur les 342 exécutions historiques (290 task,
+  52 recette) ; 265 tests ACTIVE backfillés `e2e_test_projects`.
+- Doc `07-tests-e2e.md` marqué SUPERSÉDÉ par `08` pour le modèle d'entités.
+
+Dépôts : `opencode-mcp-task-orchestrator` (v0.8.0, v0.8.1) ·
+`opencode-observability` (v0.9.0) · `opencode-agents` (v0.5.0).
+
 ## v0.8.44 — 2026-09-05 · Cadrage : tests E2E en entités de premier niveau (indépendants des tâches)
 
 Document de conception `08-tests-e2e-independants.md` (pas d'implémentation) :

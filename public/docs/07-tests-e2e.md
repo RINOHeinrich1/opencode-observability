@@ -1,6 +1,14 @@
 # 07 — Cadrage : intégration native des tests E2E Playwright dans le cycle de vie des tâches
 
-> **Statut : CADRAGE — aucune implémentation** (document de référence pour le futur
+> **Statut : CADRAGE — SUPERSÉDÉ pour le modèle d'entités.** Le modèle « test
+> adossé à la tâche » décrit ici est remplacé par
+> [08-tests-e2e-independants.md](08-tests-e2e-independants.md) : les tests E2E
+> sont des **entités de 1er niveau indépendantes des tâches** (multi-projets,
+> exécutions propriété du test, paramètres, onglet dédié). Les règles de preuve
+> (rapport texte IA / vidéo humaine) et le cycle FAIL/3 itérations restent
+> valides. Dernière mise à jour : 2026-09-05.
+>
+> **Statut historique : CADRAGE — aucune implémentation** (document de référence pour le futur
 > plan atomic-plan). Dernière mise à jour : 2026-09-04.
 >
 > Périmètre documentaire : écosystème d'orchestration (opencode-observability /

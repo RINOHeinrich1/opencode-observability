@@ -768,8 +768,6 @@ async function e2eRunModal(e2eTestId) {
   document.getElementById('e2e-run-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const msg = document.getElementById('e2e-run-msg');
-    msg.textContent = 'Lancement en cours… le run peut prendre du temps (historique du test ensuite).';
-    msg.className = 'msg';
     const paramValues = {};
     document.querySelectorAll('#modal-backdrop [data-pv]').forEach((inp) => {
       const v = inp.value.trim();
@@ -777,28 +775,41 @@ async function e2eRunModal(e2eTestId) {
     });
     const pwRaw = document.getElementById('er-pwargs').value.trim();
     const pwArgs = pwRaw ? pwRaw.split(/\s+/).filter(Boolean) : [];
+    // Capture des valeurs AVANT fermeture (le modal est vidé par closeModal).
+    const runBody = {
+      repoDir: document.getElementById('er-repodir').value.trim() || undefined,
+      baseUrl: document.getElementById('er-baseurl').value.trim() || undefined,
+      origin: document.getElementById('er-origin').value,
+      taskId: document.getElementById('er-taskid').value.trim() || undefined,
+      specPattern: document.getElementById('er-specpattern').value.trim() || undefined,
+      playwrightConfig: document.getElementById('er-pwconfig').value.trim() || undefined,
+      pwArgs,
+      paramValues,
+    };
+    // Le run E2E est SYNCHRONE et peut durer plusieurs minutes (import auto à la
+    // fin). On bascule immédiatement sur l'historique du test (détail) pendant
+    // que le run s'exécute ; l'import auto l'y fera apparaître au refresh.
+    msg.textContent = 'Lancement du run… il peut prendre plusieurs minutes (install + navigateur + scénario). Ouverture de l\'historique du test : le résultat y apparaîtra dès l\'import.';
+    msg.className = 'msg';
+    closeModal();
+    e2eDetailModal(e2eTestId);
     try {
       const r = await api(`/api/e2e-tests/${encodeURIComponent(e2eTestId)}/run`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          repoDir: document.getElementById('er-repodir').value.trim(),
-          baseUrl: document.getElementById('er-baseurl').value.trim() || undefined,
-          origin: document.getElementById('er-origin').value,
-          taskId: document.getElementById('er-taskid').value.trim() || undefined,
-          specPattern: document.getElementById('er-specpattern').value.trim() || undefined,
-          playwrightConfig: document.getElementById('er-pwconfig').value.trim() || undefined,
-          pwArgs,
-          paramValues,
-        }),
+        body: JSON.stringify(runBody),
       });
-      msg.textContent = r && r.runId
-        ? `Run ${r.runId} importé — ${r.count != null ? r.count + ' exécution(s)' : 'résultats enregistrés'}. Rafraîchissement de l'historique…`
-        : 'Run envoyé (résultat non détaillé).';
-      msg.className = 'msg ok';
-      if (r && r.runId) setTimeout(() => { closeModal(); e2eDetailModal(e2eTestId); }, 800);
+      if (r && r.runId) {
+        // Run importé : rafraîchir le détail (l'historique affiche la nouvelle exécution).
+        setTimeout(() => e2eDetailModal(e2eTestId), 600);
+      }
     } catch (err) {
-      msg.textContent = err.message || String(err);
-      msg.className = 'msg error';
+      const m = err && err.message ? String(err.message) : String(err);
+      if (/run trop long|timeout/i.test(m)) {
+        alert('Le run a dépassé le temps d\'attente. Il est peut-être encore en cours — consultez l\'historique du test (Détail) dans quelques minutes, puis relancez si rien n\'apparaît.');
+      } else {
+        alert('Échec du run : ' + m);
+      }
+      e2eDetailModal(e2eTestId);
     }
   });
 }

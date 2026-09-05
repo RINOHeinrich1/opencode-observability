@@ -15,6 +15,11 @@ const MCP_SERVERS = {
 
 const PROTOCOL_VERSION = "2025-11-25";
 const CALL_TIMEOUT_MS = 30000;
+// e2e_run lance réellement Playwright (instances + navigation) : un run peut
+// légitimement durer plusieurs minutes (timeout runner 15 min). On lui donne
+// un timeout dédié bien supérieur au défaut de 30 s.
+const LONG_CALL_TIMEOUT_MS = 20 * 60 * 1000;
+const LONG_CALL_TOOLS = new Set(["e2e_run", "e2e_sync_repo"]);
 
 // Les outils du socle renvoient un contenu texte (souvent JSON sérialisé) ;
 // les erreurs sont signalées par `isError` ou un préfixe "ERREUR : ".
@@ -38,6 +43,7 @@ function parseToolResult(result) {
 export function callTool(server, tool, args = {}) {
   const cmd = MCP_SERVERS[server];
   if (!cmd) return Promise.reject(new Error(`serveur MCP inconnu : ${server}`));
+  const timeoutMs = (LONG_CALL_TOOLS.has(tool) ? LONG_CALL_TIMEOUT_MS : CALL_TIMEOUT_MS);
 
   return new Promise((resolve, reject) => {
     const child = spawn(cmd[0], cmd.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
@@ -53,7 +59,7 @@ export function callTool(server, tool, args = {}) {
       try { child.kill(); } catch {}
       reject(e);
     };
-    const timer = setTimeout(() => finishError(new Error(`timeout MCP (${server}.${tool})`)), CALL_TIMEOUT_MS);
+    const timer = setTimeout(() => finishError(new Error(`timeout MCP (${server}.${tool}) après ${Math.round(timeoutMs / 1000)} s`)), timeoutMs);
 
     child.stdout.on("data", (chunk) => {
       buf += chunk.toString();

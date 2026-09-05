@@ -5,6 +5,36 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.43 — 2026-09-05 · Correctif outillage e2e_run (cible ONIRIA + specPattern/config Playwright)
+
+Constat recette 05/09 : le run run-1788593835619 a exécuté la config Playwright
+complète du dépôt ONIRIA (36 tests) contre `http://127.0.0.1:3000` (défaut) au
+lieu des specs ciblées et de la cible déployée voulue → 36 exécutions non
+représentatives importées sur T-20260904-121804-9xkf. Trois défauts dans
+`e2e_run` (MCP task-orchestrator), corrigés :
+
+- **Environnement du run** : `ONIRIA_E2E_BASE_URL` est désormais injecté avec la
+  même valeur que la cible (`E2E_BASE_URL` reste posée — rétrocompat mada-talk).
+  Les configs Playwright du dépôt ONIRIA lisent `ONIRIA_E2E_BASE_URL` (défaut
+  `http://localhost:3000` sinon) → plus de run qui vise `127.0.0.1:3000` quand
+  une `baseUrl` externe est passée. Propagation des secrets `ONIRIA_E2E_*`
+  présents dans l'e2e.env (sans écraser `process.env`).
+- **`specPattern` réellement transmis** : il était déclaré dans le schéma mais
+  jamais passé au runner — désormais placé après le séparateur `--` (args
+  positionnels Playwright) → run ciblé au lieu de la config complète du dépôt.
+- **`playwrightConfig` + `pwArgs[]`** : nouvelle sélection de config Playwright
+  dédiée (`--config=playwright.madatalk-requests.recette.config.ts`) et args
+  Playwright supplémentaires (ex. `--project=authenticated`) via `--`, sans
+  collision avec le `--project` du registre ni avec la config.
+- Runner `opencode-scripts` v0.2.1 : trace `pwArgs` + `e2eBaseUrl` dans le
+  manifest (le runner propage déjà tout ce qui suit `--` à `npx playwright test` ;
+  aucune adaptation `--config` nécessaire).
+
+Le run témoin INVALIDE run-1788593835619 (36 exécutions) est écarté/documenté
+comme non représentatif sur la tâche liée.
+
+Dépôts : `opencode-mcp-task-orchestrator` (v0.7.4) · `opencode-scripts` (v0.2.1) · `opencode-observability` (docs v0.8.43).
+
 ## v0.8.42 — 2026-09-04 · Recette : retirer un élément (recette_item_delete / bouton panneau)
 
 - MCP v0.7.3 : outil recette_item_delete (itemId) — utilisé pour fusionner /

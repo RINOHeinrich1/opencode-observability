@@ -5,6 +5,30 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.8.44 — 2026-09-05 · Cadrage : tests E2E en entités de premier niveau (indépendants des tâches)
+
+Document de conception `08-tests-e2e-independants.md` (pas d'implémentation) :
+les tests E2E deviennent des entités 1er niveau du registre, **indépendantes des
+tâches**, couvrant des comportements parfois transverses à **plusieurs projets**
+(N:N). Points actés avec l'utilisateur :
+
+- **Exécutions = propriété du test** ; la tâche/recette/CI/manuel devient une
+  **origine optionnelle tracée** (`origin` + `task_id` optionnel).
+- **Création** : entité enregistrée dès qu'un spec existe (tâche feature ou
+  session de création dédiée depuis l'onglet Tests) ; la session reçoit les
+  **tâches liées en contexte**.
+- **Paramètres de test** (URL, compte, token…) : valeur par défaut + surcharge à
+  l'exécution ; secrets hors registre (refs e2e.env).
+- **UI** : nouvel onglet « Tests E2E » (liste, lancer, historique + preuves vidéo/
+  texte, créer) ; colonne E2E de la table Tâches conservée → clic = onglet
+  pré-filtré sur les tests de la tâche ; **liste retirée** de la modale d'actions.
+- **Backfill** : entités/exécutions enregistrées + runs de recette récents
+  (T-…9xkf) + runs CI orphelins de l'inbox.
+- Points ouverts listés (gate clôture, scan/import auto, multi-cibles, droits,
+  formats params, workflow E2E ONIRIA).
+
+Dépôt : `opencode-observability` (docs v0.8.44).
+
 ## v0.8.43 — 2026-09-05 · Correctif outillage e2e_run (cible ONIRIA + specPattern/config Playwright)
 
 Constat recette 05/09 : le run run-1788593835619 a exécuté la config Playwright

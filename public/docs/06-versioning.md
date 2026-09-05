@@ -1,4 +1,4 @@
-# 06 — Versioning de l'écosystème (v0.8.43)
+# 06 — Versioning de l'écosystème (v0.8.44)
 
 > **FR** — Politique de versionnage de l'écosystème opencode : chaque version est
 > traçable dans la doc (CHANGELOG), taguée git (`vX.Y.Z`) sur chaque dépôt, et
@@ -33,7 +33,7 @@
 
 | Dépôt | Chemin hôte | Version actuelle |
 |---|---|---|
-| `opencode-observability` (panneau + docs) | `/root/orchestrator-panel` | `0.8.43` |
+| `opencode-observability` (panneau + docs) | `/root/orchestrator-panel` | `0.8.44` |
 | `opencode-agents` | `~/.config/opencode/agent` | `0.4.12` |
 | `opencode-notifier` | `~/.config/opencode/notifier` | `0.1.0` |
 | `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.7.4` |
@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.43** (2026-09-05,
-Correctif outillage e2e_run — cible ONIRIA + specPattern/config Playwright).
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.8.44** (2026-09-05,
+Cadrage tests E2E en entités de premier niveau — indépendants des tâches).

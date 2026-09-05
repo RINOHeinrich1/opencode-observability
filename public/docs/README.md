@@ -17,6 +17,8 @@
 | 4 | [04-reproduction.md](04-reproduction.md) | Guide de reproduction pas-à-pas / Step-by-step setup guide |
 | 5 | [05-reference.md](05-reference.md) | Modèle de données, machines à états, config, glossaire |
 | 6 | [06-versioning.md](06-versioning.md) | Versioning de l'écosystème / Ecosystem versioning (v0.1.0) |
+| 7 | [07-tests-e2e.md](07-tests-e2e.md) | Cadrage tests E2E adossés aux tâches (remplacé par 08 pour le modèle d'entités) |
+| 8 | [08-tests-e2e-independants.md](08-tests-e2e-independants.md) | **Cadrage tests E2E en entités de premier niveau** (indépendants des tâches) |
 | — | [CHANGELOG.md](CHANGELOG.md) | Historique des versions / Version history |
 
 ## À qui s'adresse ce document / Who this is for

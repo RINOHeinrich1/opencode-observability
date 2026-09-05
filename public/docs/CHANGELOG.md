@@ -24,8 +24,11 @@ tâches**, couvrant des comportements parfois transverses à **plusieurs projets
   pré-filtré sur les tests de la tâche ; **liste retirée** de la modale d'actions.
 - **Backfill** : entités/exécutions enregistrées + runs de recette récents
   (T-…9xkf) + runs CI orphelins de l'inbox.
-- Points ouverts listés (gate clôture, scan/import auto, multi-cibles, droits,
-  formats params, workflow E2E ONIRIA).
+- Décisions complémentaires : **gate doux** à la clôture (décision humaine si
+  tests liés non passés), **synchronisation automatique** registre↔repo,
+  **une seule exécution** multi-projets, workflow E2E ONIRIA **hors périmètre**.
+- Points ouverts restants : droits de l'onglet Tests, formats des paramètres,
+  rétention, point d'accroche de la sync auto.
 
 Dépôt : `opencode-observability` (docs v0.8.44).
 

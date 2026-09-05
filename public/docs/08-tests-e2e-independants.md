@@ -36,6 +36,10 @@ paramètres.
 | T6 | Colonne E2E (table tâches) | Conservée : badge visible **seulement si la tâche a des tests associés** ; le clic **redirige vers l'onglet Tests E2E pré-filtré** sur les tests de cette tâche. |
 | T7 | Modale d'actions d'une tâche | La **liste des tests est retirée** de la modale d'actions ; remplacée par un lien « Voir les tests E2E » (→ onglet filtré). |
 | T8 | Backfill | Migrer vers le nouveau modèle : entités `e2e_tests`/exécutions déjà en registre + runs de recette récents (T-…9xkf) + runs CI orphelins de l'inbox. (Hors périmètre : scan des specs legacy non enregistrés des repos.) |
+| T9 | Gate à la clôture (tâche) | **Gate DOUX** : à la clôture d'une tâche ayant des tests liés non `PASSED` (ou jamais exécutés), l'orchestrateur pose une **décision humaine** (« tests en échec/non exécutés, clore quand même ? ») au lieu de clore en silence. Aucun blocage automatique (pas de gate dur). |
+| T10 | Synchronisation registre ↔ repo | **Oui — synchronisation AUTOMATIQUE** du registre `e2e_tests` : le registre est un **reflet du repo**. Un spec créé/modifié/supprimé dans un repo applicatif met à jour le registre (création, `OBSOLETE` si disparu) — via scan/import à chaque déploiement (mécanique à préciser au plan : étape CI du repo ou script collecteur). |
+| T11 | Exécution multi-projets | **Une SEULE exécution** `e2e_executions` couvre le comportement transverse (ex. mada-talk → ONIRIA) : les paramètres (baseURL par projet/cible) sont portés par le même run via `param_values`. Pas de sous-exécutions par projet. |
+| T12 | Workflow E2E ONIRIA | **Hors périmètre de ce chantier** (inexistant aujourd'hui — ignoré, ne pas le créer ici). |
 
 ---
 
@@ -230,6 +234,24 @@ Détail d'un test (clic sur une ligne) :
   **rapport texte uniquement**.
 - La vidéo reste une **preuve humaine** (jamais interprétée par l'IA).
 
+### 6.4 Gate doux à la clôture d'une tâche (T9)
+
+Quand l'orchestrateur s'apprête à clore une tâche (`done`) qui a des tests liés :
+- tests tous `PASSED` (ou `NA` justifié) → clôture normale ;
+- tests en échec / jamais exécutés → l'orchestrateur pose une **décision humaine**
+  (`decision_request`, kind `validation`) « tests E2E non passés — clore quand
+  même ? » avec le détail (tests, statuts) ; clôture seulement après résolution
+  humaine (jamais de blocage automatique).
+
+### 6.5 Synchronisation automatique registre ↔ repo (T10)
+
+À chaque déploiement d'un repo applicatif, un **scan/import** met à jour le
+registre pour refléter le repo : création des tests dont le spec existe, passage
+`OBSOLETE` des tests dont le spec a disparu, mise à jour titre/chemin si besoin —
+sans jamais supprimer l'historique d'exécution. Les entités ainsi créées/raffraîchies
+portent leur repo source + projets couverts ; un test **sans** lien tâche est un
+test autonome valide (visible dans l'onglet Tests).
+
 ---
 
 ## 7. Rétrocompatibilité & migration
@@ -259,36 +281,30 @@ Sources à migrer vers le nouveau modèle :
    `taskId null`) → collectés et rattachés aux tests correspondants
    (origine `ci`), ce qui comble le trou de collecte (M4 du constat).
 
-Hors périmètre : scan/import des spec files legacy des repos non encore
-enregistrés (constat T-20260904-121806-vvia) — à trancher séparément (un
-scan/import automatique « registre = reflet du repo » reste un point ouvert, cf.
-§9.2).
+Hors périmètre (décision T12) : création d'un workflow E2E GitHub Actions pour le
+repo ONIRIA (inexistant — ignoré dans ce chantier). Hors périmètre aussi : le
+scan/import des spec files legacy des repos non encore enregistrés **en tant
+qu'action manuelle de backfill** — ce besoin est couvert à terme par la
+**synchronisation automatique** (T10, §6.5), qui reflettera le repo à chaque
+déploiement (constat T-20260904-121806-vvia).
 
 ---
 
 ## 9. Points ouverts (à trancher au plan)
 
-1. **Gate à la clôture** : le cadrage 07 annonçait « pas de done sans E2E PASS ou
-   NA » sans que l'orchestrateur ne le porte (constat M1). Dans le modèle
-   indépendant, faut-il un gate formel (tâche `done` conditionnée) ou le badge/
-   l'onglet restent-ils informatifs ?
-2. **Scan/import automatique** : qui tient le registre à jour quand un spec
-   apparaît/disparaît du repo (scan CI à chaque déploiement vs enregistrement
-   explicite par l'agent) ? (D2 de 07 non implémenté — constat M3.)
-3. **Multi-cibles multi-projets** : représentation exacte d'une exécution qui
-   traverse deux projets (ex. mada-talk client → ONIRIA) : une seule exécution
-   `e2e_executions` avec `param_values` couvrant les deux baseURL, ou
-   sous-exécutions par projet ?
-4. **Onglet Tests : droits** (qui peut créer/lancer/modifier — admin vs
+Résolus en cadrage (T1-T12) : gate doux (T9), sync auto registre (T10), une seule
+exécution multi-projets (T11), workflow E2E ONIRIA hors périmètre (T12).
+
+1. **Onglet Tests : droits** (qui peut créer/lancer/modifier — admin vs
    utilisateurs) et interactions avec l'écran Écosystème/agents.
-5. **Formats des paramètres** : typage (url/string/secret/int/bool), expression
+2. **Formats des paramètres** : typage (url/string/secret/int/bool), expression
    des défauts multi-projets, jeton de substitution dans les spec files
    (`process.env` mappés par le runner).
-6. **Rétention** : historique d'exécution d'un test indépendant (durée de
+3. **Rétention** : historique d'exécution d'un test indépendant (durée de
    conservation, archive), vidéos mensuelles (inchangé).
-7. **Workflow E2E ONIRIA** : faut-il créer le workflow d'exécution E2E pour le
-   repo ONIRIA (actuellement inexistant — constat M2) dans ce chantier ou à
-   part ?
+4. **Point d'accroche de la sync auto (T10)** : étape CI par repo vs script
+   collecteur générique ; montée en charge ; cas des specs transverses (le même
+   spec enregistré sous le repo source, projets couverts renseignés).
 
 ---
 

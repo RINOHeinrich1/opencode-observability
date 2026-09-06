@@ -222,6 +222,12 @@ async function registryTaskDetail(id) {
   const decisions = await q("SELECT * FROM decisions WHERE task_id = $1 ORDER BY id DESC", [id]);
   const artifacts = await q("SELECT * FROM artifacts WHERE task_id = $1 ORDER BY id DESC", [id]);
   const sessions = await q("SELECT session_id, kind, created_at FROM task_sessions WHERE task_id = $1 ORDER BY id ASC", [id]);
+  // Repos ciblés de la tâche (ADR 09) — 1..N, défaut = tous ceux du projet.
+  const taskRepos = await q(
+    `SELECT r.id, r.name, r.git_path AS "repoDir", r.workspace, r.main_branch AS "mainBranch", r.e2e_repo_dir AS "e2eRepoDir", r.e2e_base_url AS "e2eBaseUrl"
+     FROM repos r JOIN task_repos tr ON tr.repo_id = r.id
+     WHERE tr.task_id = $1 ORDER BY r.name ASC`, [id],
+  );
   const linkedTasks = await q(
     `SELECT l.linked_task_id, l.description,
             t.request AS linked_request, t.recette_status AS linked_recette,
@@ -244,7 +250,7 @@ async function registryTaskDetail(id) {
     const projs = (await q("SELECT project FROM recette_projects WHERE recette_id = $1 ORDER BY project", [rec.recette_id])).map((x) => x.project);
     recette = { recetteId: rec.recette_id, project: rec.project, projects: projs.length ? projs : (rec.project ? [rec.project] : []), title: rec.title, sessionId: rec.session_id, status: rec.status, confirmedAt: rec.confirmed_at, confirmedBy: rec.confirmed_by, tasks, items };
   }
-  return { task, executions, events, deployments, decisions, artifacts, sessions, linkedTasks, recette, archived: (await archivedTaskIds()).has(id) };
+  return { task: { ...task, repos: taskRepos }, executions, events, deployments, decisions, artifacts, sessions, linkedTasks, recette, archived: (await archivedTaskIds()).has(id) };
 }
 
 async function snapshotForTask(taskId) {

@@ -109,7 +109,7 @@ export async function editTask({ taskId, request, title, acceptanceCriteria, sco
     linkedTasks: linkedTasks !== undefined ? linkedTasks.filter((l) => l && l.taskId) : undefined,
   });
 }
-export async function createTask({ request, title, acceptanceCriteria, project, type, scope, priority, auditTarget, linkedTasks, directExecution, agents }) {
+export async function createTask({ request, title, acceptanceCriteria, project, type, scope, priority, auditTarget, linkedTasks, directExecution, agents, repoIds }) {
   if (!request || !project || !type) throw new Error("request, project et type requis");
   const reg = await taskOrchestrator("task_register", {
     request,
@@ -122,6 +122,7 @@ export async function createTask({ request, title, acceptanceCriteria, project, 
     priority: priority || "normal",
     directExecution: !!directExecution,
     linkedTasks: (linkedTasks || []).filter((l) => l && l.taskId).map((l) => ({ taskId: l.taskId, description: l.description })),
+    repoIds: Array.isArray(repoIds) && repoIds.length ? repoIds : undefined,
   });
   const taskId = reg && (reg.taskId || (reg.task && reg.task.id));
   const list = agents && agents.length ? agents : agentsForType(type, auditTarget);

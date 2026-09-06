@@ -2354,6 +2354,15 @@ function projectDeleteModal(projectId) {
 async function taskCreateModal() {
   const projs = await api('/api/projects');
   const projects = projs.projects || [];
+  const reposRes = await api('/api/repos').catch(() => ({ repos: [] }));
+  const reposById = new Map((reposRes.repos || []).map((r) => [r.id, r]));
+  // Sélection de repos par projet (mémorisée).
+  const projRepoIds = {};
+  const selectedRepoIds = () => [...document.querySelectorAll('#modal-backdrop .tr-repo:checked')].map((c) => c.value);
+  const reposOf = (pid) => {
+    const p = projects.find((x) => x.id === pid);
+    return (p && p.repos || []).map((rid) => reposById.get(rid)).filter(Boolean);
+  };
   showModal(`
     <div class="modal">
       <h2>Nouvelle tâche</h2>
@@ -2362,6 +2371,10 @@ async function taskCreateModal() {
           <option value="">— projet —</option>
           ${projects.map((p) => `<option value="${esc(p.id)}">${esc(p.name || p.id)}</option>`).join('')}
         </select>
+        <fieldset id="tm-repos-fieldset" class="pilot-fieldset" hidden>
+          <legend>Repos concernés <span class="muted-sm">— par défaut : tous les repos du projet (ADR 09)</span></legend>
+          <div id="tm-repos-list"></div>
+        </fieldset>
         <select id="tm-type" required>
           <option value="feature">feature</option>
           <option value="debug">debug</option>
@@ -2424,6 +2437,27 @@ async function taskCreateModal() {
   document.getElementById('tm-add-link').addEventListener('click', () => addLinkRow());
   addLinkRow(); // une ligne par défaut
 
+  // Binding projet → repos (défaut : tous cochés ; mémorise les choix par projet).
+  const repoList = document.getElementById('tm-repos-list');
+  const fieldset = document.getElementById('tm-repos-fieldset');
+  const projSel = document.getElementById('tm-project');
+  const renderRepoChecks = (pid) => {
+    const reps = reposOf(pid);
+    if (!reps.length) { fieldset.hidden = true; repoList.innerHTML = ''; return; }
+    fieldset.hidden = false;
+    const saved = projRepoIds[pid];
+    repoList.innerHTML = reps.map((r) => `
+      <label class="filter-check"><input type="checkbox" class="tr-repo" value="${esc(r.id)}"
+        ${!saved || saved.includes(r.id) ? 'checked' : ''}>
+        <code>${esc(r.id)}</code>${r.workspace ? ` <span class="muted-sm">· ${esc(r.workspace)}</span>` : ''}${r.mainBranch ? ` <span class="muted-sm">· ${esc(r.mainBranch)}</span>` : ''}
+      </label>`).join('');
+  };
+  projSel.addEventListener('change', () => {
+    const pid = projSel.value;
+    if (pid) projRepoIds[pid] = selectedRepoIds();
+    renderRepoChecks(pid);
+  });
+
   document.getElementById('task-modal-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const msg = document.getElementById('task-modal-msg');
@@ -2431,9 +2465,12 @@ async function taskCreateModal() {
     const type = typeSel.value;
     const linkedTasks = [...linksList.querySelectorAll('.link-row')]
       .map((r) => ({ taskId: r.querySelector('.link-task').value.trim(), description: r.querySelector('.link-desc').value.trim() }))
-      .filter((l) => l.taskId);    try {
+      .filter((l) => l.taskId);
+    const pid = projSel.value;
+    projRepoIds[pid] = selectedRepoIds();
+    try {
       await api('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-        project: document.getElementById('tm-project').value,
+        project: pid,
         type,
         auditTarget: type === 'audit' ? targetSel.value : undefined,
         directExecution: type !== 'audit' && modeSel.value === 'direct',
@@ -2442,6 +2479,7 @@ async function taskCreateModal() {
         acceptanceCriteria: [document.getElementById('tm-acceptance').value.trim()],
         scope: scopeRaw ? scopeRaw.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
         linkedTasks,
+        repoIds: projRepoIds[pid] && projRepoIds[pid].length ? projRepoIds[pid] : undefined,
       }) });
       closeModal();
       refreshActive();
@@ -2471,6 +2509,7 @@ async function taskActionsModal(taskId) {
       <div class="modal-request">${esc(task.request || '—')}</div>
       ${(() => { let c = ''; try { const a = typeof task.acceptance_criteria === 'string' ? JSON.parse(task.acceptance_criteria) : (task.acceptance_criteria || []); c = Array.isArray(a) ? a.join(' · ') : String(a || ''); } catch { c = String(task.acceptance_criteria || ''); } return c ? `<p class="muted-sm"><strong>Critère d'acceptation :</strong> ${esc(c)}</p>` : ''; })()}
       <p class="muted-sm">Projet <span class="code">${esc(task.project)}</span> · Type <span class="code">${esc(task.type)}</span> · ${badge(status)} · Recette ${recetteBadge(recette)}</p>
+      ${(task.repos && task.repos.length) ? `<p class="muted-sm"><strong>Repos ciblés (${task.repos.length}) :</strong> ${task.repos.map((r) => `<code class="chip">${esc(r.id)}${r.mainBranch ? ' · ' + esc(r.mainBranch) : ''}</code>`).join(' ')}</p>` : ''}
 
       ${linked.length ? `
       <div class="actions-section">

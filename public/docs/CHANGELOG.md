@@ -5,6 +5,24 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.9.17 — 2026-09-06 · Mécanisme de déploiement CI/CD par repo (champ `deploy`)
+
+Le mécanisme de déploiement n'est plus une instruction d'agent éparse : il vit au
+niveau du **repo** et est fourni en contexte à l'orchestrateur au traitement.
+
+- `repos.deploy` (texte libre) : workflows CI/CD, branches de déclenchement,
+  cibles de CE repo. Renseigné pour `mada-talk` (preprod-deploy.yml sur main →
+  /var/www/preprod-client.madatalk.fr) et `oniria` (core-build-deploy.yml sur
+  oniria-preprod + package-build-deploy.yml via branches `packages/*`, PM2).
+- `task_get` → `task.repos[].deploy` ; `buildLaunchPrompt` injecte le mécanisme
+  de chaque repo dans le prompt orchestrateur (« déploiement repo par repo via
+  son CI/CD, jamais manuel »).
+- Panel : modale repo (champ « Mécanisme de déploiement CI/CD ») + carte projet
+  (résumé par repo).
+
+Dépôts : `opencode-mcp-task-orchestrator` (v0.8.18) · `opencode-observability`
+(v0.9.17).
+
 ## v0.9.15 — 2026-09-06 · Tâches émergentes (demande hors scope → nouvelle tâche liée)
 
 Quand un agent reçoit, pendant sa tâche, une demande utilisateur **hors scope**,

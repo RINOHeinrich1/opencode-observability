@@ -783,11 +783,15 @@ async function handleE2ECreateTask(res, id, b) {
   if (!t) return sendJson(res, 404, { error: "test E2E inconnu" });
   const { request, title, type, scope, priority, acceptanceCriteria, directExecution, extraRequest } = b || {};
   const project = t.project;
-  if (!project) return sendJson(res, 400, { error: "le test n'a pas de projet repo source — création de tâche impossible" });
+  if (!project) return sendJson(res, 400, { error: "le test n'a pas de projet (produit) — création de tâche impossible" });
   const taskRequest = (request && String(request).trim())
     ? String(request).trim()
     : `[Test E2E requis — ${t.spec_file} :: ${t.scenario}] ${extraRequest ? String(extraRequest).trim() : "Implémenter le comportement couvert par ce test (contrat BDD/TDD)."}`;
   const taskTitle = (title && String(title).trim()) || `E2E requis : ${t.scenario || t.title || t.e2eTestId}`;
+  // ADR 11 : la tâche requise hérite des repos de code du test (couverture).
+  const taskRepoIds = ((t.repos || []).map((r) => r && r.id).filter(Boolean)).length
+    ? (t.repos || []).map((r) => r && r.id).filter(Boolean)
+    : undefined;
   try {
     const created = await pilot.createTask({
       request: taskRequest,
@@ -797,6 +801,7 @@ async function handleE2ECreateTask(res, id, b) {
       type: type || "feature",
       scope: scope || undefined,
       priority: priority || "normal",
+      repoIds: taskRepoIds,
       directExecution: !!directExecution,
     });
     const taskId = created && (created.taskId || (created.task && created.task.id));
@@ -831,10 +836,13 @@ function e2eTitleSlug(title) {
 }
 
 async function handleE2ECreate(res, b) {
-  const { project, specFile, scenario, title, description, coveredProjects, params, viaAgent } = b || {};
-  if (!project) return sendJson(res, 400, { error: "project requis (repo source)" });
+  const { project, specFile, scenario, title, description, coveredProjects, repoIds, repos, params, viaAgent } = b || {};
+  if (!project) return sendJson(res, 400, { error: "project requis (projet produit)" });
   const guard = e2eParamsGuard(params);
   if (guard) return sendJson(res, 400, { error: guard });
+  // repos de code associés (ADR 11) : `repos` = alias `repoIds` (ids de repos).
+  const repoList = (Array.isArray(repos) && repos.length ? repos : repoIds);
+  const repoIdsFinal = Array.isArray(repoList) ? repoList.map((x) => x && String(x).trim()).filter(Boolean) : undefined;
 
   if (viaAgent) {
     // Création via test-agent : le spec n'existe pas encore. On enregistre une
@@ -844,7 +852,7 @@ async function handleE2ECreate(res, b) {
     const slug = e2eTitleSlug(title);
     const specPath = (specFile && String(specFile).trim()) || `tests/playwright/${slug}.spec.ts`;
     const sc = (scenario && String(scenario).trim()) || String(title).trim();
-    const r = await pilot.createE2ETest({ project, specFile: specPath, scenario: sc, title, description, coveredProjects, params });
+    const r = await pilot.createE2ETest({ project, specFile: specPath, scenario: sc, title, description, coveredProjects, repoIds: repoIdsFinal, params });
     const test = r && r.test;
     if (!test) return sendJson(res, 500, { error: "création du test échouée" });
     // Passe l'entité en DRAFT (spec pas encore rédigé) puis lance la session.
@@ -855,7 +863,7 @@ async function handleE2ECreate(res, b) {
   }
 
   if (!specFile || !scenario) return sendJson(res, 400, { error: "project, specFile et scenario requis pour enregistrer un test existant" });
-  const r = await pilot.createE2ETest({ project, specFile, scenario, title, description, coveredProjects, params });
+  const r = await pilot.createE2ETest({ project, specFile, scenario, title, description, coveredProjects, repoIds: repoIdsFinal, params });
   return sendJson(res, 201, { ok: true, test: r && r.test });
 }
 

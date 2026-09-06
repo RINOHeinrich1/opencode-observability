@@ -1,10 +1,18 @@
 # 11 — Tests E2E : rattachement à un PROJET unique + repos traversés (correction modèle)
 
-> **Statut : VALIDÉ (2026-09-06) — à implémenter.**
+> **Statut : VALIDÉ (2026-09-06) — implémenté (MCP v0.8.22 / panel v0.9.20).**
 > Correction sémantique du modèle des tests E2E (ADR 08) suite au retour
 > utilisateur : un test vérifie le comportement d'**UN projet** (produit), et
 > peut traverser **1..N repos**. Le modèle précédent (« un test peut couvrir
 > plusieurs projets ») était faux.
+>
+> **Retour utilisateur (v0.9.20)** : les repos de code associés au test doivent
+> être **définissables à la création** du test — ils constituent la **couverture**
+> que l'agent de recette lit dès le départ (ex. S1 traverse `mada-talk` ET
+> `oniria`). Implémenté : `e2e_test_register`/`e2e_test_update` acceptent
+> `repoIds`, les modales de création du panneau exposent un sélecteur de repos du
+> projet, `e2e_list(taskId)` renvoie les repos, et la tâche requise créée depuis
+> un test hérite de ses repos.
 
 ---
 
@@ -37,13 +45,18 @@ Règles :
 1. **`e2e_tests.project` = LE projet (produit)** dont le comportement est vérifié
    (`madatalk`, `oniria`, …). Un test = un seul projet.
 2. **`e2e_test_repos` (N:N)** = les repos que le comportement traverse
-   (`mada-talk` front, `oniria` console, …).
+   (`mada-talk` front, `oniria` console, …). **Ces repos = la COUVERTURE code du
+   test**, définie à la création (`repoIds` sur `e2e_test_register`/update ou
+   sélecteur du panneau) et lue par l'agent de recette (`e2e_list` →
+   `test.repos`). Défaut si absents : tous les repos du projet.
 3. **Repo du spec / exécution** : déduit parmi les repos du test — c'est le repo
    qui contient le `spec_file` (le repo « source » du spec). `e2e_run`/sync le
    résolvent ainsi.
 4. **Sélection du run (ADR 10)** : le run post-déploiement sélectionne les tests
    dont `project` = le projet de la tâche livrée (ex. tâche projet `madatalk` →
    tests `project=madatalk`), quel que soit leur repo.
+5. **Tâche requise issue d'un test** (`+ Créer une tâche (requise)`) : la tâche
+   créée hérite des repos du test (couverture visible sur la tâche).
 
 ### Exemples
 | Test (comportement) | project | repos traversés | spec vit dans |

@@ -540,11 +540,11 @@ export async function finishRecette({ recetteId, items, by }) {
 // paramètres, liens tâche↔test, obsolescence.
 // ===========================================================================
 
-// Enregistre (ou réactive) un test E2E + paramètres éventuels. project = REPO
-// SOURCE. Renvoie le test à jour (via e2e_test_get) afin que la réponse
-// contienne projets couverts + paramètres une fois ceux-ci posés.
-export async function createE2ETest({ project, specFile, scenario, title, description, coveredProjects, params }) {
-  if (!project || !specFile || !scenario) throw new Error("project (repo source), specFile et scenario requis");
+// Enregistre (ou réactive) un test E2E + paramètres éventuels. project = PROJET
+// (produit) ; repoIds = repos de code associés (repos traversés, ADR 11). Renvoie
+// le test à jour (via e2e_test_get) afin que la réponse contienne repos + params.
+export async function createE2ETest({ project, specFile, scenario, title, description, coveredProjects, repoIds, params }) {
+  if (!project || !specFile || !scenario) throw new Error("project (projet produit), specFile et scenario requis");
   const r = await taskOrchestrator("e2e_test_register", {
     project,
     specFile,
@@ -552,6 +552,7 @@ export async function createE2ETest({ project, specFile, scenario, title, descri
     title: title ? String(title).trim() : undefined,
     description: description ? String(description).trim() : undefined,
     coveredProjects: Array.isArray(coveredProjects) && coveredProjects.length ? coveredProjects.map((p) => p && String(p).trim()).filter(Boolean) : undefined,
+    repoIds: Array.isArray(repoIds) && repoIds.length ? repoIds.map((x) => x && String(x).trim()).filter(Boolean) : undefined,
   });
   const test = r && r.test;
   const id = test && (test.e2eTestId || test.id);

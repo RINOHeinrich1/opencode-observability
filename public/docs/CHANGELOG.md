@@ -5,6 +5,31 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.9.20 — 2026-09-06 · Test E2E : repos de code associés définis à la création (couverture)
+
+Un test E2E ne se contente plus d'un projet : ses **repos de code associés**
+(`repoIds` = repos traversés, ADR 11) sont maintenant **définissables dès la
+création** — ils constituent la **couverture** du test, lisible par l'agent de
+recette dès le départ (ex. S1 traverse `mada-talk` ET `oniria`).
+
+- **MCP** (`e2e_test_register` / `e2e_test_update`) : paramètre `repoIds` exposé
+  (remplace le `coveredProjects` obsolète) ; registre sans `repoIds` → défaut =
+  tous les repos du projet. `e2e_list(taskId)` renvoie désormais les `repos` de
+  chaque test (la couverture, pour l'agent de recette).
+- **Panel** : les modales de création de test (« enregistrer un test existant »
+  et « créer via test-agent ») affichent un **sélecteur de repos de code
+  associés** (repos du projet, tous cochés par défaut). La table et le détail
+  du test affichent ces repos.
+- **Tâche requise depuis un test** : la tâche créée (`+ Créer une tâche
+  (requise)`) **hérite des repos du test** → la couverture est visible sur la
+  tâche aussi.
+- **Agents** : `test-agent` renseigne `repoIds` (couverture, repos traversés) à
+  l'enregistrement ; `agent-recette` lit `test.repos` pour connaître la couverture
+  d'un test associé (où regarder / quoi vérifier).
+
+Dépôts : `opencode-mcp-task-orchestrator` (v0.8.22) · `opencode-observability`
+(v0.9.20) · `opencode-agents` (v0.6.9).
+
 ## INCO-012 (résolution, 2026-09-06) — run E2E CI rejeté (repoDir absent)
 
 Écart tracé par la tâche B ADR 10 (étape CI finale E2E) : au 1er déclenchement

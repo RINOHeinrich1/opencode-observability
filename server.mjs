@@ -1424,7 +1424,7 @@ const server = createServer(async (req, res) => {
         if ((b && b.action) === "continue") {
           return sendJson(res, 200, await pilot.continueFreeTestSession({ sessionId: b.sessionId, message: b.message }));
         }
-        return sendJson(res, 200, await pilot.launchFreeTestSession({ project: (b && b.project) || undefined, repoId: (b && b.repoId) || undefined, message: (b && b.message) || undefined }));
+        return sendJson(res, 200, await pilot.launchFreeTestSession({ project: (b && b.project) || undefined, repoId: (b && b.repoId) || undefined, message: (b && b.message) || undefined, docIds: (b && b.docIds) || undefined }));
       } catch (e) {
         const msg = String((e && e.message) || e);
         if (/indisponible|inconnu|absent|expir/i.test(msg)) return sendJson(res, 400, { error: msg });
@@ -1516,7 +1516,7 @@ const server = createServer(async (req, res) => {
       const rel = url.searchParams.get("p") || "";
       const abs = normalize(join(E2E_STORAGE_DIR, rel));
       if (!abs.startsWith(E2E_STORAGE_DIR + "/") || !existsSync(abs)) return sendJson(res, 404, { error: "introuvable" });
-      const type = /\.(webm|mp4)$/i.test(abs) ? "video/webm" : (/\.json$/i.test(abs) ? "application/json" : "text/plain");
+      const type = /\.(webm|mp4)$/i.test(abs) ? "video/webm" : (/\.json$/i.test(abs) ? "application/json; charset=utf-8" : "text/plain; charset=utf-8");
       res.setHeader("Content-Type", type);
       res.setHeader("Content-Disposition", `inline; filename="${basename(abs)}"`);
       const st = statSync(abs);

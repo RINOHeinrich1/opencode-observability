@@ -5,6 +5,23 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.9.27 — 2026-09-06 · Session test-agent libre : docs du projet + confirmation vars/secrets
+
+La modale « Session test-agent » (page Tests E2E) proposait seulement projet +
+message — sans les documents de référence ni la confirmation des variables.
+
+- **Documents de référence (ADR-12)** : dès qu'un projet est choisi, les 3
+  catégories (ADR technique / User stories+règles métier / scénarios Gherkin)
+  sont affichées, cochées par défaut ; la sélection (`docIds`) est transmise à la
+  session et injectée dans `buildFreeTestPrompt` (chemins à lire par l'agent).
+- **Confirmation variables & secrets E2E** : liste des vars (kind variable |
+  secret, purpose, valeur pour les non-sensibles) du projet choisi — l'utilisateur
+  vérifie ce qui sera injecté au run.
+- Backend : `launchFreeTestSession` résout les docs du projet (+ ses repos) et
+  honore une sélection `docIds` (vide = aucun) ; route POST /api/e2e/agent-sessions.
+
+Dépôt : `opencode-observability` (v0.9.27).
+
 ## v0.9.26 — 2026-09-06 · Session test-agent libre (accès agent sans créer de test)
 
 Sur la page **Tests E2E**, bouton **« Session test-agent »** : accéder à l'agent

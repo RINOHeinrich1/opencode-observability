@@ -362,17 +362,26 @@ export function buildTestPrompt({ e2eTestId, project, projects, title, descripti
 // Prompt d'une session test-agent LIBRE (hors entité test) : l'utilisateur veut
 // dialoguer avec l'agent de test sans forcément créer de test (questions,
 // diagnostic, conseils, exploration). Mission + cadre, jamais méthode.
-export function buildFreeTestPrompt({ project, projects, message }) {
+export function buildFreeTestPrompt({ project, projects, message, docs = [] }) {
   const projs = (projects && projects.length ? projects : (project ? [project] : []));
   const first = projs[0] || project || "";
+  const docBlock = (docs && docs.length)
+    ? [
+        "",
+        "Documents de référence du projet fournis en contexte (à LIRE selon la demande) :",
+        ...docs.map((d, i) => `  ${i + 1}. [${d.kind}] ${d.title || d.docId || ""} — chemin : \`${d.path}\``),
+        "Ce sont l'architecture technique (ADR), les specs fonctionnelles (User stories/règles métier) et les scénarios Gherkin du projet. Consulte-les pour ancrer tes réponses dans le réel.",
+        "",
+      ]
+    : [];
   const lines = [
     `Session **test-agent** (libre — ${first ? "projet(s) : " + projs.join(", ") : "sans projet attaché"}) (cadrage 08).`,
     "",
     "Tu es l'agent dédié au cycle de vie des tests E2E Playwright (entités de 1er niveau) : tu aides l'utilisateur à créer/mettre à jour/supprimer un test, à comprendre le référentiel, à diagnostiquer un écart ou à préparer un spec. Cette session est LIBRE : aucun test n'est nécessairement créé — suis la demande de l'utilisateur.",
     message ? `Demande de l'utilisateur : ${message}` : "Demande de l'utilisateur : à préciser.",
-    "",
+    ...docBlock,
     "Contexte utile :",
-    "- `e2e_list` (référentiel des tests existants, éviter les doublons), `e2e_test_get` (détail d'un test), `doc_list` (documents de référence ADR/specs/Gherkin du projet).",
+    "- `e2e_list` (référentiel des tests existants, éviter les doublons), `e2e_test_get` (détail d'un test), `doc_list` (documents de référence ADR/specs/Gherkin du projet), `e2e_var_list` (variables & secrets E2E déclarés pour le projet — nécessaires au run d'un spec).",
     "- Si tu crées/mets à jour un test : travaille dans le workspace Coder du repo, branche de travail, `e2e_test_register` (project = projet produit, repoIds = repos traversés), `e2e_test_session_set` (rattache cette session), puis un run de vérification `e2e_run` (origine session) — rapporte texte uniquement.",
     "- Si l'utilisateur ne veut que discuter / explorer : réponds, propose des options, ne crée rien sans accord.",
     "Règle IA : tu ne traites que le texte ; la vidéo est une preuve humaine.",

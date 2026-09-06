@@ -557,7 +557,9 @@ export async function listTestAgentSessions() {
 
 // Ouvre une session test-agent LIBRE (aucun test créé) dans le workspace d'un
 // projet/repo. Retourne { sessionId } (l'utilisateur reprendra via l'UI).
-export async function launchFreeTestSession({ project, repoId, message }) {
+// `docIds` (optionnel) : documents de référence (ADR-12) du projet à fournir en
+// contexte (cases à cocher) — défaut : tous les docs du projet.
+export async function launchFreeTestSession({ project, repoId, message, docIds }) {
   // Résolution du répertoire d'ancrage : le repo donné (sinon le projet → 1er repo).
   let dir = null;
   if (repoId) {
@@ -565,13 +567,29 @@ export async function launchFreeTestSession({ project, repoId, message }) {
   }
   if (!dir && project) dir = await projectGitPath(project);
   const projects = project ? [project] : [];
+  // ADR-12 : documents de référence du projet (+ ses repos), filtrés par docIds.
+  let sessionDocs = [];
+  if (project) {
+    try {
+      const dr = await taskOrchestrator("doc_list", { projectId: project, includeRepoDocs: true });
+      sessionDocs = (dr && dr.docs) || [];
+    } catch {}
+    if (Array.isArray(docIds)) {
+      if (docIds.length) {
+        const wanted = new Set(docIds.map((x) => String(x).trim()).filter(Boolean));
+        sessionDocs = sessionDocs.filter((d) => d && wanted.has(d.docId));
+      } else {
+        sessionDocs = []; // tableau fourni vide = aucun doc
+      }
+    }
+  }
   const title = `Session test-agent ${project ? "— " + project : ""}`;
-  const prompt = buildFreeTestPrompt({ project, projects, message });
+  const prompt = buildFreeTestPrompt({ project, projects, message, docs: sessionDocs });
   const { sessionId } = await launchSession({ dir, agent: "test-agent", prompt, title });
   if (!sessionId || !/^ses_/.test(sessionId)) {
     throw new Error("échec de lancement de la session test-agent (agent indisponible ?)");
   }
-  return { sessionId, resumed: false, dir };
+  return { sessionId, resumed: false, dir, docsProvided: sessionDocs.map((d) => d.docId) };
 }
 
 // Relance/reprend une session test-agent existante (la continue via injectMessage).

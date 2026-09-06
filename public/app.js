@@ -637,7 +637,9 @@ function e2eTableRow(t) {
 }
 
 // Modale « Session test-agent » : accéder à l'agent de test SANS forcément créer
-// un test — reprendre une session existante OU en ouvrir une nouvelle.
+// un test — reprendre une session existante OU en ouvrir une nouvelle. Comme en
+// création de test : sélection des documents de référence du projet (ADR-12) +
+// confirmation des variables & secrets E2E disponibles.
 async function agentSessionModal() {
   let projects = [];
   try { projects = ((await api('/api/projects')).projects || []); } catch {}
@@ -659,16 +661,24 @@ async function agentSessionModal() {
 
       <div class="actions-section">
         <h3>1 · Reprendre une session existante</h3>
-        ${sessions.length ? `<div class="recette-list" style="max-height:32vh;overflow:auto">${sessRows}</div>`
+        ${sessions.length ? `<div class="recette-list" style="max-height:28vh;overflow:auto">${sessRows}</div>`
           : '<p class="muted-sm">Aucune session ouverte actuellement — ouvrez-en une nouvelle.</p>'}
       </div>
 
       <div class="actions-section">
         <h3>2 · Ouvrir une nouvelle session</h3>
         <form id="agent-session-form" class="pilot-form">
-          <label class="modal-field">Projet (contexte) <span class="muted-sm">— optionnel, ancre la session dans le workspace du projet</span>
+          <label class="modal-field">Projet (contexte) <span class="muted-sm">— ancre la session, liste les documents &amp; variables du projet</span>
             <select id="as-project"><option value="">— aucun —</option>${projects.map((p) => `<option value="${esc(p.id)}">${esc(p.name || p.id)}</option>`).join('')}</select>
           </label>
+          <fieldset id="as-docs-fieldset" class="pilot-fieldset">
+            <legend>Documents de référence — contexte de l'agent <span class="muted-sm">(ADR technique, User stories + règles métier, scénarios Gherkin). Tous cochés par défaut.</span></legend>
+            <div id="as-docs-list"><p class="muted-sm">Sélectionnez un projet pour afficher ses documents de référence.</p></div>
+          </fieldset>
+          <fieldset id="as-vars-fieldset" class="pilot-fieldset">
+            <legend>Variables &amp; secrets E2E disponibles <span class="muted-sm">(confirmés au run — injectés automatiquement selon leur type)</span></legend>
+            <div id="as-vars-list"><p class="muted-sm">Sélectionnez un projet pour confirmer ses variables &amp; secrets.</p></div>
+          </fieldset>
           <label class="modal-field">Message / demande (optionnel)
             <textarea id="as-message" class="modal-textarea" rows="3" placeholder="ex. aide-moi à préparer un test pour … / explique-moi le référentiel E2E / diagnostique un écart"></textarea>
           </label>
@@ -682,14 +692,64 @@ async function agentSessionModal() {
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
   document.querySelectorAll('#modal-backdrop [data-reopen-session]').forEach((b) => b.addEventListener('click', () => openSid(b.dataset.reopenSession)));
+
+  // --- Projet → documents de référence + variables/secrets ---
+  const docsList = document.getElementById('as-docs-list');
+  const varsList = document.getElementById('as-vars-list');
+  const projSel = document.getElementById('as-project');
+  const KINDS = DOC_KIND_ORDER;
+  const renderDocs = (docs) => {
+    const byKind = {};
+    for (const d of docs) (byKind[d.kind] = byKind[d.kind] || []).push(d);
+    docsList.innerHTML = KINDS.map((k) => {
+      const items = byKind[k] || [];
+      const inner = items.length
+        ? `<div style="padding-left:22px">${items.map((d) => `<label class="filter-check"><input type="checkbox" class="as-doc" data-kind="${esc(k)}" value="${esc(d.docId)}" checked title="${esc(d.path)}"> ${esc(d.title || d.docId)} <span class="muted-sm" style="font-size:11px">${esc(d.path)}</span></label>`).join('')}</div>`
+        : `<p class="muted-sm" style="font-size:11px;padding-left:22px">Aucun document enregistré de ce type — ajoutez-le via <em>Projets → 📄 Docs de référence</em>.</p>`;
+      return `<div><label class="filter-check"><input type="checkbox" class="as-kind" data-kind="${esc(k)}" checked> <code class="chip">${esc(docKindLabel(k))}</code> ${esc(docKindLabelLong(k))}</label>${inner}</div>`;
+    }).join('');
+    document.querySelectorAll('#modal-backdrop .as-kind').forEach((cb) => cb.addEventListener('change', () => {
+      document.querySelectorAll(`#modal-backdrop .as-doc[data-kind="${cb.dataset.kind}"]`).forEach((d) => { d.checked = cb.checked; });
+    }));
+  };
+  const renderVars = (vars) => {
+    if (!vars.length) { varsList.innerHTML = '<p class="muted-sm">Aucune variable ni secret déclaré pour ce projet — les comptes par défaut (e2e.env) s\'appliquent.</p>'; return; }
+    varsList.innerHTML = `<div class="recette-list" style="max-height:24vh;overflow:auto">${vars.map((v) => `<div class="recette-item">
+      <code>${esc(v.name)}</code>
+      ${v.kind === 'secret' ? '<span class="badge rejected">secret</span>' : `<span class="badge approved">variable</span>${v.value != null && v.value !== '' ? `<span class="muted-sm"> · ${esc(v.value)}</span>` : ''}`}
+      <span class="muted-sm">${esc(v.purpose || '')}</span>
+    </div>`).join('')}</div>`;
+  };
+  const reloadProject = async () => {
+    const pid = projSel.value;
+    if (!pid) {
+      docsList.innerHTML = '<p class="muted-sm">Sélectionnez un projet pour afficher ses documents de référence.</p>';
+      varsList.innerHTML = '<p class="muted-sm">Sélectionnez un projet pour confirmer ses variables &amp; secrets.</p>';
+      return;
+    }
+    docsList.innerHTML = '<p class="muted-sm">Chargement…</p>';
+    varsList.innerHTML = '<p class="muted-sm">Chargement…</p>';
+    try {
+      const [dd, vd] = await Promise.all([
+        api(`/api/docs?projectId=${encodeURIComponent(pid)}&includeRepoDocs=1`).catch(() => ({ docs: [] })),
+        api(`/api/e2e-vars?project=${encodeURIComponent(pid)}`).catch(() => ({ vars: [] })),
+      ]);
+      renderDocs(dd.docs || []);
+      renderVars(vd.vars || []);
+    } catch (e) { docsList.innerHTML = '<p class="muted-sm">Erreur de chargement.</p>'; }
+  };
+  projSel.addEventListener('change', reloadProject);
+
   document.getElementById('agent-session-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const msg = document.getElementById('agent-session-msg');
     msg.textContent = 'Ouverture de la session…'; msg.className = 'msg';
     try {
       const project = document.getElementById('as-project').value;
+      const docIds = [...document.querySelectorAll('#modal-backdrop .as-doc:checked')].map((c) => c.value);
       const r = await api('/api/e2e/agent-sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         action: 'new', project: project || undefined,
+        docIds, // toujours un tableau (vide = aucun doc)
         message: document.getElementById('as-message').value.trim() || undefined,
       }) });
       if (r && r.sessionId && /^ses_/.test(r.sessionId)) {

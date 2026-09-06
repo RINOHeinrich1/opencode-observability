@@ -5,6 +5,30 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.9.7 — 2026-09-06 · Module Vars & Secrets E2E unifié (retour utilisateur)
+
+Les « paramètres de test » (sensibles ou non) étaient source de confusion. On
+généralise : **des variables d'env par PROJET**, un seul modèle, 2 types.
+
+- **Table `e2e_vars(project, name, kind, value, value_enc, purpose)`** :
+  `kind='variable'` (non sensible, en clair) | `kind='secret'` (chiffré
+  AES-256-GCM). L'ancienne table `e2e_secrets` (v0.8.6) est migrée puis droppée.
+- **Onglet « Vars & Secrets E2E »** : filtre par type (tous / variables /
+  secrets), création/édition/suppression. Valeur des variables visible et
+  éditable ; secrets jamais affichés.
+- **Détail d'un test** : section « Variables & secrets du projet » + params
+  historiques marqués dépréciés.
+- **Modale de lancement** : variables projet = champs éditables (injectées
+  d'office, édition = surcharge du run) ; secrets = cases à cocher (injectés si
+  sélectionnés). Fini les params kind=secret / secretRef fantômes.
+- **Injection run (MCP)** : variables auto → surcharges paramValues → secrets
+  sélectionnés ; un secret n'est jamais surchargeable en clair.
+- Outils MCP `e2e_var_set / e2e_var_list(kind) / e2e_var_delete` ; `e2e_secret_*`
+  conservés en alias rétrocompat.
+
+Dépôts : `opencode-mcp-task-orchestrator` (v0.8.10) · `opencode-observability`
+(v0.9.7) · `opencode-agents` (v0.6.3).
+
 ## v0.9.6 — 2026-09-06 · Run E2E asynchrone + module Secrets E2E (retour utilisateur)
 
 Le lancement d'un test E2E depuis le panneau tournait en rond (modale synchrone

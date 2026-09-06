@@ -5,6 +5,22 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.9.23 — 2026-09-06 · Documents de référence : import depuis le PC
+
+Les documents de référence (ADR-12 : `adr-tech`, `specs-fonctionnelles`,
+`scenarios-gherkin`) pouvaient être référencés par chemin mais pas importés
+depuis le poste de l'utilisateur.
+
+- Modal « 📄 Docs de référence » (projet/repo) : mode **« Importer depuis mon
+  PC »** — fichier (`.md/.markdown/.txt/.feature/.adoc`, max 2 Mo) stocké dans
+  `storage/ref-docs/` puis enregistré comme doc rattaché au projet/repo ; le
+  mode « Référencer un chemin existant » reste disponible.
+- Aperçu du contenu importé (rendu markdown / feature / texte) via
+  `/api/docs/file?p=…` + bouton « Voir » dans la liste des docs.
+- Backend : `registerDocUpload` (pilot) + route POST /api/docs (upload vs path).
+
+Dépôt : `opencode-observability` (v0.9.23). Doc : ADR-12 §5.
+
 ## v0.9.22 — 2026-09-06 · Documents de référence projets/repos (ADR-12)
 
 Un projet (produit) et un repo peuvent être associés à des **documents de

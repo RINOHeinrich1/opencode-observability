@@ -2329,6 +2329,18 @@ function docKindLabelLong(kind) {
   return { 'adr-tech': 'ADR — Architecture technique', 'specs-fonctionnelles': 'Spécifications fonctionnelles (User stories / règles métier)', 'scenarios-gherkin': 'Scénarios (Gherkin)' }[kind] || kind;
 }
 
+// Aperçu d'un document de référence importé (ADR-12) : rendu md / feature / texte.
+async function viewRefDoc(url) {
+  try {
+    const d = await api(url);
+    const html = d.html
+      ? `<div style="background:rgba(255,255,255,.04);padding:14px;border-radius:8px;max-height:70vh;overflow:auto">${d.html}</div>`
+      : `<pre style="background:rgba(255,255,255,.04);padding:14px;border-radius:8px;max-height:70vh;overflow:auto;white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:12px">${esc(d.raw || '')}</pre>`;
+    showModal(`<div class="modal modal-wide"><h3>${esc(d.title || 'Document')}</h3>${html}<div class="modal-actions"><a class="ghost" download href="${esc(url)}">Télécharger</a><button class="ghost" id="modal-cancel">Fermer</button></div></div>`);
+    document.getElementById('modal-cancel').onclick = closeModal;
+  } catch (e) { alert('Aperçu impossible : ' + (e.message || e)); }
+}
+
 // Modale documents de référence (ADR-12) d'un projet ou d'un repo : liste les
 // docs + ajout (kind/titre/chemin) rattaché à un projet ou un repo.
 async function projectDocsModal(projectId, repoMap, repoOnly) {
@@ -2355,14 +2367,19 @@ async function projectDocsModal(projectId, repoMap, repoOnly) {
   const renderList = () => {
     const list = document.getElementById('pd-list');
     if (!allDocs.length) { list.innerHTML = '<p class="muted-sm">Aucun document de référence. Ajoutez-en (ADR technique, specs, Gherkin).</p>'; return; }
-    list.innerHTML = allDocs.map((d) => `
+    list.innerHTML = allDocs.map((d) => {
+      const rel = String(d.path || '').replace('/root/orchestrator-panel/storage/', '');
+      const viewUrl = (d.path && String(d.path).includes('storage/ref-docs')) ? `/api/docs/file?p=${encodeURIComponent(rel)}` : null;
+      return `
       <div class="recette-item">
         <div><code class="chip">${esc(docKindLabel(d.kind))}</code> <strong>${esc(d.title || d.docId)}</strong>
           <span class="muted-sm">${d.projects && d.projects.length ? '· projets ' + esc(d.projects.join(', ')) : ''}${d.repos && d.repos.length ? '· repos ' + esc(d.repos.join(', ')) : ''}</span>
         </div>
         <div class="muted-sm">${esc(d.path)}</div>
-        <div class="e2e-actions"><button type="button" class="ghost tiny danger-text" data-del-doc="${esc(d.docId)}">Supprimer</button></div>
-      </div>`).join('');
+        <div class="e2e-actions">${viewUrl ? `<button type="button" class="ghost tiny" data-view-doc="${esc(viewUrl)}">Voir</button>` : ''}<button type="button" class="ghost tiny danger-text" data-del-doc="${esc(d.docId)}">Supprimer</button></div>
+      </div>`;
+    }).join('');
+    document.querySelectorAll('#pd-list [data-view-doc]').forEach((b) => b.addEventListener('click', () => viewRefDoc(b.dataset.viewDoc)));
     document.querySelectorAll('#pd-list [data-del-doc]').forEach((b) => b.addEventListener('click', async () => {
       await api(`/api/docs/${encodeURIComponent(b.dataset.delDoc)}`, { method: 'DELETE' }).catch(() => {});
       await loadDocs(); renderList();
@@ -2371,15 +2388,22 @@ async function projectDocsModal(projectId, repoMap, repoOnly) {
   showModal(`
     <div class="modal modal-wide">
       <h2>Documents de référence <code class="muted-sm">${esc(scopeTitle)}</code></h2>
-      <p class="muted-sm">ADR-12 — registre de docs (adr-tech / specs-fonctionnelles / scenarios-gherkin) fournis en contexte aux agents (création de test, recette). Le fichier doit exister au chemin indiqué (workspace/checkout).</p>
-      <div id="pd-list" class="recette-list" style="max-height:36vh;overflow:auto"></div>
+      <p class="muted-sm">ADR-12 — registre de docs (adr-tech / specs-fonctionnelles / scenarios-gherkin) fournis en contexte aux agents (création de test, recette). Importez un fichier depuis votre PC, ou référencez un chemin existant (workspace/checkout).</p>
+      <div id="pd-list" class="recette-list" style="max-height:32vh;overflow:auto"></div>
       <form id="pd-form" class="pilot-form" style="border-top:1px solid rgba(255,255,255,.1);padding-top:10px">
         <div class="row-2" style="display:flex;gap:8px;flex-wrap:wrap">
           <select id="pd-kind" style="flex:1;min-width:180px">${kindOpts}</select>
           <select id="pd-target" style="flex:1;min-width:150px">${targetOpts.map((t) => `<option value="${esc(t.v)}">${esc(t.l)}</option>`).join('')}</select>
         </div>
         <input id="pd-title" placeholder="titre (ex. ADR — Architecture madatalk)" style="margin-top:8px">
-        <input id="pd-path" placeholder="chemin du fichier (ex. /home/coder/mada-talk/docs/adr-technique.md)" style="margin-top:8px" required>
+        <div style="margin-top:8px;display:flex;gap:10px;align-items:center">
+          <select id="pd-mode" style="width:180px">
+            <option value="upload">Importer depuis mon PC</option>
+            <option value="path">Référencer un chemin existant</option>
+          </select>
+          <input id="pd-file" type="file" accept=".md,.markdown,.txt,.feature,.adoc" style="flex:1">
+          <input id="pd-path" placeholder="chemin du fichier existant (ex. /home/coder/mada-talk/docs/adr-technique.md)" hidden style="flex:1">
+        </div>
         <div class="modal-actions" style="margin-top:8px">
           <button type="button" class="ghost" id="modal-cancel">Fermer</button>
           <button type="submit" class="launch-btn">+ Ajouter le document</button>
@@ -2388,16 +2412,39 @@ async function projectDocsModal(projectId, repoMap, repoOnly) {
       <div id="pd-msg" class="msg"></div>
     </div>`);
   renderList();
+  const modeSel = document.getElementById('pd-mode');
+  const fileEl = document.getElementById('pd-file');
+  const pathEl = document.getElementById('pd-path');
+  const syncMode = () => {
+    const upload = modeSel.value === 'upload';
+    fileEl.hidden = !upload;
+    pathEl.hidden = upload;
+    if (upload) fileEl.required = true; else { fileEl.required = false; pathEl.required = true; }
+  };
+  modeSel.addEventListener('change', syncMode);
+  syncMode();
   document.getElementById('modal-cancel').onclick = closeModal;
   document.getElementById('pd-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const msg = document.getElementById('pd-msg');
     const [targetType, targetId] = document.getElementById('pd-target').value.split(':');
     try {
-      const body = { kind: document.getElementById('pd-kind').value, title: document.getElementById('pd-title').value.trim() || undefined, path: document.getElementById('pd-path').value.trim() };
+      const body = { kind: document.getElementById('pd-kind').value, title: document.getElementById('pd-title').value.trim() || undefined };
       if (targetType === 'project') body.projectId = targetId; else body.repoId = targetId;
+      if (modeSel.value === 'upload') {
+        const f = fileEl.files[0];
+        if (!f) throw new Error('Choisissez un fichier à importer.');
+        if (f.size > 2 * 1024 * 1024) throw new Error('Fichier trop volumineux (max 2 Mo).');
+        const buf = await f.arrayBuffer();
+        body.filename = f.name;
+        body.dataBase64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+      } else {
+        body.path = pathEl.value.trim();
+        if (!body.path) throw new Error('Chemin requis en mode « référencer ».');
+      }
       await api('/api/docs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      document.getElementById('pd-path').value = '';
+      fileEl.value = '';
+      pathEl.value = '';
       document.getElementById('pd-title').value = '';
       await loadDocs(); renderList();
       msg.textContent = 'Document enregistré.'; msg.className = 'msg ok';

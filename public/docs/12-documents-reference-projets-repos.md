@@ -72,6 +72,18 @@ cocher au lancement :
 - Création de test via agent : fieldset **Documents de référence** (cases à cocher).
 - Création de recette : fieldset **Documents de référence des projets** (cases à cocher).
 
+### Import depuis le PC (fichiers locaux)
+
+Chaque doc peut être **importé depuis le PC de l'utilisateur** (bouton
+« Importer depuis mon PC ») : le fichier (`.md`, `.markdown`, `.txt`,
+`.feature`, `.adoc` — max 2 Mo) est **stocké côté serveur**
+(`storage/ref-docs/`) puis enregistré comme doc de référence rattaché au projet
+ou repo choisi. Le chemin stocké est fourni en contexte aux agents comme un
+chemin « existant » (lecture directe) ; le panneau offre un **aperçu** du
+contenu (`/api/docs/file?p=…`, rendu markdown/feature/texte). Le mode
+« Référencer un chemin existant » reste disponible pour pointer un fichier déjà
+présent dans le workspace/checkout.
+
 ## 6. Points de vigilance
 
 - **Contenu jamais en base** : le chemin doit pointer un fichier réellement

@@ -352,6 +352,39 @@ export async function deleteDoc(docId) {
   return taskOrchestrator("doc_delete", { docId });
 }
 
+const DOC_KINDS = ["adr-tech", "specs-fonctionnelles", "scenarios-gherkin"];
+
+// Import d'un fichier DOCUMENT depuis le PC de l'utilisateur : le fichier est
+// stocké côté serveur (storage/ref-docs) puis enregistré comme doc de référence
+// (ADR-12) rattaché à un projet et/ou un repo. Renvoie le doc enregistré.
+export async function registerDocUpload({ kind, title, filename, dataBase64, projectId, repoId, by }) {
+  if (!dataBase64 || !filename) throw new Error("fichier requis (filename + dataBase64)");
+  if (!DOC_KINDS || !DOC_KINDS.includes(kind)) throw new Error("kind requis (adr-tech | specs-fonctionnelles | scenarios-gherkin)");
+  const fs = await import("node:fs");
+  const docDir = "/root/orchestrator-panel/storage/ref-docs";
+  fs.mkdirSync(docDir, { recursive: true });
+  const buf = Buffer.from(String(dataBase64), "base64");
+  if (buf.length > 2 * 1024 * 1024) throw new Error("fichier trop volumineux (max 2 Mo)");
+  const safe = String(filename).replace(/[^\w.\-]+/g, "_").slice(-80);
+  const dest = `${docDir}/${Date.now()}-${safe}`;
+  fs.writeFileSync(dest, buf);
+  const r = await taskOrchestrator("doc_register", {
+    kind,
+    title: title ? String(title).trim() : undefined,
+    path: dest,
+    projectId: projectId || undefined,
+    repoId: repoId || undefined,
+    createdBy: by,
+  });
+  return { ok: true, doc: r && r.doc };
+}
+
+// Chemin relatif d'accès public à un fichier importé (storage/ref-docs).
+export function refDocRelPath(absPath) {
+  if (!absPath) return null;
+  return String(absPath).replace("/root/orchestrator-panel/storage/", "");
+}
+
 export async function createRecette({ project, projects, title, description, taskIds, documents, docIds, by }) {
   const projs = [...new Set(((projects && projects.length ? projects : (project ? [project] : [])).map((p) => p && String(p).trim()).filter(Boolean)))];
   if (!projs.length) throw new Error("au moins un projet requis pour créer une recette");

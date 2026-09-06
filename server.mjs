@@ -1094,7 +1094,16 @@ const server = createServer(async (req, res) => {
     }
     if (path === "/api/docs" && req.method === "POST") {
       const b = await readBody(req);
-      try { return sendJson(res, 201, await pilot.registerDoc({ ...b, createdBy: user.username })); }
+      try {
+        if (b.filename && b.dataBase64) {
+          // Import depuis le PC : fichier stocké côté serveur (storage/ref-docs).
+          return sendJson(res, 201, await pilot.registerDocUpload({
+            kind: b.kind, title: b.title, filename: b.filename, dataBase64: b.dataBase64,
+            projectId: b.projectId, repoId: b.repoId, by: user.username,
+          }));
+        }
+        return sendJson(res, 201, await pilot.registerDoc({ ...b, createdBy: user.username }));
+      }
       catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
     }
     const docDelMatch = path.match(/^\/api\/docs\/([^/]+)$/);
@@ -1506,6 +1515,27 @@ const server = createServer(async (req, res) => {
         createReadStream(abs).pipe(res);
       }
       return;
+    }
+    // Fichier importé d'un DOCUMENT de référence (ADR-12) — storage/ref-docs.
+    // Accès restreint : lecture seule du contenu (aperçu / lecture par agents).
+    if (path === "/api/docs/file" && req.method === "GET") {
+      const DOC_STORAGE = join(__dirname, "storage", "ref-docs");
+      const rel = url.searchParams.get("p") || "";
+      const abs = normalize(join(DOC_STORAGE, rel));
+      if (!abs.startsWith(DOC_STORAGE + "/") || !existsSync(abs)) return sendJson(res, 404, { error: "introuvable" });
+      const raw = readFileSync(abs, "utf8");
+      const isMd = /\.(md|markdown)$/i.test(abs);
+      const isFeature = /\.(feature)$/i.test(abs);
+      let html = null;
+      let body = raw;
+      if (isMd || isFeature) {
+        if (isMd) {
+          html = marked.parse(raw);
+        } else {
+          html = `<pre style="white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:12px">${String(raw).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre>`;
+        }
+      }
+      return sendJson(res, 200, { title: basename(abs), path: abs, html, raw: html ? null : body.slice(0, 200000) });
     }
     // Phase 3 (hors worktree) — qualité : funnel, rework, cost vs throughput
     if (path === "/api/metrics/quality" && req.method === "GET") return sendJson(res, 200, await metrics.quality(registry()));

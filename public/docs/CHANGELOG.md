@@ -5,6 +5,30 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.9.8 — 2026-09-06 · Pré-vol E2E : spec absent du checkout → run via worktree temporaire (git)
+
+Solution long terme au problème du « test fantôme » et des runs vides : quand le
+spec d'un test n'est pas dans le checkout d'exécution (branche de travail non
+mergée, spec purgé de main mais vivant dans l'historique), le lancement ne part
+plus à l'aveugle.
+
+- **Pré-vol (MCP v0.8.11)** : `e2e_run` vérifie que le spec cible existe dans le
+  `repoDir` avant de lancer Playwright.
+  - Absent + `runFromRef` → création d'un **worktree temporaire** au commit
+    (`/root/test-E2E/<projet>-<ts>-<sha>`, spec + helpers + config au commit,
+    node_modules partagé), run isolé, **nettoyage auto** — rien restauré dans main.
+  - Absent sans `runFromRef` → erreur structurée `SPEC_NOT_IN_CHECKOUT` listant
+    les commits où le spec EXISTE (git log --all + cat-file : création et
+    modifications, même après purge), avec branche / sha / date / sujet.
+- **Panneau v0.9.8** : à l'échec pré-vol, modale « Test introuvable mais
+  récupérable via git » → bouton « Lancer depuis ce commit » (relance avec
+  `runFromRef`). Rappel visuel que rien n'est modifié dans main.
+- **Agents v0.6.4** : test-agent relance avec `runFromRef` quand il reçoit
+  `SPEC_NOT_IN_CHECKOUT`.
+
+Dépôts : `opencode-mcp-task-orchestrator` (v0.8.11) · `opencode-observability`
+(v0.9.8) · `opencode-agents` (v0.6.4).
+
 ## v0.9.7 — 2026-09-06 · Module Vars & Secrets E2E unifié (retour utilisateur)
 
 Les « paramètres de test » (sensibles ou non) étaient source de confusion. On

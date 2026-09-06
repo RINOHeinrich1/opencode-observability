@@ -5,6 +5,34 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.9.4 — 2026-09-06 · Création de test E2E via session test-agent (flux Oui/Non)
+
+Problème UX : « Nouveau test » enregistrait une entité dans le registre sans
+créer le spec Playwright. Décision : distinguer « test déjà existant » et
+« nouveau test à créer », la création passant par une **session test-agent**
+rattachée au test (comme les sessions le sont aux tâches/recettes).
+
+- **MCP task-orchestrator v0.8.4** : `e2e_tests.session_id` (session de
+  création/mise à jour du test) + statut DRAFT (entité créée, spec en cours de
+  rédaction). Outils `e2e_test_draft`, `e2e_test_session_set`.
+- **Agents v0.6.0** : nouvel agent **test-agent** — cycle de vie complet des
+  tests E2E (créer/MAJ/supprimer le spec, enregistrer entité + paramètres +
+  projets couverts, lier des tâches, run de vérification sur rapport texte).
+  Travaille dans le workspace Coder du repo source, branche de travail.
+- **Panel v0.9.4** :
+  - Modale « Nouveau test » : « le spec existe-t-il déjà ? » → **Oui**
+    (enregistrement, champs requis) / **Non** (création via agent : projet +
+    comportement/description → entité DRAFT puis session test-agent ouverte).
+  - Détail d'un test : section « Session de création / mise à jour » (reprise
+    si session rattachée, « Nouvelle session » pour forcer).
+  - Endpoint `POST /api/e2e-tests/:id/session` (reprise/force) ; `handleE2ECreate`
+    gère `viaAgent` (spec_file dérivé du titre, DRAFT + launch session).
+  - pilot `launchTestSession` + `buildTestPrompt` (session-bridge).
+- Badge DRAFT (« brouillon ») géré.
+
+Dépôts : `opencode-mcp-task-orchestrator` (v0.8.4) · `opencode-agents` (v0.6.0) ·
+`opencode-observability` (v0.9.4).
+
 ## v0.9.3 — 2026-09-06 · Nettoyage specs E2E ONIRIA legacy + fix obsolescence e2e_sync_repo
 
 Décision utilisateur : supprimer les tests ONIRIA dont le spec a été créé

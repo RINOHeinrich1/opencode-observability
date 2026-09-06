@@ -5,6 +5,25 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.9.15 — 2026-09-06 · Tâches émergentes (demande hors scope → nouvelle tâche liée)
+
+Quand un agent reçoit, pendant sa tâche, une demande utilisateur **hors scope**,
+il crée une **tâche émergente** : nouvelle tâche dédiée, liée à sa source.
+
+- `task_links.relation_type` : `linked` (défaut) | `emergent`.
+- `task_register` accepte `originTaskId` (+ `originReason`) → crée la tâche +
+  lien **émergent → source** (`relation_type='emergent'`). `task_link_add`
+  accepte `relationType`.
+- `task_get` renvoie `emergentFrom` (tâches émergentes créées depuis cette
+  tâche) et `linkedTasks` avec `relationType`.
+- Panel : détail tâche — badge « émergente » sur les liens + section
+  « Tâches émergentes créées depuis cette tâche » (avec Ouvrir).
+- Agents v0.6.6 : règle orchestrateur — ne pas dévier la tâche courante ; créer
+  la tâche émergente liée à la source ; informer ; continuer.
+
+Dépôts : `opencode-mcp-task-orchestrator` (v0.8.17) · `opencode-observability`
+(v0.9.15) · `opencode-agents` (v0.6.6).
+
 ## v0.9.12 — 2026-09-06 · ADR 09 : Projets ⇄ Repos (N:N) + tâches multi-repos
 
 Le registre confondait « produit métier » et « dépôt de code » dans une seule

@@ -209,10 +209,14 @@ export async function launchTask({ taskId, kind = "launch" }) {
   const exec = t && t.executions && t.executions[0];
   const status = exec && exec.status;
 
-  // 2. Garde : une tâche déjà liée à une session, ou déjà sortie de `queued`,
-  //    ne peut pas être lancée une seconde fois.
-  if (task && task.sessionId) {
-    throw new Error(`tâche ${taskId} déjà liée à une session (${task.sessionId}) : lancement refusé`);
+  // 2. Garde anti double-lancement. Source de vérité : la trace `task_sessions`
+  //    (sessions d'EXÉCUTION : launch/rework/relaunch). Le champ `task.sessionId`
+  //    est la session de CRÉATION de la tâche (posée par task_register via
+  //    permission-hook) — il ne bloque PAS le lancement.
+  const sessions = (t && t.sessions) || [];
+  const execSessions = sessions.filter((s) => s.sessionId && /^ses_/.test(s.sessionId) && (s.kind === "launch" || s.kind === "relaunch" || s.kind === "rework"));
+  if (execSessions.length) {
+    throw new Error(`tâche ${taskId} déjà lancée (session d'exécution ${execSessions[execSessions.length - 1].sessionId}) : lancement refusé`);
   }
   if (status !== "queued") {
     throw new Error(`tâche ${taskId} non lançable (statut ${status || "inconnu"}) : seules les tâches queued peuvent être lancées`);

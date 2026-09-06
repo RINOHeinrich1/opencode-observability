@@ -315,13 +315,50 @@ exécution multi-projets (T11), workflow E2E ONIRIA hors périmètre (T12).
 - Statut E2E séparé du statut tâche ; `NA` justifié pour audits / tâches sans
   comportement observable.
 
+### 10.1 VIDÉO OBLIGATOIRE pour tout test E2E qui manipule l'UI (règle 2026-09-06)
+
+**Tout test E2E qui pilote une interface (navigateur, clics, saisie, navigation)
+DOIT produire une preuve vidéo** (`attachment` Playwright nommé `video`) —
+quel que soit le repo/projet (madatalk, oniria, onirtech, …). Un test UI sans
+vidéo est un **défaut de test**, pas une exécution valide.
+
+**Pourquoi** : la vidéo est la preuve humaine de ce qui s'est réellement passé à
+l'écran (utile à la recette et au diagnostic), indépendante du verdict IA posé
+sur le rapport texte.
+
+**Contrainte technique** : la config Playwright `video: 'on'` ne s'applique
+**qu'au contexte par défaut du fixture `page`**. Un test qui ouvre des
+**contextes manuels** (`browser.newContext(...)`) doit les créer avec
+`recordVideo` et **attacher explicitement** la vidéo au test après fermeture :
+
+```ts
+const ctx = await browser.newContext({ recordVideo: { dir: testInfo.outputPath('videos') } });
+const page = await ctx.newPage();
+// ... actions UI ...
+await ctx.close();
+const video = await page.video();        // asynchrone selon la version
+const vpath = await video.path();        // asynchrone
+await testInfo.attach('video', { path: vpath, contentType: 'video/webm' });
+```
+
+**Helper recommandé** : chaque socle E2E applicatif doit exposer un helper
+réutilisable (ex. `tests/e2e/helpers/video.helper.ts`) encapsulant la création
+d'un contexte enregistré + l'attache de la vidéo, et les specs UI doivent
+l'utiliser (pas de `browser.newContext` nu pour un parcours UI).
+
+**Contrôle** : à la création/mise à jour d'un test UI (test-agent) et en recette,
+vérifier qu'une exécution PASSED/FAILED du test comporte une `videoUrl` ; son
+absence est un constat à remonter (défaut de test).
+
 ---
 
 ## 11. Glossaire
 
 - **Test E2E** : entité 1er niveau (comportement) — `e2e_test_id`.
-- **Repo source** : dépôt où vit le spec.
-- **Projets couverts** : comportements transverses vérifiés (N:N).
+- **Projet** : produit dont le comportement est vérifié (UN projet par test —
+  ADR 11).
+- **Repos traversés** : repos que le comportement exécute (N:N — ADR 11) ; le
+  spec vit dans l'un d'eux.
 - **Exécution** : passage du test (appartient au test), origine tracée.
 - **Paramètre** : variable du test (défaut + surcharge au run).
 - **Preuve** : rapport texte (IA+humain) ; vidéo (humain).

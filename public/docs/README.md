@@ -21,6 +21,7 @@
 | 8 | [08-tests-e2e-independants.md](08-tests-e2e-independants.md) | **Cadrage tests E2E en entités de premier niveau** (indépendants des tâches) |
 | 9 | [09-modele-projets-repos.md](09-modele-projets-repos.md) | **ADR Projets ⇄ Repos** : modèle cible (N:N), état des lieux, plan de migration (à valider) |
 | 10 | [10-cadrage-maj-packages-e2e-postdeploiement.md](10-cadrage-maj-packages-e2e-postdeploiement.md) | **Cadrage** : mise à jour auto des packages ONIRIA (mécanisme /v2/packages) + E2E post-déploiement (à valider) |
+| 11 | [11-tests-e2e-projet-repos.md](11-tests-e2e-projet-repos.md) | **Tests E2E** : rattachement à un PROJET unique + repos traversés (N:N) (à implémenter) |
 | — | [CHANGELOG.md](CHANGELOG.md) | Historique des versions / Version history |
 
 ## À qui s'adresse ce document / Who this is for

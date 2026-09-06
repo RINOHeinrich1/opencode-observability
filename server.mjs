@@ -574,6 +574,8 @@ function mapE2ETestRow(r) {
     scenario: r.scenario,
     title: r.title,
     description: r.description,
+    gherkin: r.gherkin,
+    sessionId: r.session_id,
     status: r.status,
     version: r.version,
     firstSeenAt: r.first_seen_at,
@@ -710,13 +712,52 @@ async function registryE2ETestDetail(res, id) {
     taskStatus: x.task_status,
   }));
   const executions = (await q("SELECT * FROM e2e_executions WHERE e2e_test_id = $1 ORDER BY created_at DESC LIMIT 100", [id])).map(mapE2EExecRow);
+  // Tâches REQUIRED (contrat BDD/TDD) dont la tâche n'est pas done → test « bloqué par ».
+  const requiredOpenTasks = linkedTasks.filter((l) => l.relationType === "REQUIRED" && l.taskStatus !== "done")
+    .map((l) => ({ taskId: l.taskId, title: l.taskTitle, taskStatus: l.taskStatus }));
   const test = {
     ...mapE2ETestRow(row),
     projects: projects.length ? projects : (row.project ? [row.project] : []),
     params,
     linkedTasks,
+    requiredOpen: requiredOpenTasks.length,
+    requiredOpenTasks,
   };
   return sendJson(res, 200, { test, executions });
+}
+
+// Crée une tâche depuis un test E2E (contrat BDD/TDD) et la lie en REQUIRED.
+async function handleE2ECreateTask(res, id, b) {
+  const t = await registryE2ETest(id);
+  if (!t) return sendJson(res, 404, { error: "test E2E inconnu" });
+  const { request, title, type, scope, priority, acceptanceCriteria, directExecution, extraRequest } = b || {};
+  const project = t.project;
+  if (!project) return sendJson(res, 400, { error: "le test n'a pas de projet repo source — création de tâche impossible" });
+  const taskRequest = (request && String(request).trim())
+    ? String(request).trim()
+    : `[Test E2E requis — ${t.spec_file} :: ${t.scenario}] ${extraRequest ? String(extraRequest).trim() : "Implémenter le comportement couvert par ce test (contrat BDD/TDD)."}`;
+  const taskTitle = (title && String(title).trim()) || `E2E requis : ${t.scenario || t.title || t.e2eTestId}`;
+  try {
+    const created = await pilot.createTask({
+      request: taskRequest,
+      title: taskTitle,
+      acceptanceCriteria: acceptanceCriteria || undefined,
+      project,
+      type: type || "feature",
+      scope: scope || undefined,
+      priority: priority || "normal",
+      directExecution: !!directExecution,
+    });
+    const taskId = created && (created.taskId || (created.task && created.task.id));
+    if (!taskId) return sendJson(res, 500, { error: "tâche créée mais identifiant introuvable" });
+    // Lie le test à la tâche en REQUIRED (le test ne passe que si la tâche est done).
+    await pilot.linkE2ETest({ taskId, e2eTestId: id, relationType: "REQUIRED", reason: "Tâche requise pour que le test E2E (contrat) soit PASS." });
+    return sendJson(res, 201, { ok: true, taskId, testId: id });
+  } catch (e) {
+    const msg = String((e && e.message) || e);
+    if (/requis|inconnu|projet/i.test(msg)) return sendJson(res, 400, { error: msg });
+    return sendJson(res, 500, { error: msg });
+  }
 }
 
 // Garde d'écriture : rejette toute valeur secrète concrète dans defaultValue.
@@ -1197,6 +1238,12 @@ const server = createServer(async (req, res) => {
         if (/indisponible|inconnu|absent/i.test(msg)) return sendJson(res, 400, { error: msg });
         return sendJson(res, 500, { error: msg });
       }
+    }
+    // Création d'une tâche depuis un test (contrat BDD/TDD) + lien REQUIRED.
+    const e2eCreateTaskMatch = path.match(/^\/api\/e2e-tests\/([^/]+)\/create-task$/);
+    if (e2eCreateTaskMatch && req.method === "POST") {
+      const b = await readBody(req).catch(() => ({}));
+      return handleE2ECreateTask(res, e2eCreateTaskMatch[1], b);
     }
     const e2eParamsMatch = path.match(/^\/api\/e2e-tests\/([^/]+)\/params$/);
     if (e2eParamsMatch && req.method === "POST") {

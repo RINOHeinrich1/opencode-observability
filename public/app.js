@@ -523,8 +523,8 @@ function recProjChips(projs) {
 // ===========================================================================
 const E2E_TEST_STATUS_LABEL = { ACTIVE: 'actif', OBSOLETE: 'obsolète', QUARANTINE: 'quarantaine', DRAFT: 'brouillon' };
 const E2E_STATUS_OPTIONS = Object.entries(E2E_TEST_STATUS_LABEL).map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('');
-const E2E_REL_BADGE = { CREATED: 'approved', UPDATED: 'in_progress', REGRESSION: 'danger', EXISTING: 'queued' };
-const E2E_REL_LABEL = { CREATED: 'créé', UPDATED: 'modifié', REGRESSION: 'régression', EXISTING: 'existant' };
+const E2E_REL_BADGE = { CREATED: 'approved', UPDATED: 'in_progress', REGRESSION: 'danger', EXISTING: 'queued', REQUIRED: 'awaiting' };
+const E2E_REL_LABEL = { CREATED: 'créé', UPDATED: 'modifié', REGRESSION: 'régression', EXISTING: 'existant', REQUIRED: 'requis (bloquant)' };
 let e2eFilterProject = '';   // filtre projet couvert (listé) de l'onglet
 let e2eFilterStatus = '';    // filtre statut du test
 let e2eFilterSearch = '';    // recherche texte (titre / scénario / spec)
@@ -655,6 +655,20 @@ async function e2eDetailModal(e2eTestId) {
         <div class="project-kv"><span class="lbl">Suivi</span><span class="muted-sm">vu depuis ${esc(fmtTS(test.firstSeenAt))} · màj ${esc(fmtTS(test.updatedAt))} · ${(test.taskCount != null ? test.taskCount : linked.length)} tâche(s) liée(s)</span></div>
       </div>
       ${test.description ? `<div class="modal-request">${esc(test.description)}</div>` : ''}
+      ${test.gherkin ? `<div class="actions-section"><h3>Comportement (Gherkin)</h3>
+        <pre style="background:rgba(255,255,255,0.05);padding:12px;border-radius:6px;overflow:auto;white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:12px;line-height:1.5">${esc(test.gherkin)}</pre>
+      </div>` : ''}
+      ${(test.requiredOpen != null && test.requiredOpen > 0) ? `<div class="actions-section">
+        <p class="badge danger" style="display:inline-block">⚠ bloqué par ${test.requiredOpen} tâche(s) REQUIRED non terminée(s) — le test ne sera PASS qu'une fois ces tâches done.</p>
+        <div class="recette-list">${(test.requiredOpenTasks || []).map((rt) => `<div class="recette-item">
+          <code class="muted-sm">${esc(rt.taskId)}</code>
+          <span class="muted-sm">${esc(rt.title || '')}</span>
+          <button type="button" class="ghost" data-e2e-task-goto="${esc(rt.taskId)}">Ouvrir la tâche</button>
+        </div>`).join('')}</div>
+      </div>` : ''}
+      <div class="actions-buttons">
+        <button type="button" class="ghost" data-e2e-create-task="${esc(test.e2eTestId || e2eTestId)}" title="Créer une tâche requise pour que ce test passe (contrat BDD/TDD)">+ Créer une tâche (requise)</button>
+      </div>
       ${(test.status === 'DRAFT' || test.sessionId) ? `<div class="actions-section"><h3>Session de création / mise à jour</h3>
         <p class="muted-sm">${test.status === 'DRAFT' ? 'Test en DRAFT : le spec est en cours de rédaction par la session test-agent.' : 'Une session test-agent est rattachée à ce test (création / mise à jour).'}</p>
         <div class="actions-buttons">
@@ -691,6 +705,7 @@ async function e2eDetailModal(e2eTestId) {
   document.getElementById('e2e-launch-btn').onclick = () => { closeModal(); e2eRunModal(e2eTestId); };
   document.querySelectorAll('#modal-backdrop [data-e2e-session]').forEach((b) => b.addEventListener('click', () => openTestSession(b.dataset.e2eSession, false)));
   document.querySelectorAll('#modal-backdrop [data-e2e-session-force]').forEach((b) => b.addEventListener('click', () => openTestSession(b.dataset.e2eSessionForce, true)));
+  document.querySelectorAll('#modal-backdrop [data-e2e-create-task]').forEach((b) => b.addEventListener('click', () => e2eCreateTaskModal(b.dataset.e2eCreateTask)));
   document.querySelectorAll('#modal-backdrop [data-e2e-task-goto]').forEach((b) => b.addEventListener('click', () => { closeModal(); taskActionsModal(b.dataset.e2eTaskGoto); }));
   document.querySelectorAll('#modal-backdrop [data-e2e-video]').forEach((b) => b.addEventListener('click', () => openE2EVideoModal(b.dataset.e2eVideo, b.dataset.title)));
 }
@@ -705,6 +720,66 @@ async function openTestSession(e2eTestId, force) {
     closeModal();
     refreshActive();
   } catch (e) { alert('Échec de la session test-agent : ' + (e.message || e)); }
+}
+
+// Crée une tâche requise depuis un test (contrat BDD/TDD) — lien REQUIRED auto.
+async function e2eCreateTaskModal(e2eTestId) {
+  let test = {};
+  try { const d = await api(`/api/e2e-tests/${encodeURIComponent(e2eTestId)}`); test = d.test || {}; }
+  catch (e) { alert('Impossible de charger le test : ' + (e.message || e)); return; }
+  const reqHead = `[Test E2E requis — ${test.specFile || '?'} :: ${test.scenario || test.title || e2eTestId}]`;
+  const gherkin = test.gherkin || '';
+  showModal(`
+    <div class="modal modal-wide">
+      <h2>Créer une tâche requise (contrat BDD/TDD)</h2>
+      <p class="muted">Test <code class="e2e-id">${esc(test.e2eTestId || e2eTestId)}</code> · ${esc(test.title || test.scenario || '')} <span class="muted-sm">· repo source : <code>${esc(test.project || '—')}</code></span></p>
+      <p class="muted-sm">La tâche sera créée sur le projet <strong>${esc(test.project || '—')}</strong> et liée au test en relation <strong>REQUIRED</strong> (le test ne sera PASS qu'une fois cette tâche done).</p>
+      <form id="e2e-ct-form" class="pilot-form">
+        <label class="modal-field">Titre court <span class="muted-sm">— requis</span>
+          <input id="ct-title" required value="${esc(test.scenario || test.title || 'Implémenter le comportement E2E')}">
+        </label>
+        <label class="modal-field">Type
+          <select id="ct-type"><option value="feature">feature</option><option value="debug">debug</option><option value="audit">audit</option></select>
+        </label>
+        <label class="modal-field">Demande <span class="muted-sm">— requis</span>
+          <textarea id="ct-request" class="modal-textarea" rows="5" required>${esc(reqHead)}
+${esc(test.description || 'Implémenter le comportement couvert par ce test (contrat BDD/TDD).')}
+${gherkin ? '\nGherkin (comportement cible) :\n' + esc(gherkin) : ''}</textarea>
+        </label>
+        <label class="modal-field">Scope <span class="muted-sm">— optionnel, chemins</span>
+          <input id="ct-scope" placeholder="ex: packages/..., apps/...">
+        </label>
+        <label class="filter-check" title="Exécution directe par build-notify (sans plan)"><input type="checkbox" id="ct-direct"> exécution directe</label>
+        <div class="modal-actions">
+          <button type="button" class="ghost" id="modal-cancel">Annuler</button>
+          <button type="submit" class="launch-btn">Créer la tâche</button>
+        </div>
+      </form>
+      <div id="ct-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('e2e-ct-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const msg = document.getElementById('ct-msg');
+    const title = document.getElementById('ct-title').value.trim();
+    const request = document.getElementById('ct-request').value.trim();
+    if (!title || !request) { msg.textContent = 'Titre et demande requis.'; msg.className = 'msg error'; return; }
+    msg.textContent = 'Création de la tâche…';
+    msg.className = 'msg';
+    const scopeRaw = document.getElementById('ct-scope').value.trim();
+    try {
+      const r = await api(`/api/e2e-tests/${encodeURIComponent(e2eTestId)}/create-task`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        title,
+        request,
+        type: document.getElementById('ct-type').value,
+        scope: scopeRaw ? scopeRaw.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
+        directExecution: document.getElementById('ct-direct').checked,
+      }) });
+      closeModal();
+      if (r && r.taskId) { alert('Tâche créée : ' + r.taskId + ' — liée au test en REQUIRED.'); goToTab('tasks'); }
+      refreshActive();
+    } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
+  });
 }
 
 function e2eExecItem(x, test) {

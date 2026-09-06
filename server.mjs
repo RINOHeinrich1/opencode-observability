@@ -618,6 +618,7 @@ function mapE2EExecRow(r) {
     logsUrl: r.logs_url,
     videoUrl: r.video_url,
     summary: r.summary,
+    skipReason: r.skip_reason,
     verdictBy: r.verdict_by,
     createdAt: r.created_at,
     paramValues: r.param_values,
@@ -1174,7 +1175,7 @@ const server = createServer(async (req, res) => {
             for (const x of rr2) (repoMap2[x.e2e_test_id] = repoMap2[x.e2e_test_id] || []).push(x.repo_id);
           } catch {}
         }
-        return sendJson(res, 200, { taskId, task_id: taskId, tests: tests.map((r) => ({ e2eTestId: r.id, project: r.project, repos: repoMap2[r.id] || [], specFile: r.spec_file, scenario: r.scenario, title: r.title, testStatus: r.test_status, relationType: r.relation_type, reason: r.reason, lastExecutionId: r.last_execution_id, lastStatus: r.last_status, lastDurationMs: r.last_duration_ms, lastAttempts: r.last_attempts })), executions: execRows.map((r) => ({ id: r.id, e2eTestId: r.e2e_test_id, status: r.status, durationMs: r.duration_ms, attempts: r.attempts, executedAt: r.executed_at, summary: r.summary, logsUrl: r.logs_url, videoUrl: r.video_url, reportArtifactId: r.report_artifact_id, commitSha: r.commit_sha, branch: r.branch, pipelineRef: r.pipeline_ref })) });
+        return sendJson(res, 200, { taskId, task_id: taskId, tests: tests.map((r) => ({ e2eTestId: r.id, project: r.project, repos: repoMap2[r.id] || [], specFile: r.spec_file, scenario: r.scenario, title: r.title, testStatus: r.test_status, relationType: r.relation_type, reason: r.reason, lastExecutionId: r.last_execution_id, lastStatus: r.last_status, lastDurationMs: r.last_duration_ms, lastAttempts: r.last_attempts })), executions: execRows.map((r) => ({ id: r.id, e2eTestId: r.e2e_test_id, status: r.status, durationMs: r.duration_ms, attempts: r.attempts, executedAt: r.executed_at, summary: r.summary, skipReason: r.skip_reason, logsUrl: r.logs_url, videoUrl: r.video_url, reportArtifactId: r.report_artifact_id, commitSha: r.commit_sha, branch: r.branch, pipelineRef: r.pipeline_ref })) });
       }
       return sendJson(res, 200, await registryTaskDetail(taskId));
     }

@@ -369,6 +369,39 @@ conserve qu'une vidéo de preuve. Conséquences de conception (long terme) :
 vérifier qu'une exécution PASSED/FAILED du test comporte une `videoUrl` ; son
 absence est un constat à remonter (défaut de test).
 
+### 10.3 RAPPORT TEXTE = TRANSCRIPT HORODATÉ DE CHAQUE ÉTAPE (règle 2026-09-06)
+
+**Quel que soit le statut** (PASSED / SKIPPED / FAILED / ERROR), le rapport texte
+d'une exécution doit **tracer chaque étape du test avec un horodatage** — jamais
+un simple statut (« SKIPPED » sans raison, « PASSED » sans détail).
+
+**Ce que le spec DOIT produire** (via le helper `StepReporter` partagé) :
+- chaque étape/constat émis sous forme normalisée `[STEP nn]`, `[INFO]`,
+  `[PASS]`, `[FAIL]`, `[GAP]`, `[RESULT]` ;
+- chaque ligne porte un **horodatage de ligne de temps** `+MM:SS.mmm` (temps
+  écoulé depuis le début du test) + l'**heure murale** `(HH:MM:SS.mmm)` ;
+- le rapport est attaché au test (`attachment` nommé `rapport-e2e-texte`).
+
+**Pourquoi l'horodatage** : le temps écoulé a la même origine que la ligne de
+temps de la vidéo → le rapport texte peut servir de **sous-titre / transcript
+synchronisé** de la vidéo (fusion texte ↔ vidéo future). L'IA et l'humain
+voient exactement ce qui s'est passé, dans l'ordre, et à quel moment.
+
+**Raison d'un SKIP** : un test ignoré par précondition (ex. « aucun client
+disponible ») DOIT exprimer cette raison — via l'annotation Playwright
+`test.skip(reason)` (récupérée à l'import → `skip_reason`) et/ou une ligne
+`[SKIPPED]`/`[GAP]` dans le transcript. Un SKIPPED sans raison est un défaut.
+
+**Ce que l'infra produit** (e2e-runner + registre) :
+- `e2e-runner` extrait l'attachment `rapport-e2e-texte` (body du JSON
+  Playwright) → écrit `report-<runId>-<n>.txt`, lit la raison de skip
+  (`annotations`), compose `[STATUS]/[SKIPPED]/[FAILED]/[DURATION]` ;
+- le registre persiste `e2e_executions.skip_reason` et pointe `logsUrl` vers le
+  `.txt` complet ; `summary` = dernières lignes du transcript.
+
+**Contrôle** : en recette / relecture, un rapport texte qui ne contient que le
+statut sans les étapes, ou un SKIPPED sans raison, est un défaut à remonter.
+
 ---
 
 ## 11. Glossaire

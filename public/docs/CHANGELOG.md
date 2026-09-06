@@ -5,6 +5,31 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.9.21 — 2026-09-06 · Rapport E2E texte RICHE : transcript horodaté des étapes (PASSED / SKIPPED / FAILED)
+
+Le « rapport texte » d'une exécution E2E n'est plus un JSON squelettique
+(`runId`/`status`/`duration`) : il trace **chaque étape du test, horodatée**,
+quel que soit le statut. L'agent de recette (et l'humain) sait précisément ce
+qui s'est passé, et POURQUOI (raison d'un SKIP, échec d'une étape).
+
+- **StepReporter** (dépôt applicatif) : chaque ligne `[STEP]/[INFO]/[PASS]/
+  [FAIL]/[GAP]/[RESULT]` porte un **horodatage** `+MM:SS.mmm` (temps écoulé
+  depuis le début du test, même origine que la ligne de temps de la vidéo) +
+  l'heure murale `(HH:MM:SS.mmm)` — préparation au sous-titrage texte ↔ vidéo.
+- **e2e-runner** : extrait l'attachment « rapport-e2e-texte » (body du JSON
+  Playwright) → écrit `report-<runId>-<n>.txt` ; lit l'annotation `test.skip`
+  → `skipReason` ; compose `[REPORT-TEXTE]/[SCENARIO]/[SPEC]/[STATUS]` +
+  transcript + `[SKIPPED] raison` / `[FAILED] erreur` + `[DURATION]`.
+- **Registre** : `e2e_executions.skip_reason` (colonne) ; import copie le
+  `.txt` comme artefact (`logsUrl` → rapport texte), summary = dernières
+  lignes du transcript + raison ; `e2e_execution_update` accepte `skipReason`.
+- **Panel** : exécutions d'un test & bloc E2E d'une tâche affichent la raison
+  SKIPPED en clair ; « Rapport (texte) » ouvre le transcript complet.
+
+Dépôts : `opencode-scripts` (v0.2.3) · `opencode-mcp-task-orchestrator`
+(v0.8.23) · `opencode-observability` (v0.9.21) · applicatif mada-talk
+(StepReporter horodaté).
+
 ## v0.9.20 — 2026-09-06 · Test E2E : repos de code associés définis à la création (couverture)
 
 Un test E2E ne se contente plus d'un projet : ses **repos de code associés**

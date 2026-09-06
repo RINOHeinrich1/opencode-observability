@@ -476,6 +476,7 @@ async function renderTaskE2EBlock(taskId, box) {
       <span class="muted-sm">${esc(t.specFile)} · relation : ${esc(relBadge)}</span>
       <div class="e2e-rowline">Statut : ${badge(st)}${ex ? ` · ${esc(ex.durationMs != null ? (ex.durationMs / 1000).toFixed(1) + ' s' : '')} · itération ${esc(ex.attempts || 1)}/3${ex.branch ? ' · ' + esc(ex.branch) : ''}` : ''}</div>
       ${ex && ex.summary ? `<p class="muted-sm e2e-summary">${esc((ex.summary || '').slice(0, 220))}${(ex.summary || '').length > 220 ? '…' : ''}</p>` : ''}
+      ${ex && ex.skipReason ? `<p class="e2e-skipreason"><span class="badge rejected">SKIPPED</span> <span class="muted-sm">${esc(ex.skipReason)}</span></p>` : ''}
       <div class="e2e-actions">${ex && ex.logsUrl ? `<a class="ghost" href="${esc(e2eFileUrl(ex.logsUrl))}" target="_blank">Rapport (texte)</a>` : ''}${vUrl ? `<button type="button" class="ghost e2e-video-btn" data-url="${esc(vUrl)}" data-title="${esc(t.e2eTestId + ' — ' + (t.scenario || ''))}">▶ Voir la vidéo</button><a class="ghost" download href="${esc(vUrl)}" title="Télécharger cette vidéo">⭳</a>` : ''}${t.reason ? `<span class="muted-sm" title="${esc(t.reason)}">ℹ raison</span>` : ''}</div>
     </div></div>`;
   }).join('')}</div>`;
@@ -806,6 +807,7 @@ function e2eExecItem(x, test) {
       ${x.verdictBy ? `<span class="muted-sm">· verdict ${esc(x.verdictBy)}</span>` : ''}
     </div>
     ${summary ? `<p class="muted-sm e2e-summary">${esc(summary)}${raw.length > 160 ? '…' : ''}</p>` : ''}
+    ${x.skipReason ? `<p class="e2e-skipreason"><span class="badge rejected">SKIPPED</span> <span class="muted-sm">${esc(x.skipReason)}</span></p>` : ''}
     <div class="e2e-actions">
       ${lUrl ? `<a class="ghost" href="${esc(lUrl)}" target="_blank" rel="noopener" title="Rapport texte (IA + humain)">Rapport (texte)</a>` : ''}
       ${vUrl ? `<button type="button" class="ghost" data-e2e-video="${esc(vUrl)}" data-title="${esc(title + ' — ' + fmtTS(x.createdAt))}">▶ Voir la vidéo</button><a class="ghost" download href="${esc(vUrl)}" title="Télécharger la vidéo (preuve humaine)">⭳</a>` : ''}

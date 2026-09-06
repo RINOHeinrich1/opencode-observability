@@ -1,6 +1,6 @@
 # 09 — Modèle Projets ↔ Repos : état des lieux & cible (ADR)
 
-> **Statut : PROPOSITION à valider — aucune migration effectuée.**
+> **Statut : VALIDÉ (2026-09-06) — migration en cours par étapes.**
 > Ce document décrit une confusion structurelle détectée dans le registre
 > (l'entité `project` mélange « produit métier » et « dépôt de code ») et propose
 > un modèle cible `Projet ⇄ Repo` (N:N), avec le mapping de l'existant et un plan
@@ -127,17 +127,63 @@ Migrer **sans perte de données**, par étapes idempotentes :
 
 ---
 
-## 5. Points à valider (ouverts)
+## 5. Décisions validées
 
-1. **Produit `madatalk` vs `mada-talk`** : garder l'id produit `mada-talk` ou
-   créer un produit `madatalk` distinct du repo ?
-2. **ONIRIA produit** : conserver un **produit `oniria`** distinct (ses propres
-   tâches) en plus de son rôle de repo de Madatalk ?
-3. **`onirtech-backend/frontend`** : ce sont des repos d'**outillage** — à quel(s)
-   produit(s) les rattacher (aucun / un produit outillage / le produit ONIRIA) ?
-4. **Nommage du repo ONIRIA** : garder `pbn` ou renommer l'id en `oniria`
-   (`git_path` reste PBN) ?
-5. **Branche de déploiement par repo** : confirmer que chaque repo a une (ou des)
-   branche(s) cible(s) (ex. `main` pour mada-talk, `oniria-preprod` pour ONIRIA) ?
-6. **Tâches multi-repos** : une tâche peut-elle cibler plusieurs repos (scope
-   multi-repo) ou toujours un seul repo à la fois ?
+> Réponses utilisateur (2026-09-06) — le modèle cible est **validé** ; la
+> migration peut être exécutée par étapes.
+
+1. **Produit frontend** : garder l'id produit `mada-talk` (pas de renommage) — il
+   référence le repo `mada-talk` (frontend) **et** le repo `oniria` (partagé).
+2. **ONIRIA** : produit `oniria` **distinct** conservé (tâches/recettes/tests
+   propres) + le repo `oniria` (repo PBN, branche `oniria-preprod`) est rattaché
+   au produit `oniria` **et** au produit `mada-talk`.
+3. **Outillage** `onirtech-backend`/`onirtech-frontend` : repos conservés
+   enregistrés, **non liés** à Madatalk/ONIRIA pour l'instant.
+4. **Nommage** : le repo ONIRIA s'appelle **`oniria`** (git_path = repo PBN).
+5. **Branche de déploiement par repo** : chaque repo porte sa (ses) branche(s)
+   cible(s) (`main` pour mada-talk ; `oniria-preprod` pour oniria).
+6. **Tâches multi-repos** : à la création, une tâche cible un projet + un repo ;
+   le scope peut couvrir plusieurs repos (décision d'exécution).
+
+### Cible d'associations `project_repos`
+
+| Projet (produit) | Repos associés |
+|---|---|
+| `mada-talk` | `mada-talk` (frontend client) · `oniria` (console admin/backend, partagé) |
+| `oniria` | `oniria` (repo PBN, branche `oniria-preprod`) |
+| *(non lié)* | `onirtech-backend` · `onirtech-frontend` (outillage) |
+
+### Table `repos` initiale
+
+| `repos.id` | git_path | workspace | branche(s) cible | e2e_repo_dir | notes |
+|---|---|---|---|---|---|
+| `mada-talk` | repo mada-talk | madatalk | `main` | `/root/mada-talk-preprod` | frontend client |
+| `oniria` | repo PBN | ONIRIA | `oniria-preprod` | `/root/oniria-preprod` | console admin/backend |
+| `onirtech-backend` | référentiel onirtech backend | ONIRIA | `main` | — | outillage |
+| `onirtech-frontend` | référentiel onirtech frontend | ONIRIA | `main` | — | outillage |
+
+---
+
+## 6. Plan de migration (validé — à exécuter par étapes)
+
+> Règle d'or : migrer **sans perte de données**, par étapes idempotentes, et
+> pouvoir rejouer chaque étape. La recette finale valide avant suppression des
+> colonnes legacy.
+
+1. **Schéma** : créer `repos` + `project_repos` (N:N) ; `projects` devient le
+   registre des **produits** (les colonnes repo physiques y sont conservées en
+   attendant la bascule).
+2. **Backfill** : chaque `projects.*` existant devient un **produit** ; chaque
+   ligne avec données repo (`workspace`/`git_path` non nuls) génère un **repo**
+   rattaché à son produit.
+3. **Corrections ciblées** :
+   - produit `oniria` ← repo `oniria` (git_path = PBN, e2e_repo_dir =
+     `/root/oniria-preprod`, branche `oniria-preprod`) ;
+   - produit `mada-talk` ← repos `mada-talk` + `oniria` ;
+   - `pbn` renommé `oniria` (références internes mises à jour si existantes).
+4. **Bascule code** : MCP (db/index), pilot, panel (server + UI), agents lisent
+   les repos via `repos` + `project_repos` ; lecture rétrocompat temporaire.
+5. **UI** : liste des repos par projet (créer/éditer/retirer/rattacher) ; choix
+   du repo à la création d'une tâche.
+6. **Recette** : valider les flux projet/repo/tâches/tests, puis supprimer les
+   colonnes repo physiques de `projects`.

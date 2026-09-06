@@ -1,6 +1,6 @@
 # 10 — Cadrage : mise à jour automatique des packages ONIRIA + E2E post-déploiement (ADR)
 
-> **Statut : CADRAGE à valider — aucune implémentation.**
+> **Statut : VALIDÉ (2026-09-06) — décisions actées (§7). À implémenter.**
 > Objectif : supprimer l'intervention humaine pour mettre à jour un package
 > (actuellement l'admin active via `/v2/packages`) en réutilisant **le même
 > mécanisme**, afin que la voie normale du panel reste garantie ; puis exécuter
@@ -139,15 +139,43 @@ branche packages/<nom> (push)
 
 ---
 
-## 7. Questions ouvertes (à trancher avant implémentation)
+## 7. Décisions finales (utilisateur — 2026-09-06)
 
-1. L'ingestion + activation auto s'appuient sur quelle **identité** (email de
-   release, publisher) et quel **mode** (`p7-package-ingest` archive signée vs
-   `deploy-package` + activation) — faut-il générer/charger une signature au
-   CI, ou l'installateur local suffit ?
-2. Le run E2E post-déploiement : **tout le socle E2E** du/des projet(s) couvert(s)
-   ou **seulement les tests liés** à la tâche/branche livrée (comportements
-   modifiés) ? (le doc oniria dit : E2E = comportements faisables seulement après
-   la mise à jour → plutôt tests liés + socle login).
-3. Quel **déclencheur** exécute le run E2E (notifier observant les déploiements,
-   vs job CI appelant le panel/MCP) ?
+1. **Ingestion + activation auto = installateur LOCAL du repo** : l'étape
+   distincte du workflow appelle l'installateur du dépôt
+   (`installOrUpdateV3Package` / promote `active`), **sans générer d'archive
+   signée en CI** — exactement les mêmes fonctions que la voie admin `/v2/packages`.
+2. **Run E2E post-déploiement = TOUT le socle ACTIVE** du registre :
+   le CI/CD se connecte au registre `e2e_tests` et récupère les tests **ACTIVE**
+   des projets couverts (plus large, plus fidèle à « après déploiement, la
+   préprod doit être saine »). Périmètre cible : projets `madatalk` (front) et
+   `oniria` (console).
+3. **L'agent ne traite QUE les résultats rattachés à son travail** : parmi les
+   résultats du run E2E, il ignore les erreurs hors de sa portée (les écarts
+   hors scope sont signalés, pas traités par lui).
+4. **Déclencheur = étape CI finale** appelant le registre (`origin=ci`) : le
+   workflow (runner auto-hébergé, qui a accès à l'hôte et donc au MCP
+   task-orchestrator) lance, en dernière étape non bloquante, un run E2E qui
+   résout les tests ACTIVE du registre et les exécute contre la préprod.
+
+**Conséquence d'architecture (pipeline ↔ registre) :**
+- Le runner auto-hébergé préprod exécute un script d'infra (repo
+  `opencode-scripts`) qui appelle le MCP `e2e_run` (`origin=ci`) avec la liste
+  des tests ACTIVE résolus via `e2e_list(status=ACTIVE)` du registre.
+- Le déploiement n'est **jamais bloqué** par l'E2E (Niveau 1 = gate seul) ;
+  le run E2E alimente la recette/preuve de la tâche (`deployment_record`,
+  `task_e2e`).
+- L'agent (orchestrateur/build-notify) reçoit le rapport E2E et ne retient que
+  les échecs **liés à son travail** ; le reste est ignoré (ou signalé hors scope).
+
+---
+
+## 8. Références
+
+- `docs/regles-tests-ci-cd-e2e-oniria.md` (repo oniria) — E2E niveau 2 non
+  bloquant, post mise à jour active, référence composite de la preuve.
+- `docs/future-outillage-packages-oniria.md` — install ≠ compilation ; étape
+  d'installation distincte ; activation = version servie.
+- `scripts/{deploy-package.mjs, build-package.mjs, p7-package-*.ts}`,
+  `apps/admin-next/lib/oniria/packages/package-lifecycle-service.ts`.
+- Registre e2e (ADR 08) : `e2e_run`, `e2e_list`, `task_e2e`.

@@ -5,6 +5,69 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.9.3 — 2026-09-06 · Nettoyage specs E2E ONIRIA legacy + fix obsolescence e2e_sync_repo
+
+Décision utilisateur : supprimer les tests ONIRIA dont le spec a été créé
+(commit git) **avant le 10/08/2026** — jugés obsolètes, perte de couverture
+assumée. Le but est aussi de vérifier l'efficacité du resync automatique (T10).
+
+- **Registre** : suppression de 156 tests ONIRIA créés < 10/08 (+ 213 exécutions,
+  38 liens task_e2e en cascade). Le resync a d'abord recréé 51 tests car leurs
+  specs existaient encore dans le repo → preuve que le registre reflète le repo.
+- **Repo ONIRIA (branche core/suppression-specs-e2e-legacy, gate CI vert +
+  déployée + mergée sur oniria-preprod)** : retrait de 18 spec files legacy
+  (chatbot-management-v3-*, group-access-control, hello-world-v3-hot-plug,
+  infomaniak-provider-v3, p22-access-management, pbn-network-autonomous,
+  runtime-jobs-audit-history, v2-*…). Adaptations : playwright.config.ts
+  (authenticatedSpecs réduit aux specs conservés), package.json (retrait des
+  scripts test:e2e:runtime-smoke et test:e2e:p7-runtime), tests unitaires
+  e2e-auth-harness et v2-access-form-ux recentrés sur le socle conservé,
+  commentaire v3-view-hot-plug mis à jour. Le socle d'authentification
+  (auth.setup.ts/e2e-auth.ts) et les specs madatalk-requests C1-C13 sont
+  conservés.
+- **MCP task-orchestrator v0.8.3** : fix `e2e_sync_repo` — l'obsolescence ne se
+  déclenchait jamais (itération sur `known.tests` alors que `listE2ETests`
+  renvoie un tableau). Après fix : 99 tests ONIRIA passés OBSOLETE ; le registre
+  (52 ACTIVE) correspond exactement aux 9 spec files restants du repo.
+- **Observabilité de la sync** : le registre `e2e_tests` reflète désormais
+  fidèlement le repo (création des specs présents, OBSOLETE des disparus).
+
+Dépôts : `opencode-mcp-task-orchestrator` (v0.8.3) · repo applicatif `RINOHeinrich1/PBN`
+(branche `oniria-preprod`) · `opencode-observability` (docs v0.9.3).
+
+## v0.9.2 — 2026-09-05 · Runs E2E longs — timeout MCP dédié 20 min + flux UI vers l'historique
+
+Le message « run trop long — vérifier dans l'historique » était un échec réel :
+le client MCP du panel plafonnait tous les appels à 30 s et tuait le process MCP
+(`child.kill`) pendant un `e2e_run` réel (plusieurs minutes) → le run
+n'aboutissait jamais, l'import auto ne se faisait pas, l'historique restait vide.
+
+- `mcp-client.mjs` : timeout dédié 20 min pour `e2e_run` / `e2e_sync_repo`
+  (le reste reste à 30 s) + message de timeout avec la durée.
+- Modale « Lancer » : fermeture immédiate + ouverture du Détail (historique) du
+  test pendant le run ; re-rendu après import ; message explicite en cas de
+  timeout. Capture des valeurs AVANT fermeture du modal.
+
+Dépôt : `opencode-observability` (v0.9.2).
+
+## v0.9.1 — 2026-09-05 · Modale « Lancer » E2E — pré-remplissage repoDir/baseUrl par projet
+
+Cause racine : un test ONIRIA lancé depuis l'onglet Tests E2E partait dans le
+mauvais checkout quand le repoDir saisi était erroné (spec inexistant → dump
+config / ERR_CONNECTION_REFUSED sur le fallback 127.0.0.1:3000).
+
+- Mapping E2E par projet : colonnes `projects.e2e_repo_dir` + `e2e_base_url`
+  (MCP task-orchestrator v0.8.2), éditables dans Projets (« Checkout E2E » /
+  « URL de test »). Renseigné : oniria → /root/oniria-preprod +
+  https://preprod.madatalk.fr ; mada-talk → /root/mada-talk-preprod +
+  https://preprod-client.madatalk.fr.
+- Modale « Lancer » : pré-remplit repoDir + baseUrl depuis le projet du test
+  (repli convention /root/<projet>-preprod).
+- Fallback serveur handleE2ERun : dérive repoDir/baseUrl du projet si absents.
+
+Dépôts : `opencode-mcp-task-orchestrator` (v0.8.2) · `opencode-observability`
+(v0.9.1).
+
 ## v0.9.0 — 2026-09-05 · Tests E2E en entités de 1er niveau — implémentation (cadrage 08)
 
 Mise en œuvre du cadrage `08-tests-e2e-independants.md` : les tests E2E sont des

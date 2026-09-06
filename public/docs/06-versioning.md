@@ -1,4 +1,4 @@
-# 06 — Versioning de l.écosystème (v0.9.0)
+# 06 — Versioning de l.écosystème (v0.9.3)
 
 > **FR** — Politique de versionnage de l'écosystème opencode : chaque version est
 > traçable dans la doc (CHANGELOG), taguée git (`vX.Y.Z`) sur chaque dépôt, et
@@ -33,10 +33,10 @@
 
 | Dépôt | Chemin hôte | Version actuelle |
 |---|---|---|
-| `opencode-observability` (panneau + docs) | `/root/orchestrator-panel` | `0.9.0` |
+| `opencode-observability` (panneau + docs) | `/root/orchestrator-panel` | `0.9.3` |
 | `opencode-agents` | `~/.config/opencode/agent` | `0.5.0` |
 | `opencode-notifier` | `~/.config/opencode/notifier` | `0.1.0` |
-| `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.8.1` |
+| `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.8.3` |
 | `opencode-mcp-plan-manager` | `~/.config/opencode/mcp/plan-manager` | `0.1.0` |
 | `opencode-mcp-audit-manager` | `~/.config/opencode/mcp/audit-manager` | `0.1.0` |
 | `opencode-mcp-coder-workspaces` | `~/.config/opencode/mcp/coder-workspaces` | `0.1.0` |
@@ -58,5 +58,5 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.9.0** (2026-09-05,
-Tests E2E en entités de 1er niveau — implémentation, cadrage 08).
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.9.3** (2026-09-06,
+Nettoyage specs E2E ONIRIA legacy + fix obsolescence e2e_sync_repo).

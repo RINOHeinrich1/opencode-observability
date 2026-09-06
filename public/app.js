@@ -527,7 +527,7 @@ const E2E_STATUS_OPTIONS = Object.entries(E2E_TEST_STATUS_LABEL).map(([v, l]) =>
 const E2E_REL_BADGE = { CREATED: 'approved', UPDATED: 'in_progress', REGRESSION: 'danger', EXISTING: 'queued', REQUIRED: 'awaiting' };
 const E2E_REL_LABEL = { CREATED: 'créé', UPDATED: 'modifié', REGRESSION: 'régression', EXISTING: 'existant', REQUIRED: 'requis (bloquant)' };
 let e2eFilterProject = '';   // filtre projet couvert (listé) de l'onglet
-let e2eFilterStatus = '';    // filtre statut du test
+let e2eFilterStatus = 'ACTIVE'; // filtre statut du test — défaut : actifs
 let e2eFilterSearch = '';    // recherche texte (titre / scénario / spec)
 
 function fmtTS(s) {
@@ -600,7 +600,7 @@ async function renderE2ETests() {
       <button id="new-e2e-btn" class="launch-btn">+ Nouveau test</button>
     </div>
     <table><thead><tr><th>Titre / Comportement</th><th>Projet</th><th>Repos traversés</th><th>Scénario</th><th>Statut</th><th>Dernier run</th><th>Actions</th></tr></thead>
-    <tbody>${tests.map(e2eTableRow).join('') || `<tr><td colspan="7" class="muted">${taskFilter ? 'Aucun test E2E associé à la tâche <code>' + esc(taskFilter) + '</code>.' : 'Aucun test E2E enregistré.'}</td></tr>`}</tbody></table>`;
+    <tbody>${tests.map(e2eTableRow).join('') || `<tr><td colspan="7" class="muted">${taskFilter ? 'Aucun test E2E associé à la tâche <code>' + esc(taskFilter) + '</code>.' : (e2eFilterStatus ? 'Aucun test E2E ' + esc((E2E_TEST_STATUS_LABEL[e2eFilterStatus] || e2eFilterStatus)) + ' (changez le filtre de statut).' : 'Aucun test E2E enregistré.')}</td></tr>`}</tbody></table>`;
   bindTaskFilter();
   document.getElementById('e2e-f-project').addEventListener('change', (ev) => { e2eFilterProject = ev.target.value; refreshActive(); });
   const statusSel = document.getElementById('e2e-f-status');

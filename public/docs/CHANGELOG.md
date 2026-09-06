@@ -5,6 +5,15 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.9.25 — 2026-09-06 · Tests E2E : filtre de statut « actif » par défaut
+
+La page **Tests E2E** filtrait par défaut sur « tous les statuts » (y compris
+OBSOLETE/DRAFT), noyant les tests actifs. Le filtre de statut est désormais
+**`actif` par défaut** (options : tous / actif / obsolète / quarantaine /
+brouillon). Message de liste vide adapté au filtre en cours.
+
+Dépôt : `opencode-observability` (v0.9.25).
+
 ## v0.9.24 — 2026-09-06 · Documents de référence : sélection visible par défaut dans les modales
 
 Les fieldset « Documents de référence » des modales **création de test E2E**

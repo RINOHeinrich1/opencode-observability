@@ -548,6 +548,7 @@ export async function runE2ETest(args) {
     playwrightConfig: args.playwrightConfig || undefined,
     pwArgs: Array.isArray(args.pwArgs) && args.pwArgs.length ? args.pwArgs : undefined,
     paramValues: args.paramValues || undefined,
+    secretNames: Array.isArray(args.secretNames) && args.secretNames.length ? args.secretNames : undefined,
   });
 }
 
@@ -573,6 +574,25 @@ export async function unlinkE2ETest({ taskId, e2eTestId }) {
 export async function obsoleteE2ETest(e2eTestId) {
   if (!e2eTestId) throw new Error("e2eTestId requis");
   return taskOrchestrator("e2e_test_obsolete", { e2eTestId });
+}
+
+// ===========================================================================
+// Secrets E2E (module secrets) — variables d'env par projet, valeurs chiffrées
+// côté MCP (AES-256-GCM). Jamais de valeur en clair dans le panneau.
+// ===========================================================================
+export async function setE2ESecret({ project, name, value, purpose }) {
+  if (!project || !name || !value) throw new Error("project, name et value requis");
+  return taskOrchestrator("e2e_secret_set", { project, name, value, purpose: purpose || undefined });
+}
+
+export async function listE2ESecrets(project) {
+  if (!project) throw new Error("project requis");
+  return taskOrchestrator("e2e_secret_list", { project });
+}
+
+export async function deleteE2ESecret({ project, name }) {
+  if (!project || !name) throw new Error("project et name requis");
+  return taskOrchestrator("e2e_secret_delete", { project, name });
 }
 
 // ===========================================================================

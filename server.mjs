@@ -5,7 +5,7 @@ import { createServer } from "node:http";
 import { readFileSync, existsSync, statSync, createReadStream, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join, dirname, extname, normalize, basename } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import pg from "pg";
 import { openDb, getUserByUsername, verifyPassword, createUser, listUsers, updatePassword, deleteUser, createSession, deleteSession, pruneSessions, listArchives, archivedTaskIds, archiveTask, restoreTask, getArchive, removeArchive } from "./panel-db.mjs";
 import { currentUser, sessionToken, cookieHeader, clearCookieHeader } from "./auth.mjs";
@@ -715,6 +715,10 @@ async function registryE2ETestDetail(res, id) {
   // Tâches REQUIRED (contrat BDD/TDD) dont la tâche n'est pas done → test « bloqué par ».
   const requiredOpenTasks = linkedTasks.filter((l) => l.relationType === "REQUIRED" && l.taskStatus !== "done")
     .map((l) => ({ taskId: l.taskId, title: l.taskTitle, taskStatus: l.taskStatus }));
+  // Secrets du projet (module secrets) disponibles à l'injection au run — méta
+  // seulement, jamais la valeur.
+  let projectSecrets = [];
+  try { projectSecrets = ((await pilot.listE2ESecrets(row.project)).secrets || []); } catch { projectSecrets = []; }
   const test = {
     ...mapE2ETestRow(row),
     projects: projects.length ? projects : (row.project ? [row.project] : []),
@@ -722,6 +726,7 @@ async function registryE2ETestDetail(res, id) {
     linkedTasks,
     requiredOpen: requiredOpenTasks.length,
     requiredOpenTasks,
+    projectSecrets,
   };
   return sendJson(res, 200, { test, executions });
 }
@@ -829,45 +834,64 @@ async function e2eDefaultsForProject(project) {
 async function handleE2ERun(res, id, b) {
   const t = await registryE2ETest(id);
   if (!t) return sendJson(res, 404, { error: "test E2E inconnu" });
-  const { repoDir, baseUrl, origin, taskId, specPattern, playwrightConfig, pwArgs, paramValues } = b || {};
+  const { repoDir, baseUrl, origin, taskId, specPattern, playwrightConfig, pwArgs, paramValues, secretNames } = b || {};
   // RepoDir/baseUrl par défaut : mapping E2E du projet (registre projects) puis
   // convention hôte /root/<projet>-preprod pour les projets applicatifs connus.
   const projDefaults = await e2eDefaultsForProject(t.project);
   const finalRepoDir = (repoDir && String(repoDir).trim()) || projDefaults.repoDir;
   const finalBaseUrl = (baseUrl && String(baseUrl).trim()) || projDefaults.baseUrl || undefined;
   if (!finalRepoDir) return sendJson(res, 400, { error: "repoDir requis (dépôt applicatif à exécuter) — renseigner le checkout E2E du projet (Projets → Modifier, champ e2eRepoDir)" });
-  // SÉCURITÉ : un paramètre secret ne peut pas être surchargé en clair (il ne
-  // doit jamais transiter ni être persisté dans param_values).
+  // SÉCURITÉ : un secret ne peut JAMAIS être transmis en clair dans paramValues.
+  // La sélection se fait par NOM (secretNames) ; les valeurs sont déchiffrées et
+  // injectées par le MCP au run. On rejette toute tentative de forcer une clé
+  // secrète via paramValues.
   if (paramValues && typeof paramValues === "object") {
-    let secretNames = [];
+    let secretKeys = [];
     try {
-      secretNames = (await registry().query("SELECT name FROM e2e_test_params WHERE e2e_test_id = $1 AND kind = 'secret'", [id])).rows.map((x) => x.name);
+      const s = await pilot.listE2ESecrets(t.project);
+      secretKeys = (s && s.secrets || []).map((x) => x.name);
     } catch {}
-    const forbidden = Object.keys(paramValues).filter((k) => secretNames.includes(k));
-    if (forbidden.length) return sendJson(res, 400, { error: `paramètre(s) secret(s) non surchargeables : ${forbidden.join(", ")}` });
+    const forbidden = Object.keys(paramValues).filter((k) => secretKeys.includes(k));
+    if (forbidden.length) return sendJson(res, 400, { error: `secret(s) non surchargeable(s) en clair — sélectionner par nom : ${forbidden.join(", ")}` });
   }
   const runOrigin = ["manual", "task", "recette", "ci", "session"].includes(origin) ? origin : "manual";
+  // Run ASYNCHRONE : le POST retourne immédiatement ; un worker détaché relaie
+  // l'appel MCP e2e_run (jusqu'à 15 min) et écrit un marqueur de fin. Le front
+  // suit l'état via le job (GET /api/e2e/jobs/:jobId) + l'historique du test.
+  const E2E_JOBS = join(dirname(fileURLToPath(import.meta.url)), "storage", "e2e", "jobs");
+  const jobId = `job-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   try {
-    const r = await pilot.runE2ETest({
-      project: t.project,
-      repoDir: String(finalRepoDir).trim(),
-      baseUrl: finalBaseUrl,
-      e2eTestId: t.id,
-      origin: runOrigin,
-      taskId: taskId || undefined,
-      specPattern: specPattern || undefined,
-      playwrightConfig: playwrightConfig || undefined,
-      pwArgs,
-      paramValues,
-    });
-    return sendJson(res, 200, { ...(r || {}), defaults: { project: t.project, repoDir: finalRepoDir, baseUrl: finalBaseUrl } });
+    mkdirSync(E2E_JOBS, { recursive: true });
+  } catch {}
+  const payload = {
+    project: t.project,
+    repoDir: String(finalRepoDir).trim(),
+    baseUrl: finalBaseUrl,
+    e2eTestId: t.id,
+    origin: runOrigin,
+    taskId: taskId || undefined,
+    specPattern: specPattern || undefined,
+    playwrightConfig: playwrightConfig || undefined,
+    pwArgs,
+    paramValues,
+    secretNames,
+  };
+  const payloadFile = join(E2E_JOBS, `${jobId}.json`);
+  const resultFile = join(E2E_JOBS, `${jobId}.result.json`);
+  try { writeFileSync(payloadFile, JSON.stringify(payload, null, 2)); } catch (e) { return sendJson(res, 500, { error: "impossible d'écrire le job : " + e.message }); }
+  const worker = join(dirname(fileURLToPath(import.meta.url)), "e2e-run-worker.mjs");
+  let child;
+  try {
+    child = spawn("node", [worker, payloadFile, resultFile], { stdio: "ignore", detached: true });
+    child.unref();
   } catch (e) {
-    const msg = String((e && e.message) || e);
-    // Le run peut dépasser le timeout MCP (30 s côté mcp-client) : explicite.
-    if (/timeout/i.test(msg)) return sendJson(res, 502, { error: "run trop long — vérifier dans l'historique du test" });
-    if (/requis|invalide|non disponible|introuvable|absents/i.test(msg)) return sendJson(res, 400, { error: msg });
-    return sendJson(res, 500, { error: msg });
+    return sendJson(res, 500, { error: "impossible de lancer le worker : " + String((e && e.message) || e) });
   }
+  return sendJson(res, 202, {
+    ok: true, async: true, jobId, e2eTestId: t.id, origin: runOrigin,
+    defaults: { project: t.project, repoDir: finalRepoDir, baseUrl: finalBaseUrl },
+    message: `Run lancé en arrière-plan (job ${jobId}) — suivez l'état via l'historique du test (détail) ; il peut prendre plusieurs minutes.`,
+  });
 }
 
 async function handleE2EParamSet(res, id, b) {
@@ -1213,6 +1237,18 @@ const server = createServer(async (req, res) => {
     }
     // --- Tests E2E (v0.9.0) : entités de 1er niveau, indépendantes des tâches
     if (path === "/api/e2e-tests" && req.method === "GET") return sendJson(res, 200, await registryE2ETests(url));
+    // Statut d'un job E2E asynchrone (worker détaché) : en cours / terminé.
+    const e2eJobMatch = path.match(/^\/api\/e2e\/jobs\/([^/]+)$/);
+    if (e2eJobMatch && req.method === "GET") {
+      const jobId = e2eJobMatch[1];
+      const E2E_JOBS = join(dirname(fileURLToPath(import.meta.url)), "storage", "e2e", "jobs");
+      const resultFile = join(E2E_JOBS, `${jobId}.result.json`);
+      if (!existsSync(resultFile)) return sendJson(res, 200, { jobId, status: "RUNNING" });
+      try {
+        const r = JSON.parse(readFileSync(resultFile, "utf8"));
+        return sendJson(res, 200, { jobId, status: r.ok ? "DONE" : "ERROR", ...r });
+      } catch (e) { return sendJson(res, 200, { jobId, status: "ERROR", error: "resultat illisible : " + e.message }); }
+    }
     if (path === "/api/e2e-tests" && req.method === "POST") {
       const b = await readBody(req);
       return handleE2ECreate(res, b);
@@ -1245,6 +1281,28 @@ const server = createServer(async (req, res) => {
       const b = await readBody(req).catch(() => ({}));
       return handleE2ECreateTask(res, e2eCreateTaskMatch[1], b);
     }
+    // --- Secrets E2E (module secrets) : gestion par projet (UI onglet Secrets) ---
+    if (path === "/api/e2e-secrets" && req.method === "GET") {
+      const project = url.searchParams.get("project") || "";
+      if (!project) return sendJson(res, 400, { error: "project requis" });
+      try { return sendJson(res, 200, await pilot.listE2ESecrets(project)); }
+      catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
+    }
+    if (path === "/api/e2e-secrets" && req.method === "POST") {
+      const b = await readBody(req).catch(() => ({}));
+      const { project, name, value, purpose } = b || {};
+      if (!project || !name || !value) return sendJson(res, 400, { error: "project, name et value requis" });
+      try { return sendJson(res, 201, await pilot.setE2ESecret({ project, name, value, purpose })); }
+      catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
+    }
+    if (path === "/api/e2e-secrets" && req.method === "DELETE") {
+      const project = url.searchParams.get("project") || "";
+      const name = url.searchParams.get("name") || "";
+      if (!project || !name) return sendJson(res, 400, { error: "project et name requis" });
+      try { return sendJson(res, 200, await pilot.deleteE2ESecret({ project, name })); }
+      catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
+    }
+
     const e2eParamsMatch = path.match(/^\/api\/e2e-tests\/([^/]+)\/params$/);
     if (e2eParamsMatch && req.method === "POST") {
       const b = await readBody(req);

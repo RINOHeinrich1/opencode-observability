@@ -346,6 +346,25 @@ réutilisable (ex. `tests/e2e/helpers/video.helper.ts`) encapsulant la création
 d'un contexte enregistré + l'attache de la vidéo, et les specs UI doivent
 l'utiliser (pas de `browser.newContext` nu pour un parcours UI).
 
+### 10.2 UN TEST = UN CONTEXTE = UNE VIDÉO CONTINUE (règle 2026-09-06)
+
+**Playwright produit UNE vidéo PAR CONTEXTE**, et une exécution du registre ne
+conserve qu'une vidéo de preuve. Conséquences de conception (long terme) :
+
+- **Un test E2E = UN SEUL contexte navigateur enregistré** (`newRecordedContext`)
+  → **une vidéo continue** qui couvre tout le parcours.
+- **Les rôles / étapes multi-comptes (client, admin, opérateur…) sont des PAGES
+  du MÊME contexte**, ouvertes vers leur **URL absolue** (ex.
+  `https://preprod.madatalk.fr/login`), et non des contextes séparés. Les
+  sessions par domaine coexistent dans un même contexte (cookies isolés par
+  domaine).
+- **Interdit** : ouvrir plusieurs `browser.newContext` avec vidéo dans un même
+  test — cela produirait plusieurs vidéos dont une seule serait conservée
+  (preuve incomplète, impossible de voir le parcours entier).
+- Les helpers de login/navigation d'un rôle reçoivent la **page** du contexte et
+  naviguent par **URL absolue** (le `baseURL` relatif par rôle est abandonné au
+  profit d'origines explicites).
+
 **Contrôle** : à la création/mise à jour d'un test UI (test-agent) et en recette,
 vérifier qu'une exécution PASSED/FAILED du test comporte une `videoUrl` ; son
 absence est un constat à remonter (défaut de test).

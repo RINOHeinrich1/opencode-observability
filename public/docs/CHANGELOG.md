@@ -21,7 +21,7 @@ niveau du **repo** et est fourni en contexte à l'orchestrateur au traitement.
   (résumé par repo).
 
 Dépôts : `opencode-mcp-task-orchestrator` (v0.8.18) · `opencode-observability`
-(v0.9.17).
+(v0.9.17) · `opencode-agents` (v0.6.7).
 
 ## v0.9.15 — 2026-09-06 · Tâches émergentes (demande hors scope → nouvelle tâche liée)
 

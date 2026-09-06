@@ -988,6 +988,26 @@ const server = createServer(async (req, res) => {
     if (path === "/api/projects" && req.method === "GET") {
       return sendJson(res, 200, await pilot.listProjects());
     }
+    // --- Repos (ADR 09) : dépôts physiques rattachables à 1..N produits ----
+    if (path === "/api/repos" && req.method === "GET") {
+      const projectId = url.searchParams.get("project") || "";
+      return sendJson(res, 200, await pilot.listRepos(projectId || undefined));
+    }
+    if (path === "/api/repos" && req.method === "POST") {
+      const b = await readBody(req);
+      try { return sendJson(res, 200, await pilot.registerRepo({ ...b, createdBy: user.username })); }
+      catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
+    }
+    const repoLinkMatch = path.match(/^\/api\/projects\/([^/]+)\/repos\/([^/]+)$/);
+    if (repoLinkMatch && req.method === "PUT") {
+      const b = await readBody(req).catch(() => ({}));
+      try { return sendJson(res, 200, await pilot.linkRepoToProject({ projectId: repoLinkMatch[1], repoId: repoLinkMatch[2], role: (b && b.role) || undefined })); }
+      catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
+    }
+    if (repoLinkMatch && req.method === "DELETE") {
+      try { return sendJson(res, 200, await pilot.unlinkRepoFromProject({ projectId: repoLinkMatch[1], repoId: repoLinkMatch[2] })); }
+      catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
+    }
     if (path === "/api/projects" && req.method === "POST") {
       const b = await readBody(req);
       return sendJson(res, 200, await pilot.createProject({ ...b, createdBy: user.username }));

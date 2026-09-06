@@ -2156,6 +2156,7 @@ async function renderProjects() {
             <div class="project-kv"><span class="lbl">Checkout E2E</span><code class="muted-sm">${esc(p.e2eRepoDir || '—')}</code></div>
             <div class="project-kv"><span class="lbl">URL de test (E2E)</span>${p.e2eBaseUrl ? `<code class="muted-sm">${esc(p.e2eBaseUrl)}</code>` : '<span class="muted-sm">— (défaut : champ baseUrl du run)</span>'}</div>
             <div class="project-kv"><span class="lbl">Créé le</span><span class="muted-sm">${esc((p.createdAt || '').replace('T', ' ').slice(0, 19))}</span></div>
+            ${(p.repos || []).length ? `<div class="project-kv"><span class="lbl">Repos associés</span><span>${p.repos.map((rid) => `<code class="chip">${esc(rid)}</code>`).join(' ')}</span></div>` : ''}
           </div>
           <div class="project-card-actions">
             <button class="ghost" data-edit-project="${esc(p.id)}">Modifier</button>

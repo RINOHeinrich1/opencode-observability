@@ -35,6 +35,20 @@ export async function listProjects() {
   return taskOrchestrator("project_list", {});
 }
 
+// --- Repos (ADR 09) : dépôt de code physique, rattaché à 1..N produits ------
+export async function listRepos(projectId) {
+  return taskOrchestrator("repo_list", { projectId: projectId || undefined });
+}
+export async function registerRepo({ id, name, workspace, gitPath, branches, mainBranch, e2eRepoDir, e2eBaseUrl, createdBy }) {
+  return taskOrchestrator("repo_register", { id, name: name || undefined, workspace: workspace || undefined, gitPath: gitPath || undefined, branches, mainBranch: mainBranch || undefined, e2eRepoDir: e2eRepoDir || undefined, e2eBaseUrl: e2eBaseUrl || undefined, createdBy });
+}
+export async function linkRepoToProject({ projectId, repoId, role }) {
+  return taskOrchestrator("project_repo_link", { projectId, repoId, role: role || undefined });
+}
+export async function unlinkRepoFromProject({ projectId, repoId }) {
+  return taskOrchestrator("project_repo_unlink", { projectId, repoId });
+}
+
 export async function createProject({ id, name, workspace, gitPath, mainBranch, e2eRepoDir, e2eBaseUrl, createdBy }) {
   if (!id || !name) throw new Error("id et name requis pour créer un projet");
   if (!mainBranch || !String(mainBranch).trim()) {

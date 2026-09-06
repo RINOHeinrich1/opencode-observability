@@ -72,6 +72,23 @@ cocher au lancement :
 - Création de test via agent : fieldset **Documents de référence** (cases à cocher).
 - Création de recette : fieldset **Documents de référence des projets** (cases à cocher).
 
+### Sélection du contexte (cases à cocher)
+
+Dans la **création/MAJ de test E2E** (session test-agent) et la **création de
+recette**, un fieldset **Documents de référence** liste toujours les **3
+catégories** — **toutes cochées par défaut** :
+
+- `adr-tech` — ADR / Architecture technique ;
+- `specs-fonctionnelles` — User stories + règles métier ;
+- `scenarios-gherkin` — Scénarios Gherkin.
+
+Sous chaque catégorie apparaissent les documents enregistrés pour le(s)
+projet(s) sélectionné(s) (eux aussi cochés par défaut). Décocher une catégorie
+décoche ses documents ; décocher un document l'exclut du contexte. Une
+catégorie sans document enregistré reste affichée (avec un rappel de gestion
+via Projets → 📄 Docs de référence) — le champ est donc toujours visible et
+actionnable.
+
 ### Import depuis le PC (fichiers locaux)
 
 Chaque doc peut être **importé depuis le PC de l'utilisateur** (bouton

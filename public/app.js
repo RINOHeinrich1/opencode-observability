@@ -1198,8 +1198,8 @@ async function e2eCreateViaAgentModal(projects, projOpts) {
     return (p && p.repos || []).map((rid) => reposById.get(rid)).filter(Boolean);
   };
   const selectedRepoIds = () => [...document.querySelectorAll('#modal-backdrop .ea-repo:checked')].map((c) => c.value);
-  const selectedDocIds = () => [...document.querySelectorAll('#modal-backdrop .ea-doc:checked')].map((c) => c.value);
   const projRepoIds = {};
+
   showModal(`
     <div class="modal modal-wide">
       <h2>Créer un test E2E (via test-agent)</h2>
@@ -1212,8 +1212,8 @@ async function e2eCreateViaAgentModal(projects, projOpts) {
           <legend>Repos de code associés <span class="muted-sm">— couverture du test : repos traversés par le comportement (ex. parcours client + console = mada-talk ET oniria). Le test-agent écrira le spec dans l'un d'eux. Défaut : tous les repos du projet.</span></legend>
           <div id="ea-repos-list"></div>
         </fieldset>
-        <fieldset id="ea-docs-fieldset" class="pilot-fieldset" hidden>
-          <legend>Documents de référence <span class="muted-sm">— ADR technique, specs fonctionnelles, scénarios Gherkin du projet fournis en contexte au test-agent (ADR-12). Défaut : tous.</span></legend>
+        <fieldset id="ea-docs-fieldset" class="pilot-fieldset">
+          <legend>Documents de référence — contexte du test-agent <span class="muted-sm">(ADR technique, User stories + règles métier, scénarios Gherkin). Tous cochés par défaut.</span></legend>
           <div id="ea-docs-list"></div>
         </fieldset>
         <label class="modal-field">Comportement à tester (titre) <span class="muted-sm">— requis</span>
@@ -1230,13 +1230,12 @@ async function e2eCreateViaAgentModal(projects, projOpts) {
       <div id="ea-msg" class="msg"></div>
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
-  // Binding projet → repos de code associés (défaut : tous cochés).
   const reposList = document.getElementById('ea-repos-list');
   const reposFieldset = document.getElementById('ea-repos-fieldset');
   const docsFieldset = document.getElementById('ea-docs-fieldset');
   const docsList = document.getElementById('ea-docs-list');
   const projSel = document.getElementById('ea-project');
-  const docsCache = {};
+  docsList.innerHTML = '<p class="muted-sm">Sélectionnez un projet pour afficher ses documents de référence (ADR technique, User stories + règles métier, scénarios Gherkin).</p>';
   const renderRepoChecks = (pid) => {
     const reps = reposOf(pid);
     if (!reps.length) { reposFieldset.hidden = true; reposList.innerHTML = ''; return; }
@@ -1248,27 +1247,37 @@ async function e2eCreateViaAgentModal(projects, projOpts) {
         <code>${esc(r.id)}</code>${r.workspace ? ` <span class="muted-sm">· ${esc(r.workspace)}</span>` : ''}${r.mainBranch ? ` <span class="muted-sm">· ${esc(r.mainBranch)}</span>` : ''}
       </label>`).join('');
   };
-  const renderDocChecks = async (pid) => {
-    if (!pid) { docsFieldset.hidden = true; docsList.innerHTML = ''; return; }
-    if (!docsCache[pid]) {
-      const d = await api(`/api/docs?projectId=${encodeURIComponent(pid)}&includeRepoDocs=1`).catch(() => ({ docs: [] }));
-      docsCache[pid] = d.docs || [];
-    }
-    const docs = docsCache[pid];
-    if (!docs.length) { docsFieldset.hidden = true; docsList.innerHTML = ''; return; }
-    docsFieldset.hidden = false;
-    docsList.innerHTML = docs.map((d) => `
-      <label class="filter-check" title="${esc(d.path)}"><input type="checkbox" class="ea-doc" value="${esc(d.docId)}" checked>
-        <code class="chip">${esc(docKindLabel(d.kind))}</code> ${esc(d.title || d.docId)} <span class="muted-sm">· ${esc(d.path)}</span>
-      </label>`).join('');
+  const renderDocChecks = async () => {
+    const KINDS = DOC_KIND_ORDER;
+    docsList.innerHTML = KINDS.map(() => `<p class="muted-sm">Chargement des documents de référence…</p>`).join('');
+    const pid = projSel.value;
+    if (!pid) { docsList.innerHTML = '<p class="muted-sm">Sélectionnez un projet pour lister ses documents de référence.</p>'; return; }
+    let docs = [];
+    try { const dr = await api(`/api/docs?projectId=${encodeURIComponent(pid)}&includeRepoDocs=1`); docs = dr.docs || []; } catch { docs = []; }
+    const byKind = {};
+    for (const d of docs) (byKind[d.kind] = byKind[d.kind] || []).push(d);
+    docsList.innerHTML = KINDS.map((k) => {
+      const items = byKind[k] || [];
+      const inner = items.length
+        ? `<div style="padding-left:22px">${items.map((d) => `<label class="filter-check"><input type="checkbox" class="ea-doc" data-kind="${esc(k)}" value="${esc(d.docId)}" checked title="${esc(d.path)}"> ${esc(d.title || d.docId)} <span class="muted-sm" style="font-size:11px">${esc(d.path)}</span></label>`).join('')}</div>`
+        : `<p class="muted-sm" style="font-size:11px;padding-left:22px">Aucun document enregistré de ce type — ajoutez-le via <em>Projets → 📄 Docs de référence</em>.</p>`;
+      return `<div><label class="filter-check"><input type="checkbox" class="ea-kind" data-kind="${esc(k)}" checked> <code class="chip">${esc(docKindLabel(k))}</code> ${esc(docKindLabelLong(k))}</label>${inner}</div>`;
+    }).join('');
+    bindKindToggle();
   };
-  const sync = async () => {
+  // Coche/décoche tous les docs d'une catégorie quand sa case kind change.
+  const bindKindToggle = () => {
+    document.querySelectorAll('#modal-backdrop .ea-kind').forEach((cb) => cb.addEventListener('change', () => {
+      document.querySelectorAll(`#modal-backdrop .ea-doc[data-kind="${cb.dataset.kind}"]`).forEach((d) => { d.checked = cb.checked; });
+    }));
+  };
+  projSel.addEventListener('change', () => {
     const pid = projSel.value;
     if (pid) projRepoIds[pid] = selectedRepoIds();
     renderRepoChecks(pid);
-    await renderDocChecks(pid);
-  };
-  projSel.addEventListener('change', sync);
+    renderDocChecks();
+  });
+  const selectedDocIds = () => [...document.querySelectorAll('#modal-backdrop .ea-doc:checked')].map((c) => c.value);
   document.getElementById('e2e-agent-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const msg = document.getElementById('ea-msg');
@@ -1285,7 +1294,7 @@ async function e2eCreateViaAgentModal(projects, projOpts) {
         description: document.getElementById('ea-description').value.trim() || undefined,
         viaAgent: true,
         repoIds: projRepoIds[pid] && projRepoIds[pid].length ? projRepoIds[pid] : undefined,
-        docIds: selectedDocIds().length ? selectedDocIds() : undefined,
+        docIds: selectedDocIds(), // toujours un tableau (vide = aucun doc en contexte)
       }) });
       closeModal();
       if (r && r.session && r.session.sessionId && /^ses_/.test(r.session.sessionId)) {
@@ -1594,9 +1603,9 @@ async function recetteCreateModal() {
           <div class="rm-projects">${projects.map((p) => `<label class="filter-check"><input type="checkbox" class="rm-project" value="${esc(p.id)}"> ${esc(p.name || p.id)}</label>`).join('') || '<p class="muted-sm">Aucun projet enregistré.</p>'}</div>
           <button type="button" class="ghost" id="rm-load-cands">Charger les tâches disponibles</button>
         </fieldset>
-        <fieldset id="rm-docs-ref-fieldset" class="pilot-fieldset" hidden>
-          <legend>Documents de référence des projets <span class="muted-sm">— ADR technique, specs fonctionnelles, scénarios Gherkin (ADR-12) fournis à l'agent de recette. Défaut : tous les projets sélectionnés.</span></legend>
-          <div id="rm-docs-ref-list"></div>
+        <fieldset id="rm-docs-ref-fieldset" class="pilot-fieldset">
+          <legend>Documents de référence — contexte de l'agent de recette <span class="muted-sm">(ADR technique, User stories + règles métier, scénarios Gherkin — ADR-12). Tous cochés par défaut.</span></legend>
+          <div id="rm-docs-ref-list"><p class="muted-sm">Cochez ≥ 1 projet pour afficher ses documents de référence.</p></div>
         </fieldset>
         <input id="rm-title" placeholder="titre court (ex: Recette du module chatbot)" required>
         <textarea id="rm-description" class="modal-textarea" placeholder="description longue (détail du périmètre vérifié) — optionnel"></textarea>
@@ -1641,24 +1650,34 @@ async function recetteCreateModal() {
   document.getElementById('rm-load-cands').addEventListener('click', loadCandidates);
   const refDocsBox = document.getElementById('rm-docs-ref-list');
   const refDocsFieldset = document.getElementById('rm-docs-ref-fieldset');
-  const refDocsCache = {};
   const selectedRefDocIds = () => [...document.querySelectorAll('#modal-backdrop .rm-refdoc:checked')].map((c) => c.value);
+  const renderRefDocs = (docs) => {
+    const KINDS = DOC_KIND_ORDER;
+    const byKind = {};
+    for (const d of docs) (byKind[d.kind] = byKind[d.kind] || []).push(d);
+    refDocsBox.innerHTML = KINDS.map((k) => {
+      const items = byKind[k] || [];
+      const inner = items.length
+        ? `<div style="padding-left:22px">${items.map((d) => `<label class="filter-check"><input type="checkbox" class="rm-refdoc" data-kind="${esc(k)}" value="${esc(d.docId)}" checked title="${esc(d.path)}"> ${esc(d.title || d.docId)} <span class="muted-sm" style="font-size:11px">${esc(d.path)}</span></label>`).join('')}</div>`
+        : `<p class="muted-sm" style="font-size:11px;padding-left:22px">Aucun document enregistré de ce type pour ces projets — ajoutez-le via <em>Projets → 📄 Docs de référence</em>.</p>`;
+      return `<div><label class="filter-check"><input type="checkbox" class="rm-refkind" data-kind="${esc(k)}" checked> <code class="chip">${esc(docKindLabel(k))}</code> ${esc(docKindLabelLong(k))}</label>${inner}</div>`;
+    }).join('');
+    document.querySelectorAll('#modal-backdrop .rm-refkind').forEach((cb) => cb.addEventListener('change', () => {
+      document.querySelectorAll(`#modal-backdrop .rm-refdoc[data-kind="${cb.dataset.kind}"]`).forEach((d) => { d.checked = cb.checked; });
+    }));
+  };
   const loadRefDocs = async () => {
     const projs = selectedProjects();
-    if (!projs.length) { refDocsFieldset.hidden = true; refDocsBox.innerHTML = ''; return; }
+    if (!projs.length) { refDocsBox.innerHTML = '<p class="muted-sm">Cochez ≥ 1 projet pour afficher ses documents de référence.</p>'; return; }
+    refDocsBox.innerHTML = '<p class="muted-sm">Chargement des documents de référence…</p>';
     const seen = new Map();
     for (const pid of projs) {
-      if (!refDocsCache[pid]) {
-        try { const d = await api(`/api/docs?projectId=${encodeURIComponent(pid)}&includeRepoDocs=1`); refDocsCache[pid] = d.docs || []; } catch { refDocsCache[pid] = []; }
-      }
-      for (const d of refDocsCache[pid]) if (!seen.has(d.docId)) seen.set(d.docId, d);
+      try {
+        const d = await api(`/api/docs?projectId=${encodeURIComponent(pid)}&includeRepoDocs=1`);
+        for (const doc of (d.docs || [])) if (!seen.has(doc.docId)) seen.set(doc.docId, doc);
+      } catch {}
     }
-    if (!seen.size) { refDocsFieldset.hidden = true; refDocsBox.innerHTML = ''; return; }
-    refDocsFieldset.hidden = false;
-    refDocsBox.innerHTML = [...seen.values()].map((d) => `
-      <label class="filter-check" title="${esc(d.path)}"><input type="checkbox" class="rm-refdoc" value="${esc(d.docId)}" checked>
-        <code class="chip">${esc(docKindLabel(d.kind))}</code> ${esc(d.title || d.docId)} <span class="muted-sm">· ${esc(d.path)}</span>
-      </label>`).join('');
+    renderRefDocs([...seen.values()]);
   };
   document.querySelectorAll('.rm-project').forEach((cb) => cb.addEventListener('change', () => {
     if (!selectedProjects().length) candBox.innerHTML = '<p class="muted-sm">Cochez ≥ 1 projet puis « Charger les tâches disponibles ».</p>';
@@ -1730,7 +1749,7 @@ async function recetteCreateModal() {
         description: document.getElementById('rm-description').value.trim() || undefined,
         taskIds,
         documents,
-        docIds: selectedRefDocIds().length ? selectedRefDocIds() : undefined,
+        docIds: selectedRefDocIds(), // toujours un tableau (vide = aucun doc en contexte)
       }) });
       closeModal();
       refreshActive();
@@ -2328,6 +2347,7 @@ function docKindLabel(kind) {
 function docKindLabelLong(kind) {
   return { 'adr-tech': 'ADR — Architecture technique', 'specs-fonctionnelles': 'Spécifications fonctionnelles (User stories / règles métier)', 'scenarios-gherkin': 'Scénarios (Gherkin)' }[kind] || kind;
 }
+const DOC_KIND_ORDER = ['adr-tech', 'specs-fonctionnelles', 'scenarios-gherkin'];
 
 // Aperçu d'un document de référence importé (ADR-12) : rendu md / feature / texte.
 async function viewRefDoc(url) {

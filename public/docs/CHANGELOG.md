@@ -5,6 +5,21 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.9.24 — 2026-09-06 · Documents de référence : sélection visible par défaut dans les modales
+
+Les fieldset « Documents de référence » des modales **création de test E2E**
+(via agent) et **création de recette** étaient masqués tant qu'aucun document
+n'était enregistré — l'utilisateur ne voyait aucune option de contexte.
+
+- Le fieldset est **toujours affiché** et liste les **3 catégories** (ADR /
+  User stories + règles métier / Gherkin), **toutes cochées par défaut** ; les
+  documents enregistrés du (des) projet(s) apparaissent sous leur catégorie
+  (cochés) ; une catégorie vide reste visible (rappel de gestion).
+- Case catégorie = coche/décoche ses documents ; une sélection **entièrement
+  décochée = aucun document** en contexte (plus de repli « tous »).
+
+Dépôt : `opencode-observability` (v0.9.24).
+
 ## v0.9.23 — 2026-09-06 · Documents de référence : import depuis le PC
 
 Les documents de référence (ADR-12 : `adr-tech`, `specs-fonctionnelles`,

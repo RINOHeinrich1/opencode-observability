@@ -676,21 +676,21 @@ async function e2eDetailModal(e2eTestId) {
           <button type="button" class="ghost" data-e2e-session-force="${esc(test.e2eTestId || e2eTestId)}" title="Démarrer une NOUVELLE session test-agent (force)">Nouvelle session</button>
         </div>
       </div>` : ''}
-      ${params.length ? `<div class="actions-section"><h3>Paramètres libres (${params.length})</h3>
-        <div class="table-scroll"><table><thead><tr><th>Nom</th><th>Type</th><th>Défaut</th><th>Requis</th></tr></thead>
+      ${params.length ? `<div class="actions-section"><h3>Params historiques (${params.length})</h3>
+        <p class="muted-sm">Anciens « paramètres de test » — migrés vers des variables de projet (onglet Vars &amp; Secrets E2E).</p>
+        <div class="table-scroll"><table><thead><tr><th>Nom</th><th>Type</th><th>Défaut</th></tr></thead>
         <tbody>${params.map((p) => `<tr>
           <td class="code">${esc(p.name)}</td>
           <td>${esc(p.kind)}</td>
-          <td>${p.kind === 'secret' ? '<span class="muted-sm">— (secret : onglet Secrets E2E)</span>' : esc(p.defaultValue ?? '—')}</td>
-          <td>${p.required ? '<span class="badge approved">requis</span>' : '<span class="muted-sm">non</span>'}</td>
+          <td>${p.kind === 'secret' ? '<span class="muted-sm">—</span>' : esc(p.defaultValue ?? '—')}</td>
         </tr>`).join('')}</tbody></table></div></div>` : ''}
-      ${(test.projectSecrets || []).length ? `<div class="actions-section"><h3>Secrets du projet injectables (${(test.projectSecrets || []).length})</h3>
-        <p class="muted-sm">Valeurs chiffrées — déchiffrées et injectées au run par le serveur (jamais affichées).</p>
-        <div class="recette-list">${(test.projectSecrets || []).map((s) => `<div class="recette-item">
+      ${((test.projectVars || []).length || (test.projectSecrets || []).length) ? `<div class="actions-section"><h3>Variables &amp; secrets du projet (injectés au run)</h3>
+        <div class="recette-list">${[...(test.projectVars || []).map((v) => ({ ...v, kind: 'variable' })), ...(test.projectSecrets || [])].map((s) => `<div class="recette-item">
           <code>${esc(s.name)}</code>
-          <span class="muted-sm">${esc(s.purpose || '—')}</span>
+          ${s.kind === 'secret' ? '<span class="badge rejected">secret</span>' : `<span class="badge approved">variable</span><span class="muted-sm"> · ${esc((s.value ?? s.defaultValue) || '—')}</span>`}
+          <span class="muted-sm">${esc(s.purpose || '')}</span>
         </div>`).join('')}</div>
-        <p class="muted-sm"><a href="#" onclick="goToTab('e2esecrets'); return false;">Gérer les secrets (onglet Secrets E2E)</a></p>
+        <p class="muted-sm"><a href="#" onclick="goToTab('e2esecrets'); return false;">Gérer les variables &amp; secrets (onglet Vars &amp; Secrets E2E)</a></p>
       </div>` : ''}
       <div class="actions-section"><h3>Tâches liées (${linked.length})</h3>
         ${linked.length ? `<div class="recette-list">${linked.map((l) => `<div class="recette-item">
@@ -824,23 +824,25 @@ async function e2eRunModal(e2eTestId) {
   try { const pr = await api('/api/projects'); proj = (pr.projects || []).find((p) => p.id === repoProject) || null; } catch {}
   const defRepoDir = (proj && proj.e2eRepoDir) || `/root/${repoProject}-preprod`;
   const defBaseUrl = (proj && proj.e2eBaseUrl) || '';
-  const params = (test.params || []).filter((p) => p.kind !== 'secret'); // secrets → onglet Secrets E2E
-  const freeParams = test.params || [];
-  const freeParamFields = params.map((p) => `
-    <label class="modal-field">${esc(p.name)} <span class="muted-sm">(${esc(p.kind)}${p.required ? ' · requis' : ''} — vide = défaut)</span>
-      <input type="text" data-pv="${esc(p.name)}" placeholder="${esc(p.defaultValue ?? '(vide = défaut du test)')}">
-    </label>`).join('');
-  // Secrets du projet disponibles à l'injection au run (valeurs déchiffrées côté
-  // MCP, jamais ici). Si un paramètre historique était kind='secret', il est
-  // listé ici comme secret du projet à sélectionner.
+  // Variables & secrets du PROJET (module vars unifié) :
+  //  - kind='variable' : champs texte ÉDITABLES pré-remplis (injectées d'office ;
+  //    surcharge éventuelle saisie ici → paramValues) ;
+  //  - kind='secret'   : cases à cocher (injectées si sélectionnées).
+  let projVars = [];
   let projSecrets = [];
-  try { projSecrets = ((await api(`/api/e2e-secrets?project=${encodeURIComponent(repoProject)}`)).secrets || []); } catch {}
-  const legacySecretNames = (freeParams || []).filter((p) => p.kind === 'secret').map((p) => p.name);
-  const secretOptions = projSecrets.map((s) => s.name);
-  const secretChecks = [...new Set([...secretOptions, ...legacySecretNames])].map((sn) => `
+  try {
+    const d = await api(`/api/e2e-vars?project=${encodeURIComponent(repoProject)}`);
+    const all = (d && d.vars) || [];
+    projVars = all.filter((v) => v.kind !== 'secret');
+    projSecrets = all.filter((v) => v.kind === 'secret');
+  } catch {}
+  const varFields = projVars.map((v) => `
+    <label class="modal-field">${esc(v.name)} <span class="muted-sm">(variable projet — éditée ici = surcharge du run)</span>
+      <input type="text" data-pv="${esc(v.name)}" value="${esc(v.value ?? '')}" placeholder="(défaut projet)">
+    </label>`).join('');
+  const secretChecks = projSecrets.map((s) => `
     <label class="filter-check" title="Secret projet ${esc(repoProject)} — injecté comme variable d'env au run">
-      <input type="checkbox" class="sec-sel" value="${esc(sn)}" checked> <code>${esc(sn)}</code>
-      ${legacySecretNames.includes(sn) && !secretOptions.includes(sn) ? `<span class="muted-sm">(secret legacy non renseigné — créer dans Secrets E2E)</span>` : ''}
+      <input type="checkbox" class="sec-sel" value="${esc(s.name)}" checked> <code>${esc(s.name)}</code>
     </label>`).join('');
   showModal(`
     <div class="modal modal-wide">
@@ -870,7 +872,7 @@ async function e2eRunModal(e2eTestId) {
         <label class="modal-field">Arguments Playwright (pwArgs) <span class="muted-sm">— optionnels, séparés par des espaces</span>
           <input id="er-pwargs" placeholder="ex: --project=authenticated --retries=1">
         </label>
-        ${params.length ? `<fieldset class="pilot-fieldset"><legend>Valeurs des paramètres <span class="muted-sm">(champs libres non sensibles — vide = défaut du test)</span></legend>${freeParamFields}</fieldset>` : ''}
+        ${projVars.length ? `<fieldset class="pilot-fieldset"><legend>Variables du projet (injectées d'office) <span class="muted-sm">— édition = surcharge pour ce run</span></legend>${varFields}</fieldset>` : ''}
         ${secretChecks ? `<fieldset class="pilot-fieldset"><legend>Secrets du projet à injecter <span class="muted-sm">(valeurs chiffrées déchiffrées côté serveur — jamais affichées)</span></legend>${secretChecks}</fieldset>` : ''}
         <div class="modal-actions">
           <button type="button" class="ghost" id="modal-cancel">Annuler</button>
@@ -2960,84 +2962,112 @@ async function renderObservability() {
   }
 }
 
-// --- Onglet Secrets E2E (module secrets) — gestion des variables d'env par
-// projet. Valeurs chiffrées côté MCP (AES-256-GCM) : jamais de clair ici.
-let __secCache = []; // cache métadonnées des secrets du projet courant (purpose…)
+// --- Onglet Vars & Secrets E2E (module vars/secrets unifié) — variables d'env
+// par projet. kind='variable' (clair, éditable) | 'secret' (chiffré AES-256-GCM,
+// jamais de clair). Filtre par type ; deux vues cohérentes d'une même table.
+let __secCache = []; // cache des vars du projet courant (purpose, kind…)
+let e2eVarsKind = ''; // '' | variable | secret
 function secretsFind(project, name) { return __secCache.find((s) => s.name === name) || null; }
 async function renderE2ESecrets() {
   const pane = document.getElementById('pane-e2esecrets');
   let projects = [];
   try { projects = ((await api('/api/projects')).projects || []); } catch {}
-  const projOpts = projects.map((p) => `<option value="${esc(p.id)}">${esc(p.name || p.id)}</option>`).join('') || '<option value="">— aucun projet —</option>';
   let selected = e2eFilterProject || (projects[0] && projects[0].id) || '';
-  let secrets = [];
+  let vars = [];
   __secCache = [];
   let projErr = '';
   if (selected) {
-    try { secrets = ((await api(`/api/e2e-secrets?project=${encodeURIComponent(selected)}`)).secrets || []); __secCache = secrets; }
+    const qs = `/api/e2e-vars?project=${encodeURIComponent(selected)}${e2eVarsKind ? '&kind=' + encodeURIComponent(e2eVarsKind) : ''}`;
+    try { const d = await api(qs); vars = (d && d.vars) || []; __secCache = vars; }
     catch (e) { projErr = e.message || String(e); }
   }
+  const isSecretView = e2eVarsKind === 'secret';
+  const title = e2eVarsKind === 'secret' ? 'Secrets E2E' : (e2eVarsKind === 'variable' ? 'Variables E2E' : 'Variables & Secrets E2E');
   pane.innerHTML = `
-    <h2>Secrets E2E <span class="muted-sm">— variables d'env par projet, injectées au run</span></h2>
-    <p class="muted-sm">Chaque secret = une variable d'environnement du run (ex. <code>E2E_ADMIN_PASSWORD</code>) lue par les specs via <code>process.env</code>. Valeur chiffrée (AES-256-GCM, clé root-only) — jamais affichée ici. Au lancement d'un test, on sélectionne les secrets du projet à injecter.</p>
+    <h2>${title} <span class="muted-sm">— variables d'env par projet, injectées au run</span></h2>
+    <p class="muted-sm">Chaque entrée = une variable d'environnement du run (ex. <code>E2E_ADMIN_EMAIL</code>, <code>E2E_ADMIN_PASSWORD</code>) lue par les specs via <code>process.env</code>. Les <strong>variables</strong> (non sensibles) sont en clair et injectées d'office ; les <strong>secrets</strong> sont chiffrés (AES-256-GCM) et sélectionnés au lancement.</p>
     <div class="filters">
       <select id="sec-project" title="Projet">${projects.map((p) => `<option value="${esc(p.id)}" ${selected === p.id ? 'selected' : ''}>${esc(p.name || p.id)}</option>`).join('')}</select>
-      <button id="new-secret-btn" class="launch-btn">+ Nouveau secret</button>
-      <span class="muted-sm">${secrets.length} secret(s) · injectés d'office si non sélectionnés au run</span>
+      <select id="sec-kind" title="Filtrer par type">
+        <option value="" ${!e2eVarsKind ? 'selected' : ''}>Tous</option>
+        <option value="variable" ${e2eVarsKind === 'variable' ? 'selected' : ''}>Variables (non sensibles)</option>
+        <option value="secret" ${e2eVarsKind === 'secret' ? 'selected' : ''}>Secrets (chiffrés)</option>
+      </select>
+      <button id="new-secret-btn" class="launch-btn">+ ${isSecretView ? 'Nouveau secret' : (e2eVarsKind === 'variable' ? 'Nouvelle variable' : 'Nouvelle variable / secret')}</button>
+      <span class="muted-sm">${vars.length} entrée(s)</span>
     </div>
     ${projErr ? `<p class="danger">${esc(projErr)}</p>` : ''}
-    <table><thead><tr><th>Variable d'env</th><th>Usage (purpose)</th><th>Créé</th><th>MAJ</th><th>Actions</th></tr></thead>
-    <tbody>${secrets.map((s) => `
+    <table><thead><tr><th>Variable d'env</th><th>Type</th>${e2eVarsKind !== 'secret' ? '<th>Valeur</th>' : ''}<th>Usage (purpose)</th><th>Créé</th><th>Actions</th></tr></thead>
+    <tbody>${vars.map((v) => `
       <tr>
-        <td class="code"><strong>${esc(s.name)}</strong></td>
-        <td class="muted-sm">${esc(s.purpose || '—')}</td>
-        <td class="muted-sm">${esc(fmtTS(s.createdAt))}</td>
-        <td class="muted-sm">${esc(fmtTS(s.updatedAt))}</td>
+        <td class="code"><strong>${esc(v.name)}</strong></td>
+        <td>${v.kind === 'secret' ? '<span class="badge rejected">secret</span>' : '<span class="badge approved">variable</span>'}</td>
+        ${e2eVarsKind !== 'secret' ? `<td class="muted-sm">${v.kind === 'secret' ? '<span>•••••••• (chiffré)</span>' : esc(v.value ?? '—')}</td>` : ''}
+        <td class="muted-sm">${esc(v.purpose || '—')}</td>
+        <td class="muted-sm">${esc(fmtTS(v.createdAt))}</td>
         <td><div class="icon-actions">
-          <button class="icon-btn" data-secret-update="${esc(s.name)}" title="Remplacer la valeur">↻ MAJ</button>
-          <button class="icon-btn danger-btn" data-secret-delete="${esc(s.name)}" title="Supprimer (définitif)">🗑 Supprimer</button>
+          <button class="icon-btn" data-secret-update="${esc(v.name)}" title="Remplacer la valeur">↻ MAJ</button>
+          <button class="icon-btn danger-btn" data-secret-delete="${esc(v.name)}" title="Supprimer (définitif)">🗑 Supprimer</button>
         </div></td>
-      </tr>`).join('') || `<tr><td colspan="5" class="muted">Aucun secret pour ce projet.</td></tr>`}</tbody></table>`;
+      </tr>`).join('') || `<tr><td colspan="6" class="muted">Aucune entrée pour ce projet (filtre : ${esc(e2eVarsKind || 'tous')}).</td></tr>`}</tbody></table>`;
   const sel = document.getElementById('sec-project');
   if (sel) sel.addEventListener('change', (ev) => { e2eFilterProject = ev.target.value; refreshActive(); });
-  document.getElementById('new-secret-btn').addEventListener('click', () => e2eSecretModal(selected, projects));
-  document.querySelectorAll('#pane-e2esecrets [data-secret-update]').forEach((b) => b.addEventListener('click', () => e2eSecretModal(selected, projects, b.dataset.secretUpdate)));
+  const kindSel = document.getElementById('sec-kind');
+  if (kindSel) kindSel.addEventListener('change', (ev) => { e2eVarsKind = ev.target.value; refreshActive(); });
+  document.getElementById('new-secret-btn').addEventListener('click', () => e2eVarModal(selected, projects, null));
+  document.querySelectorAll('#pane-e2esecrets [data-secret-update]').forEach((b) => b.addEventListener('click', () => e2eVarModal(selected, projects, b.dataset.secretUpdate)));
   document.querySelectorAll('#pane-e2esecrets [data-secret-delete]').forEach((b) => b.addEventListener('click', async () => {
     const name = b.dataset.secretDelete;
-    if (!confirm(`Supprimer le secret ${name} (projet ${selected}) ? Définitif.`)) return;
-    try { await api(`/api/e2e-secrets?project=${encodeURIComponent(selected)}&name=${encodeURIComponent(name)}`, { method: 'DELETE' }); refreshActive(); }
+    if (!confirm(`Supprimer « ${name} » (projet ${selected}) ? Définitif.`)) return;
+    try { await api(`/api/e2e-vars?project=${encodeURIComponent(selected)}&name=${encodeURIComponent(name)}`, { method: 'DELETE' }); refreshActive(); }
     catch (e) { alert('Échec suppression : ' + (e.message || e)); }
   }));
 }
 
-// Modale création / mise à jour d'un secret de projet.
-function e2eSecretModal(project, projects, existingName) {
+// Modale création / mise à jour d'une variable OU secret de projet.
+function e2eVarModal(project, projects, existingName) {
   const isEdit = !!existingName;
+  const existing = secretsFind(project, existingName) || {};
+  const kind = isEdit ? existing.kind : (e2eVarsKind === 'secret' ? 'secret' : 'variable');
+  const isSecret = kind === 'secret';
   const projOpts = projects.map((p) => `<option value="${esc(p.id)}" ${project === p.id ? 'selected' : ''}>${esc(p.name || p.id)}</option>`).join('');
   showModal(`
     <div class="modal modal-wide">
-      <h2>${isEdit ? `Remplacer le secret <code>${esc(existingName)}</code>` : 'Nouveau secret E2E'}</h2>
-      <p class="muted-sm">Le secret est stocké chiffré (AES-256-GCM, clé root-only hors registre) et injecté comme variable d'env au run. Il n'est jamais affiché en clair.</p>
+      <h2>${isEdit ? `Remplacer ${isSecret ? 'le secret' : 'la variable'} <code>${esc(existingName)}</code>` : (isSecret ? 'Nouveau secret E2E' : 'Nouvelle variable E2E')}</h2>
+      <p class="muted-sm">${isSecret
+        ? 'Stockée chiffrée (AES-256-GCM, clé root-only hors registre) — jamais affichée en clair. Injectée au run si sélectionnée.'
+        : 'Valeur non sensible, stockée en clair. Injectée automatiquement au run (défaut projet), surchargeable dans la modale de lancement.'}</p>
       <form id="sec-form" class="pilot-form">
         <label class="modal-field">Projet
           <select id="sec-f-project" ${isEdit ? 'disabled' : ''}>${projOpts}</select>
         </label>
-        <label class="modal-field">Nom (variable d'env) <span class="muted-sm">— ex. E2E_ADMIN_PASSWORD, lu par les specs via process.env</span>
+        <label class="modal-field">Type
+          <select id="sec-f-kind" ${isEdit ? 'disabled' : ''}>
+            <option value="variable" ${kind === 'variable' ? 'selected' : ''}>variable (non sensible)</option>
+            <option value="secret" ${kind === 'secret' ? 'selected' : ''}>secret (chiffré)</option>
+          </select>
+        </label>
+        <label class="modal-field">Nom (variable d'env) <span class="muted-sm">— ex. E2E_ADMIN_EMAIL / E2E_ADMIN_PASSWORD, lu par les specs via process.env</span>
           <input id="sec-f-name" value="${esc(existingName || '')}" ${isEdit ? 'disabled' : ''} placeholder="E2E_ADMIN_PASSWORD" required>
         </label>
         <label class="modal-field">Valeur ${isEdit ? '<span class="muted-sm">— nouvelle valeur (écrase)</span>' : ''}
-          <input id="sec-f-value" type="password" autocomplete="new-password" required placeholder="••••••••">
+          <input id="sec-f-value" type="${isSecret ? 'password' : 'text'}" autocomplete="new-password" required placeholder="${isSecret ? '••••••••' : 'valeur (en clair, non sensible)'}">
         </label>
         <label class="modal-field">Usage <span class="muted-sm">— optionnel</span>
-          <input id="sec-f-purpose" value="${esc((secretsFind(project, existingName))?.purpose || '')}" placeholder="ex. compte admin console ONIRIA préprod">
+          <input id="sec-f-purpose" value="${esc(existing.purpose || '')}" placeholder="ex. compte admin console ONIRIA préprod">
         </label>
         <div class="modal-actions">
           <button type="button" class="ghost" id="modal-cancel">Annuler</button>
-          <button type="submit" class="launch-btn">${isEdit ? 'Remplacer la valeur' : 'Créer le secret'}</button>
+          <button type="submit" class="launch-btn">${isEdit ? 'Remplacer la valeur' : (isSecret ? 'Créer le secret' : 'Créer la variable')}</button>
         </div>
       </form>
       <div id="sec-msg" class="msg"></div>
     </div>`);
+  document.getElementById('sec-f-kind').addEventListener('change', (ev) => {
+    const isS = ev.target.value === 'secret';
+    const inp = document.getElementById('sec-f-value');
+    if (inp) inp.type = isS ? 'password' : 'text';
+  });
   document.getElementById('modal-cancel').onclick = closeModal;
   document.getElementById('sec-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
@@ -3046,13 +3076,14 @@ function e2eSecretModal(project, projects, existingName) {
       project: document.getElementById('sec-f-project').value,
       name: document.getElementById('sec-f-name').value.trim(),
       value: document.getElementById('sec-f-value').value,
+      kind: document.getElementById('sec-f-kind').value,
       purpose: document.getElementById('sec-f-purpose').value.trim() || undefined,
     };
     if (!body.project || !body.name || !body.value) { msg.textContent = 'Projet, nom et valeur requis.'; msg.className = 'msg error'; return; }
     msg.textContent = isEdit ? 'Remplacement…' : 'Création…';
     msg.className = 'msg';
     try {
-      await api('/api/e2e-secrets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      await api('/api/e2e-vars', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       closeModal();
       refreshActive();
     } catch (e) { msg.textContent = e.message || String(e); msg.className = 'msg error'; }

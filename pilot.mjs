@@ -577,22 +577,34 @@ export async function obsoleteE2ETest(e2eTestId) {
 }
 
 // ===========================================================================
-// Secrets E2E (module secrets) — variables d'env par projet, valeurs chiffrées
-// côté MCP (AES-256-GCM). Jamais de valeur en clair dans le panneau.
+// Vars E2E (module vars/secrets unifié) — variables d'env par projet.
+// kind='variable' (clair, éditable) | 'secret' (chiffré côté MCP, jamais en clair).
 // ===========================================================================
-export async function setE2ESecret({ project, name, value, purpose }) {
-  if (!project || !name || !value) throw new Error("project, name et value requis");
-  return taskOrchestrator("e2e_secret_set", { project, name, value, purpose: purpose || undefined });
+export async function setE2EVar({ project, name, value, kind, purpose }) {
+  if (!project || !name || value === undefined || value === "") throw new Error("project, name et value requis");
+  return taskOrchestrator("e2e_var_set", { project, name, value, kind: kind || "variable", purpose: purpose || undefined });
 }
 
-export async function listE2ESecrets(project) {
+export async function listE2EVars(project, kind) {
   if (!project) throw new Error("project requis");
-  return taskOrchestrator("e2e_secret_list", { project });
+  return taskOrchestrator("e2e_var_list", { project, kind: kind || undefined });
 }
 
-export async function deleteE2ESecret({ project, name }) {
+export async function deleteE2EVar({ project, name }) {
   if (!project || !name) throw new Error("project et name requis");
-  return taskOrchestrator("e2e_secret_delete", { project, name });
+  return taskOrchestrator("e2e_var_delete", { project, name });
+}
+
+// Aliases rétrocompat (module secrets v0.8.6) → vars unifiées.
+export async function setE2ESecret({ project, name, value, purpose }) {
+  return setE2EVar({ project, name, value, kind: "secret", purpose });
+}
+export async function listE2ESecrets(project) {
+  const r = await listE2EVars(project, "secret");
+  return { ok: r && r.ok, project, secrets: (r && r.vars) || [], count: (r && r.count) || 0 };
+}
+export async function deleteE2ESecret({ project, name }) {
+  return deleteE2EVar({ project, name });
 }
 
 // ===========================================================================

@@ -715,10 +715,14 @@ async function registryE2ETestDetail(res, id) {
   // Tâches REQUIRED (contrat BDD/TDD) dont la tâche n'est pas done → test « bloqué par ».
   const requiredOpenTasks = linkedTasks.filter((l) => l.relationType === "REQUIRED" && l.taskStatus !== "done")
     .map((l) => ({ taskId: l.taskId, title: l.taskTitle, taskStatus: l.taskStatus }));
-  // Secrets du projet (module secrets) disponibles à l'injection au run — méta
-  // seulement, jamais la valeur.
+  // Vars du projet (module vars unifié) disponibles au run — méta seulement.
+  let projectVars = [];
   let projectSecrets = [];
-  try { projectSecrets = ((await pilot.listE2ESecrets(row.project)).secrets || []); } catch { projectSecrets = []; }
+  try {
+    const d = await pilot.listE2EVars(row.project);
+    projectVars = ((d && d.vars) || []).filter((v) => v.kind !== "secret");
+    projectSecrets = ((d && d.vars) || []).filter((v) => v.kind === "secret").map((v) => ({ name: v.name, kind: v.kind, purpose: v.purpose }));
+  } catch { projectVars = []; projectSecrets = []; }
   const test = {
     ...mapE2ETestRow(row),
     projects: projects.length ? projects : (row.project ? [row.project] : []),
@@ -727,6 +731,7 @@ async function registryE2ETestDetail(res, id) {
     requiredOpen: requiredOpenTasks.length,
     requiredOpenTasks,
     projectSecrets,
+    projectVars,
   };
   return sendJson(res, 200, { test, executions });
 }
@@ -1281,7 +1286,30 @@ const server = createServer(async (req, res) => {
       const b = await readBody(req).catch(() => ({}));
       return handleE2ECreateTask(res, e2eCreateTaskMatch[1], b);
     }
-    // --- Secrets E2E (module secrets) : gestion par projet (UI onglet Secrets) ---
+    // --- Vars E2E (module vars/secrets unifié) : variables d'env par projet ---
+    // GET ?project=&kind=variable|secret ; POST {project,name,value,kind,purpose} ; DELETE ?project=&name=
+    if (path === "/api/e2e-vars" && req.method === "GET") {
+      const project = url.searchParams.get("project") || "";
+      const kind = url.searchParams.get("kind") || "";
+      if (!project) return sendJson(res, 400, { error: "project requis" });
+      try { return sendJson(res, 200, await pilot.listE2EVars(project, kind || undefined)); }
+      catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
+    }
+    if (path === "/api/e2e-vars" && req.method === "POST") {
+      const b = await readBody(req).catch(() => ({}));
+      const { project, name, value, kind, purpose } = b || {};
+      if (!project || !name || value === undefined) return sendJson(res, 400, { error: "project, name et value requis" });
+      try { return sendJson(res, 201, await pilot.setE2EVar({ project, name, value, kind, purpose })); }
+      catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
+    }
+    if (path === "/api/e2e-vars" && req.method === "DELETE") {
+      const project = url.searchParams.get("project") || "";
+      const name = url.searchParams.get("name") || "";
+      if (!project || !name) return sendJson(res, 400, { error: "project et name requis" });
+      try { return sendJson(res, 200, await pilot.deleteE2EVar({ project, name })); }
+      catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
+    }
+    // Alias rétrocompat : /api/e2e-secrets (v0.9.6) → secrets (kind=secret).
     if (path === "/api/e2e-secrets" && req.method === "GET") {
       const project = url.searchParams.get("project") || "";
       if (!project) return sendJson(res, 400, { error: "project requis" });

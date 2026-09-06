@@ -34,7 +34,7 @@
 | Dépôt | Chemin hôte | Version actuelle |
 |---|---|---|
 | `opencode-observability` (panneau + docs) | `/root/orchestrator-panel` | `0.9.17` |
-| `opencode-agents` | `~/.config/opencode/agent` | `0.6.6` |
+| `opencode-agents` | `~/.config/opencode/agent` | `0.6.7` |
 | `opencode-notifier` | `~/.config/opencode/notifier` | `0.1.0` |
 | `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.8.18` |
 | `opencode-mcp-plan-manager` | `~/.config/opencode/mcp/plan-manager` | `0.1.0` |

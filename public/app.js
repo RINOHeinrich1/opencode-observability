@@ -586,7 +586,6 @@ async function renderE2ETests() {
   const projects = [...new Set([
     ...((projsRes.projects || []).map((p) => p.id).filter(Boolean)),
     ...tests.map((t) => t.project).filter(Boolean),
-    ...tests.flatMap((t) => t.projects || []),
   ])].sort();
   if (e2eFilterProject && !projects.includes(e2eFilterProject)) projects.push(e2eFilterProject);
   document.getElementById('pane-e2etests').innerHTML = `
@@ -599,7 +598,7 @@ async function renderE2ETests() {
       <input id="e2e-f-search" placeholder="recherche (titre / scénario / spec)…" value="${esc(e2eFilterSearch)}">
       <button id="new-e2e-btn" class="launch-btn">+ Nouveau test</button>
     </div>
-    <table><thead><tr><th>Titre / Comportement</th><th>Projets couverts</th><th>Repo source · spec</th><th>Scénario</th><th>Statut</th><th>Dernier run</th><th>Actions</th></tr></thead>
+    <table><thead><tr><th>Titre / Comportement</th><th>Projet</th><th>Repos traversés</th><th>Scénario</th><th>Statut</th><th>Dernier run</th><th>Actions</th></tr></thead>
     <tbody>${tests.map(e2eTableRow).join('') || `<tr><td colspan="7" class="muted">${taskFilter ? 'Aucun test E2E associé à la tâche <code>' + esc(taskFilter) + '</code>.' : 'Aucun test E2E enregistré.'}</td></tr>`}</tbody></table>`;
   bindTaskFilter();
   document.getElementById('e2e-f-project').addEventListener('change', (ev) => { e2eFilterProject = ev.target.value; refreshActive(); });
@@ -621,8 +620,8 @@ function e2eTableRow(t) {
     : '<span class="muted-sm">—</span>';
   return `<tr>
     <td><strong>${esc(title)}</strong><div><code class="e2e-id">${esc(t.e2eTestId)}</code></div></td>
-    <td>${recProjChips(t.projects || (t.project ? [t.project] : []))}</td>
-    <td class="code muted-sm">${esc(t.project)}<div class="muted-sm">${esc(t.specFile || '')}</div></td>
+    <td><span class="badge approved">${esc(t.project || '—')}</span></td>
+    <td class="code muted-sm">${(t.repos && t.repos.length ? t.repos.map((rid) => `<code class="chip">${esc(rid)}</code>`).join(' ') : '<span class="muted-sm">—</span>')}<div class="muted-sm">${esc(t.specFile || '')}</div></td>
     <td class="muted-sm">${esc(t.scenario || '—')}</td>
     <td>${e2eTestStatusBadge(t.status)}</td>
     <td>${lastRun}</td>
@@ -640,16 +639,17 @@ async function e2eDetailModal(e2eTestId) {
   catch (e) { alert('Impossible de charger le test : ' + (e.message || e)); return; }
   const test = d.test || {};
   const execs = d.executions || [];
-  const projs = (test.projects && test.projects.length) ? test.projects : (test.project ? [test.project] : []);
+  const testRepos = test.repos || [];
   const params = test.params || [];
   const linked = test.linkedTasks || [];
   const execHtml = execs.map((x) => e2eExecItem(x, test)).join('');
   showModal(`
     <div class="modal modal-wide">
       <h2>${esc(test.title || test.scenario || e2eTestId)}</h2>
-      <p class="muted"><code class="e2e-id">${esc(test.e2eTestId || e2eTestId)}</code> · ${e2eTestStatusBadge(test.status)} · Projets ${recProjChips(projs)}</p>
+      <p class="muted"><code class="e2e-id">${esc(test.e2eTestId || e2eTestId)}</code> · ${e2eTestStatusBadge(test.status)} · Projet <span class="badge approved">${esc(test.project || '—')}</span></p>
       <div class="actions-section">
-        <div class="project-kv"><span class="lbl">Repo source</span><code class="muted-sm">${esc(test.project || '—')}</code></div>
+        <div class="project-kv"><span class="lbl">Projet</span><code class="muted-sm">${esc(test.project || '—')}</code></div>
+        <div class="project-kv"><span class="lbl">Repos traversés</span><span>${testRepos.length ? testRepos.map((r) => `<code class="chip">${esc(r.id)}${r.workspace ? ' · ' + esc(r.workspace) : ''}</code>`).join(' ') : '<span class="muted-sm">—</span>'}</span></div>
         <div class="project-kv"><span class="lbl">Spec file</span><code class="muted-sm">${esc(test.specFile || '—')}</code></div>
         <div class="project-kv"><span class="lbl">Scénario</span><span class="muted-sm">${esc(test.scenario || '—')}</span></div>
         <div class="project-kv"><span class="lbl">Suivi</span><span class="muted-sm">vu depuis ${esc(fmtTS(test.firstSeenAt))} · màj ${esc(fmtTS(test.updatedAt))} · ${(test.taskCount != null ? test.taskCount : linked.length)} tâche(s) liée(s)</span></div>
@@ -739,7 +739,7 @@ async function e2eCreateTaskModal(e2eTestId) {
   showModal(`
     <div class="modal modal-wide">
       <h2>Créer une tâche requise (contrat BDD/TDD)</h2>
-      <p class="muted">Test <code class="e2e-id">${esc(test.e2eTestId || e2eTestId)}</code> · ${esc(test.title || test.scenario || '')} <span class="muted-sm">· repo source : <code>${esc(test.project || '—')}</code></span></p>
+      <p class="muted">Test <code class="e2e-id">${esc(test.e2eTestId || e2eTestId)}</code> · ${esc(test.title || test.scenario || '')} <span class="muted-sm">· Projet : <code>${esc(test.project || '—')}</code></span></p>
       <p class="muted-sm">La tâche sera créée sur le projet <strong>${esc(test.project || '—')}</strong> et liée au test en relation <strong>REQUIRED</strong> (le test ne sera PASS qu'une fois cette tâche done).</p>
       <form id="e2e-ct-form" class="pilot-form">
         <label class="modal-field">Titre court <span class="muted-sm">— requis</span>
@@ -817,13 +817,14 @@ async function e2eRunModal(e2eTestId) {
   let test = {};
   try { const d = await api(`/api/e2e-tests/${encodeURIComponent(e2eTestId)}`); test = d.test || {}; }
   catch (e) { alert('Impossible de charger le test : ' + (e.message || e)); return; }
-  // Défauts du repo source du test : mapping E2E du projet (e2e_repo_dir /
-  // e2e_base_url), repli convention de checkout hôte /root/<projet>-preprod.
+  // ADR 11 : repo d'exécution par défaut = un des repos traversés du test (celui
+  // qui a un checkout E2E, de préférence contenant le spec). Le serveur résout
+  // aussi le repo d'exécution si on laisse le champ vide.
   const repoProject = test.project || '';
-  let proj = null;
-  try { const pr = await api('/api/projects'); proj = (pr.projects || []).find((p) => p.id === repoProject) || null; } catch {}
-  const defRepoDir = (proj && proj.e2eRepoDir) || `/root/${repoProject}-preprod`;
-  const defBaseUrl = (proj && proj.e2eBaseUrl) || '';
+  const testRepos = test.repos || [];
+  const execRepo = testRepos.find((r) => r.e2eRepoDir) || {};
+  const defRepoDir = execRepo.e2eRepoDir || `/root/${repoProject}-preprod`;
+  const defBaseUrl = execRepo.e2eBaseUrl || '';
   // Variables & secrets du PROJET (module vars unifié) :
   //  - kind='variable' : champs texte ÉDITABLES pré-remplis (injectées d'office ;
   //    surcharge éventuelle saisie ici → paramValues) ;
@@ -847,7 +848,7 @@ async function e2eRunModal(e2eTestId) {
   showModal(`
     <div class="modal modal-wide">
       <h2>Lancer une exécution</h2>
-      <p class="muted"><code class="e2e-id">${esc(test.e2eTestId || e2eTestId)}</code> · ${esc(test.scenario || test.title || '')} <span class="muted-sm">· repo source : <code>${esc(repoProject)}</code></span></p>
+      <p class="muted"><code class="e2e-id">${esc(test.e2eTestId || e2eTestId)}</code> · ${esc(test.scenario || test.title || '')} <span class="muted-sm">· Projet : <code>${esc(repoProject)}</code></span></p>
       <form id="e2e-run-form" class="pilot-form">
         <label class="modal-field">Dépôt applicatif (repoDir) <span class="muted-sm">— pré-rempli depuis le projet (${esc(repoProject)}) ; corrigeable</span>
           <input id="er-repodir" value="${esc(defRepoDir)}" required>
@@ -1085,9 +1086,9 @@ function e2eRegisterModal(projects, projOpts) {
   showModal(`
     <div class="modal modal-wide">
       <h2>Enregistrer un test E2E existant</h2>
-      <p class="muted-sm">Le spec Playwright est déjà écrit dans le dépôt — on l'enregistre comme entité (repo source + scénario).</p>
+      <p class="muted-sm">Le spec Playwright est déjà écrit dans un repo du projet — on l'enregistre comme entité (projet + scénario).</p>
       <form id="e2e-register-form" class="pilot-form">
-        <label class="modal-field">Projet (repo source) <span class="muted-sm">— dépôt où vit le spec — requis</span>
+        <label class="modal-field">Projet <span class="muted-sm">— produit dont le comportement est vérifié — requis</span>
           <select id="er-project" required><option value="">— projet —</option>${projOpts}</select>
         </label>
         <label class="modal-field">Spec file <span class="muted-sm">— requis</span>
@@ -1100,12 +1101,8 @@ function e2eRegisterModal(projects, projOpts) {
           <input id="er-title" placeholder="ex: Connexion — parcours nominal">
         </label>
         <label class="modal-field">Description (optionnel)
-          <textarea id="er-description" class="modal-textarea" rows="2" placeholder="comportement vérifié (éventuellement multi-projets)"></textarea>
+          <textarea id="er-description" class="modal-textarea" rows="2" placeholder="comportement vérifié"></textarea>
         </label>
-        <fieldset class="pilot-fieldset">
-          <legend>Projets couverts <span class="muted-sm">— le repo source est toujours inclus</span></legend>
-          <div class="rm-projects">${projects.map((p) => `<label class="filter-check"><input type="checkbox" class="er-covered" value="${esc(p.id)}"> ${esc(p.name || p.id)}</label>`).join('') || '<p class="muted-sm">Aucun projet enregistré.</p>'}</div>
-        </fieldset>
         <div class="links-editor">
           <div class="links-head"><label class="modal-field" style="margin:0">Paramètres <span class="muted-sm">(défauts NON sensibles — secret = secretRef uniquement)</span></label>
           <button type="button" class="ghost" id="er-add-param">+ Ajouter</button></div>
@@ -1126,8 +1123,7 @@ function e2eRegisterModal(projects, projOpts) {
     const project = document.getElementById('er-project').value;
     const specFile = document.getElementById('er-specfile').value.trim();
     const scenario = document.getElementById('er-scenario').value.trim();
-    if (!project || !specFile || !scenario) { msg.textContent = 'project (repo source), specFile et scenario sont requis pour un test existant.'; msg.className = 'msg error'; return; }
-    const coveredProjects = [...document.querySelectorAll('#modal-backdrop .er-covered:checked')].map((x) => x.value);
+    if (!project || !specFile || !scenario) { msg.textContent = 'project, specFile et scenario sont requis pour un test existant.'; msg.className = 'msg error'; return; }
     const params = collectE2EParams('er', msg);
     if (params === null) return;
     try {
@@ -1135,7 +1131,7 @@ function e2eRegisterModal(projects, projOpts) {
         project, specFile, scenario,
         title: document.getElementById('er-title').value.trim() || undefined,
         description: document.getElementById('er-description').value.trim() || undefined,
-        coveredProjects, params,
+        params,
       }) });
       closeModal();
       refreshActive();
@@ -1144,16 +1140,16 @@ function e2eRegisterModal(projects, projOpts) {
 }
 
 // --- Cas « Non » : le test n'existe pas → création via session test-agent ---
-// Champs minimaux : projet (repo source) + titre/comportement. Le spec file,
-// scénario, paramètres et projets couverts seront définis pendant la session.
+// Champs minimaux : projet (produit) + titre/comportement. Le spec file et
+// scénario seront définis pendant la session test-agent.
 async function e2eCreateViaAgentModal(projects, projOpts) {
   const defRepo = projects.find((p) => p.e2eRepoDir) ? projects.find((p) => p.e2eRepoDir) : (projects[0] || {});
   showModal(`
     <div class="modal modal-wide">
       <h2>Créer un test E2E (via test-agent)</h2>
-      <p class="muted-sm">Le spec n'existe pas encore : on crée l'entité (DRAFT) puis on ouvre une <strong>session test-agent</strong> qui rédige le spec, les paramètres et les projets couverts dans le repo (workspace Coder, branche de travail).</p>
+      <p class="muted-sm">Le spec n'existe pas encore : on crée l'entité (DRAFT) sur le <strong>projet</strong> puis on ouvre une <strong>session test-agent</strong> qui rédige le spec (dans un repo du projet, workspace Coder, branche de travail).</p>
       <form id="e2e-agent-form" class="pilot-form">
-        <label class="modal-field">Projet (repo source) <span class="muted-sm">— où le spec sera écrit — requis</span>
+        <label class="modal-field">Projet <span class="muted-sm">— produit dont le comportement sera vérifié — requis</span>
           <select id="ea-project" required><option value="">— projet —</option>${projOpts}</select>
         </label>
         <label class="modal-field">Comportement à tester (titre) <span class="muted-sm">— requis</span>
@@ -1162,10 +1158,6 @@ async function e2eCreateViaAgentModal(projects, projOpts) {
         <label class="modal-field">Description <span class="muted-sm">— optionnel, guide l'agent</span>
           <textarea id="ea-description" class="modal-textarea" rows="3" placeholder="parcours à couvrir, préconditions, données, ce qui doit être vérifié…"></textarea>
         </label>
-        <fieldset class="pilot-fieldset">
-          <legend>Projets couverts <span class="muted-sm">— optionnel ; défaut = repo source ; le repo source est toujours inclus</span></legend>
-          <div class="rm-projects">${projects.map((p) => `<label class="filter-check"><input type="checkbox" class="ea-covered" value="${esc(p.id)}"> ${esc(p.name || p.id)}</label>`).join('') || '<p class="muted-sm">Aucun projet enregistré.</p>'}</div>
-        </fieldset>
         <div class="modal-actions">
           <button type="button" class="ghost" id="modal-cancel">Annuler</button>
           <button type="submit" class="launch-btn">Créer + ouvrir la session test-agent</button>
@@ -1179,15 +1171,13 @@ async function e2eCreateViaAgentModal(projects, projOpts) {
     const msg = document.getElementById('ea-msg');
     const project = document.getElementById('ea-project').value;
     const title = document.getElementById('ea-title').value.trim();
-    if (!project || !title) { msg.textContent = 'project (repo source) et comportement (titre) sont requis.'; msg.className = 'msg error'; return; }
-    const coveredProjects = [...document.querySelectorAll('#modal-backdrop .ea-covered:checked')].map((x) => x.value);
+    if (!project || !title) { msg.textContent = 'project et comportement (titre) sont requis.'; msg.className = 'msg error'; return; }
     msg.textContent = 'Création de l\'entité + lancement de la session test-agent… (peut prendre quelques secondes).';
     msg.className = 'msg';
     try {
       const r = await api('/api/e2e-tests', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         project, title,
         description: document.getElementById('ea-description').value.trim() || undefined,
-        coveredProjects,
         viaAgent: true,
       }) });
       closeModal();

@@ -663,9 +663,8 @@ async function registryE2ETests(url) {
   const params = [];
   if (project) {
     params.push(String(project));
-    const i = params.length;
-    // Projet couvert : présent dans e2e_test_projects OU repo source du test.
-    conds.push(`(EXISTS (SELECT 1 FROM e2e_test_projects ep WHERE ep.e2e_test_id = t.id AND ep.project = $${i}) OR t.project = $${i})`);
+    // ADR 11 : project = PROJET (produit) du test.
+    conds.push(`t.project = $${params.length}`);
   }
   if (status) { params.push(String(status)); conds.push(`t.status = $${params.length}`); }
   if (search) {
@@ -691,11 +690,21 @@ async function registryE2ETests(url) {
       params,
     )).rows;
   } catch { rows = []; }
-  const projMap = await e2eProjectsByTestIds(rows.map((r) => r.id));
+  // ADR 11 : repos traversés (ids) indexés par test, pour la table.
+  const repoMap = {};
+  if (rows.length) {
+    try {
+      const rr = (await db.query(
+        "SELECT e2e_test_id, repo_id FROM e2e_test_repos WHERE e2e_test_id = ANY($1) ORDER BY repo_id", [rows.map((r) => r.id)],
+      )).rows;
+      for (const x of rr) (repoMap[x.e2e_test_id] = repoMap[x.e2e_test_id] || []).push(x.repo_id);
+    } catch {}
+  }
   const tests = rows.map((r) => ({
     ...mapE2ETestRow(r),
-    // Projets couverts agrégés (triés) ; fallback : repo source.
-    projects: projMap[r.id] || (r.project ? [r.project] : []),
+    // ADR 11 : project = projet (produit) unique ; repos = repos traversés.
+    project: r.project,
+    repos: repoMap[r.id] || [],
     taskCount: Number(r.task_count) || 0,
     lastStatus: r.last_status || null,
     lastOrigin: r.last_origin || null,
@@ -1149,9 +1158,15 @@ const server = createServer(async (req, res) => {
           (SELECT x.attempts FROM e2e_executions x WHERE x.e2e_test_id = t.id AND x.task_id = $1 ORDER BY x.created_at DESC LIMIT 1) AS last_attempts
           FROM task_e2e te JOIN e2e_tests t ON t.id = te.e2e_test_id WHERE te.task_id = $1 ORDER BY t.scenario`, [taskId])).rows;
         const execRows = (await db.query(`SELECT id, e2e_test_id, status, duration_ms, attempts, executed_at, summary, logs_url, video_url, report_artifact_id, commit_sha, branch, pipeline_ref FROM e2e_executions WHERE task_id = $1 ORDER BY created_at DESC LIMIT 100`, [taskId])).rows;
-        // Projets couverts par test (fallback : repo source) — ajout compatible.
-        const projMap = await e2eProjectsByTestIds(tests.map((r) => r.id));
-        return sendJson(res, 200, { taskId, task_id: taskId, tests: tests.map((r) => ({ e2eTestId: r.id, project: r.project, projects: projMap[r.id] || (r.project ? [r.project] : []), specFile: r.spec_file, scenario: r.scenario, title: r.title, testStatus: r.test_status, relationType: r.relation_type, reason: r.reason, lastExecutionId: r.last_execution_id, lastStatus: r.last_status, lastDurationMs: r.last_duration_ms, lastAttempts: r.last_attempts })), executions: execRows.map((r) => ({ id: r.id, e2eTestId: r.e2e_test_id, status: r.status, durationMs: r.duration_ms, attempts: r.attempts, executedAt: r.executed_at, summary: r.summary, logsUrl: r.logs_url, videoUrl: r.video_url, reportArtifactId: r.report_artifact_id, commitSha: r.commit_sha, branch: r.branch, pipelineRef: r.pipeline_ref })) });
+        // ADR 11 : repos traversés par test lié.
+        const repoMap2 = {};
+        if (tests.length) {
+          try {
+            const rr2 = (await db.query("SELECT e2e_test_id, repo_id FROM e2e_test_repos WHERE e2e_test_id = ANY($1) ORDER BY repo_id", [tests.map((x) => x.id)])).rows;
+            for (const x of rr2) (repoMap2[x.e2e_test_id] = repoMap2[x.e2e_test_id] || []).push(x.repo_id);
+          } catch {}
+        }
+        return sendJson(res, 200, { taskId, task_id: taskId, tests: tests.map((r) => ({ e2eTestId: r.id, project: r.project, repos: repoMap2[r.id] || [], specFile: r.spec_file, scenario: r.scenario, title: r.title, testStatus: r.test_status, relationType: r.relation_type, reason: r.reason, lastExecutionId: r.last_execution_id, lastStatus: r.last_status, lastDurationMs: r.last_duration_ms, lastAttempts: r.last_attempts })), executions: execRows.map((r) => ({ id: r.id, e2eTestId: r.e2e_test_id, status: r.status, durationMs: r.duration_ms, attempts: r.attempts, executedAt: r.executed_at, summary: r.summary, logsUrl: r.logs_url, videoUrl: r.video_url, reportArtifactId: r.report_artifact_id, commitSha: r.commit_sha, branch: r.branch, pipelineRef: r.pipeline_ref })) });
       }
       return sendJson(res, 200, await registryTaskDetail(taskId));
     }

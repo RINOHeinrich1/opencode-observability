@@ -2140,7 +2140,7 @@ async function renderProjects() {
   const repos = await api('/api/repos').catch(() => ({ repos: [] }));
   const repoMap = new Map((repos.repos || []).map((r) => [r.id, r]));
   document.getElementById('pane-projects').innerHTML = `
-    <h2>Projets (produits)</h2>
+    <h2>Projets</h2>
     <div class="projects-toolbar">
       <button id="new-project-btn" class="launch-btn">+ Nouveau projet</button>
     </div>
@@ -2174,7 +2174,7 @@ async function renderProjects() {
           </div>
           <div class="project-card-actions">
             <button class="ghost" data-add-repo-to="${esc(p.id)}">+ Associer un repo</button>
-            <button class="ghost" data-edit-project="${esc(p.id)}">Modifier le produit</button>
+            <button class="ghost" data-edit-project="${esc(p.id)}">Modifier le projet</button>
             <button class="danger" data-del-project="${esc(p.id)}">Supprimer</button>
           </div>
         </article>`;
@@ -2199,7 +2199,7 @@ function repoFormModal(repo) {
         <input id="rm-id" placeholder="identifiant (ex: mada-talk, oniria)" value="${esc(repo?.id || '')}" ${editing ? 'readonly' : ''} required>
         <input id="rm-name" placeholder="nom lisible" value="${esc(repo?.name || '')}">
         <label class="modal-field">Description <span class="muted-sm">— à quoi sert ce repo pour le projet</span>
-          <input id="rm-description" placeholder="ex. frontend client SPA du produit Madatalk" value="${esc(repo?.description || '')}">
+          <input id="rm-description" placeholder="ex. frontend client SPA du projet Madatalk" value="${esc(repo?.description || '')}">
         </label>
         <label class="modal-field">Mécanisme de déploiement CI/CD <span class="muted-sm">— workflows, branches de déclenchement, cibles de CE repo (fourni en contexte à l'orchestrateur)</span>
           <textarea id="rm-deploy" class="modal-textarea" rows="4" placeholder="ex. GitHub Actions preprod-deploy.yml sur push main → /var/www/... ; runner self-hosted">${esc(repo?.deploy || '')}</textarea>
@@ -2308,8 +2308,8 @@ async function projectFormModal(project) {
   const editing = !!project;
   showModal(`
     <div class="modal">
-      <h2>${editing ? 'Modifier le produit' : 'Nouveau projet (produit)'}</h2>
-      <p class="muted-sm">Un <strong>produit</strong> porte un nom et référence un ou plusieurs <strong>repos</strong> (workspace Coder + répertoire du dépôt + branches + e2e). Créez le produit puis associez-lui ses repos.</p>
+      <h2>${editing ? 'Modifier le projet' : 'Nouveau projet'}</h2>
+      <p class="muted-sm">Un <strong>projet</strong> porte un nom et référence un ou plusieurs <strong>repos</strong> (workspace Coder + répertoire du dépôt + branches + e2e). Créez le projet puis associez-lui ses repos.</p>
       <form id="project-modal-form" class="pilot-form">
         <label class="modal-field">Identifiant <span class="muted-sm">— ex: madatalk, oniria</span>
           <input id="pm-id" placeholder="identifiant" value="${esc(project?.id || '')}" ${editing ? 'readonly' : ''} required>
@@ -2319,7 +2319,7 @@ async function projectFormModal(project) {
         </label>
         <div class="modal-actions">
           <button type="button" class="ghost" id="modal-cancel">Annuler</button>
-          <button type="submit" class="launch-btn">${editing ? 'Enregistrer' : 'Créer le produit'}</button>
+          <button type="submit" class="launch-btn">${editing ? 'Enregistrer' : 'Créer le projet'}</button>
         </div>
       </form>
       <div id="project-modal-msg" class="msg"></div>

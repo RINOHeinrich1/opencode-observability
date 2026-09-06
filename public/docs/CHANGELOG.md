@@ -44,14 +44,14 @@ Dépôts : `opencode-mcp-task-orchestrator` (v0.8.17) · `opencode-observability
 
 ## v0.9.12 — 2026-09-06 · ADR 09 : Projets ⇄ Repos (N:N) + tâches multi-repos
 
-Le registre confondait « produit métier » et « dépôt de code » dans une seule
+Le registre confondait « le projet (produit métier) » et « le dépôt de code » dans une seule
 entité `project` (oniria sans repo, mada-talk = repo, pbn = vrai repo ONIRIA…).
 Modèle cible validé (doc `09-modele-projets-repos.md`) :
 
-- **Projet (produit)** : porteur des tâches/recettes/tests.
+- **Projet** : porteur des tâches/recettes/tests (produit métier).
 - **Repo** : dépôt de code physique (workspace Coder, **répertoire du dépôt** =
   ancien `git_path`, **branche(s) de déploiement**, `e2e_repo_dir`/url) —
-  rattaché à 1..N produits (N:N).
+  rattaché à 1..N projets (N:N).
 - **Tâches multi-repos** : une tâche = ≥1 projet ; elle travaille sur 1..N repos
   (défaut = tous ceux du projet) ; peut patcher plusieurs repos (éventuellement
   dans des workspaces différents).
@@ -59,14 +59,14 @@ Modèle cible validé (doc `09-modele-projets-repos.md`) :
 Livré :
 - Tables `repos` + `project_repos` (N:N) + `task_repos` ; backfill idempotent
   (n'élargit jamais une sélection restreinte).
-- Fusions : repo `pbn` → `oniria` (données git PBN) ; produit `pbn` supprimé ;
-  produit `mada-talk` → repos `[mada-talk, oniria]` ; branche de déploiement
+- Fusions : repo `pbn` → `oniria` (données git PBN) ; projet `pbn` supprimé ;
+  projet `mada-talk` → repos `[mada-talk, oniria]` ; branche de déploiement
   ONIRIA = `oniria-preprod` ; `git_path` exposé comme `repoDir` (répertoire du
   dépôt).
 - MCP v0.8.15 : `repo_register/get/list/delete`, `project_repo_link/unlink`,
   `task_register/update` acceptent `repoIds`, `task_get` renvoie `task.repos`,
-  `project_list` renvoie les repos par produit.
-- Panel v0.9.12 : onglet Projets = produit + gestion de ses repos (chaque repo :
+  `project_list` renvoie les repos par projet.
+- Panel v0.9.12 : onglet Projets = le projet + gestion de ses repos (chaque repo :
   workspace / répertoire du dépôt / branche / e2e) ; création de tâche avec
   sélection des repos (défaut tous) ; détail tâche affiche les repos ; prompt
   d'orchestrateur multi-repos.

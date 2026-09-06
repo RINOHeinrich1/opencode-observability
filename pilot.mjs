@@ -35,7 +35,7 @@ export async function listProjects() {
   return taskOrchestrator("project_list", {});
 }
 
-// --- Repos (ADR 09) : dépôt de code physique, rattaché à 1..N produits ------
+// --- Repos (ADR 09) : dépôt de code physique, rattaché à 1..N projets --------
 export async function listRepos(projectId) {
   return taskOrchestrator("repo_list", { projectId: projectId || undefined });
 }
@@ -54,7 +54,7 @@ export async function deleteRepo(id) {
 }
 
 export async function createProject({ id, name, workspace, gitPath, mainBranch, e2eRepoDir, e2eBaseUrl, createdBy }) {
-  if (!id || !name) throw new Error("id et name requis pour créer un projet (produit)");
+  if (!id || !name) throw new Error("id et name requis pour créer un projet");
   // ADR 09 : le PRODUIT ne porte plus de branche/repo (attributs du REPO).
   // Les champs workspace/gitPath/mainBranch restent acceptés en rétrocompat
   // pour les anciens flux, mais ne sont plus requis.

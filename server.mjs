@@ -1003,7 +1003,7 @@ const server = createServer(async (req, res) => {
     if (path === "/api/projects" && req.method === "GET") {
       return sendJson(res, 200, await pilot.listProjects());
     }
-    // --- Repos (ADR 09) : dépôts physiques rattachables à 1..N produits ----
+    // --- Repos (ADR 09) : dépôts physiques rattachables à 1..N projets ------
     if (path === "/api/repos" && req.method === "GET") {
       const projectId = url.searchParams.get("project") || "";
       return sendJson(res, 200, await pilot.listRepos(projectId || undefined));

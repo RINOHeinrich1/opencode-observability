@@ -2,9 +2,15 @@
 
 > **Statut : VALIDÉ (2026-09-06) — migration en cours par étapes.**
 > Ce document décrit une confusion structurelle détectée dans le registre
-> (l'entité `project` mélange « produit métier » et « dépôt de code ») et propose
-> un modèle cible `Projet ⇄ Repo` (N:N), avec le mapping de l'existant et un plan
+> (l'entité `project` mélange « le projet » et « le dépôt de code ») et propose
+> un modèle cible **Projet ⇄ Repo** (N:N), avec le mapping de l'existant et un plan
 > de migration en étapes. Rien n'est modifié tant que le modèle n'est pas validé.
+>
+> **Terminologie (clarification 2026-09-06)** : **« projet » et « produit » sont la
+> même chose** — l'entité `projects` (onglet Projets du panneau), qui représente
+> un produit métier (ex. Madatalk). « Produit » n'a jamais été une entité
+> séparée : c'était un synonyme. Dans ce document (et partout), on utilise
+> **« projet »** seul ; un projet référence 1..N **repos** (dépôts de code).
 
 ---
 
@@ -14,9 +20,9 @@ Aujourd'hui **une seule entité `project`** porte à la fois :
 
 - des données de **repo** (workspace Coder, `git_path`, `main_branch`,
   `e2e_repo_dir`, `e2e_base_url`),
-- et sert d'**identifiant produit** référencé par `tasks`, `recettes`, `e2e_tests`.
+- et sert d'**identifiant projet** référencé par `tasks`, `recettes`, `e2e_tests`.
 
-Or la réalité métier est : **un projet (produit) utilise plusieurs repos**, et un
+Or la réalité métier est : **un projet utilise plusieurs repos**, et un
 repo peut servir plusieurs projets. Le modèle « 1 projet = 1 workspace = 1 repo »
 casse dès ce cas — qui est le cas général en développement.
 
@@ -24,16 +30,16 @@ casse dès ce cas — qui est le cas général en développement.
 
 | `projects.id` | workspace | git_path / main_branch | Nature réelle |
 |---|---|---|---|
-| `mada-talk` | madatalk | repo mada-talk / `main` | **frontend client** SPA (produit + repo confondus) |
-| `oniria` | — (null) | — (null) | **produit virtuel** : porte 52 tâches + 152 tests, mais aucun repo lié |
+| `mada-talk` | madatalk | repo mada-talk / `main` | **frontend client** SPA (projet + repo confondus) |
+| `oniria` | — (null) | — (null) | **projet virtuel** : porte 52 tâches + 152 tests, mais aucun repo lié |
 | `pbn` | ONIRIA | repo PBN / `main` | **repo ONIRIA** (console admin/backend, déployé sur branche `oniria-preprod`) |
 | `onirtech-backend` | ONIRIA | référentiel onirtech backend | repo (outillage) |
 | `onirtech-frontend` | ONIRIA | référentiel onirtech frontend | repo (outillage) |
 
 **Incohérences concrètes**
-- Le produit `oniria` n'a **ni workspace ni repo**, alors que son code vit dans le
+- Le projet `oniria` n'a **ni workspace ni repo**, alors que son code vit dans le
   repo `pbn` (checkout `/root/oniria-preprod`, branche `oniria-preprod`).
-- `mada-talk` est enregistré comme « projet » alors que c'est **un repo du produit
+- `mada-talk` est enregistré comme « projet » alors que c'est **un repo du projet
   Madatalk** (qui contient aussi le repo ONIRIA).
 - Un test E2E « parcours client madatalk → console ONIRIA » doit lister les
   projets `mada-talk` **et** `oniria` en `coveredProjects` — témoin du mélange.
@@ -43,7 +49,7 @@ casse dès ce cas — qui est le cas général en développement.
 ## 2. Modèle cible
 
 ```
-Produit (Project) ──────── N:N ──────── Repo
+Projet ──────── N:N ──────── Repo
   ex. Madatalk                       ex. mada-talk (frontend client)
   ex. ONIRIA                         ex. PBN (console admin / backend, branche oniria-preprod)
                                      ex. onirtech-* (outillage)
@@ -51,13 +57,13 @@ Produit (Project) ──────── N:N ──────── Repo
 
 ### Règles du modèle
 
-1. **Projet / Project** = unité **métier/produit** (ex. `madatalk`, `oniria`).
-   Les **tâches, recettes et tests E2E sont rattachés à un Projet**.
+1. **Projet** = unité **métier** (ex. `madatalk`, `oniria`).
+   Les **tâches, recettes et tests E2E sont rattachés à un projet**.
 2. **Repo** = un **dépôt de code** physique + ses caractéristiques d'exécution :
    - workspace Coder (où vit le checkout),
    - `git_url` / `git_path`, branche(s) de référence (ex. `main`, `oniria-preprod`),
    - checkout hôte E2E (`e2e_repo_dir`) et URL de test (`e2e_base_url`).
-3. **Association N:N Projet ⇄ Repo** : un projet liste ses repos ; un repo peut
+3. **Association N:N projet ⇄ Repo** : un projet liste ses repos ; un repo peut
    être partagé par plusieurs projets.
    - Exemple validé : le repo `pbn` (ONIRIA) est un repo **du projet `oniria`**
      **et** du projet `madatalk`.
@@ -65,20 +71,20 @@ Produit (Project) ──────── N:N ──────── Repo
    ou déduit du scope). La tâche reste attachée au **projet** ; le repo ciblé est
    une propriété d'exécution (worktree, merge, deploy).
 5. **Le spec d'un test E2E vit dans un repo** (repo source) ; le test couvre un
-   ou plusieurs **projets** (`coveredProjects` = produits dont le comportement est
+   ou plusieurs **projets** (`coveredProjects` = projets dont le comportement est
    vérifié).
 
 ### Traduction de l'existant vers la cible
 
-| Aujourd'hui (`projects`) | Devient `projects` (produit) | Devient `repos` | `project_repos` |
+| Aujourd'hui (`projects`) | Devient `projects` (projet) | Devient `repos` | `project_repos` |
 |---|---|---|---|
-| `mada-talk` (produit+repo) | produit `mada-talk` | repo `mada-talk` (frontend client) | mada-talk → madatalk |
-| `oniria` (fantôme) | produit `oniria` | — (les repos sont liés par `project_repos`) | — |
+| `mada-talk` (projet+repo) | projet `mada-talk` | repo `mada-talk` (frontend client) | mada-talk → madatalk |
+| `oniria` (fantôme) | projet `oniria` | — (les repos sont liés par `project_repos`) | — |
 | `pbn` | — | repo `pbn` (ONIRIA) | pbn → oniria **et** pbn → madatalk |
-| `onirtech-backend` | — | repo (outillage) | à rattacher au(x) produit(s) concerné(s) |
+| `onirtech-backend` | — | repo (outillage) | à rattacher au(x) projet(s) concerné(s) |
 | `onirtech-frontend` | — | repo (outillage) | idem |
 
-> Note de dénomination : le repo `pbn` correspond au produit ONIRIA. Selon la
+> Note de dénomination : le repo `pbn` correspond au projet ONIRIA. Selon la
 > validation (point 5 infra), on peut renommer l'id repo en `oniria`/`oniria-app`
 > pour la lisibilité, en conservant `git_path` = repo PBN.
 
@@ -86,9 +92,9 @@ Produit (Project) ──────── N:N ──────── Repo
 
 ## 3. Ce qui change / ce qui ne change pas
 
-**Ne change pas (reste au niveau Projet)**
+**Ne change pas (reste au niveau projet)**
 - `tasks.project`, `recettes.project` (+ `recette_projects`), `e2e_test_projects`
-  (`coveredProjects`), filtres UI « projet » : tout cela reste **produit**.
+  (`coveredProjects`), filtres UI « projet » : tout cela reste **projet**.
 
 **Change / est introduit**
 - Nouvelle table `repos` + table d'association `project_repos` (N:N).
@@ -107,16 +113,16 @@ Produit (Project) ──────── N:N ──────── Repo
 
 Migrer **sans perte de données**, par étapes idempotentes :
 
-1. **Créer `repos` + `project_repos`** (schéma), garder `projects` pour les produits.
+1. **Créer `repos` + `project_repos`** (schéma), garder `projects` pour les projets.
 2. **Backfill** depuis `projects` :
-   - chaque ligne existante devient un **produit** (id conservé) ;
+   - chaque ligne existante devient un **projet** (id conservé) ;
    - pour chaque ligne ayant des données repo (`workspace`/`git_path` non nuls) :
-     création d'un **repo** dérivé (id = id projet ou dédié), rattaché au produit.
+     création d'un **repo** dérivé (id = id projet ou dédié), rattaché au projet.
 3. **Corrections ciblées** sur les cas connus :
-   - `oniria` (produit) ← rattacher le repo `pbn` (dont `e2e_repo_dir =
+   - `oniria` (projet) ← rattacher le repo `pbn` (dont `e2e_repo_dir =
      /root/oniria-preprod`, branche `oniria-preprod`) ;
    - `mada-talk` ← rattacher le repo frontend `mada-talk` ;
-   - `project_repos` : repo `pbn` → produits `oniria` **et** `madatalk`.
+   - `project_repos` : repo `pbn` → projets `oniria` **et** `madatalk`.
 4. **Bascule des références** : les colonnes repo sortent de `projects` ; le code
    (MCP db/index, panel server/UI, pilot, agents) lit les repos via `repos` +
    `project_repos` ; rétrocompat temporaire en lecture.
@@ -132,11 +138,11 @@ Migrer **sans perte de données**, par étapes idempotentes :
 > Réponses utilisateur (2026-09-06) — le modèle cible est **validé** ; la
 > migration peut être exécutée par étapes.
 
-1. **Produit frontend** : garder l'id produit `mada-talk` (pas de renommage) — il
+1. **Projet frontend** : garder l'id projet `mada-talk` (pas de renommage) — il
    référence le repo `mada-talk` (frontend) **et** le repo `oniria` (partagé).
-2. **ONIRIA** : produit `oniria` **distinct** conservé (tâches/recettes/tests
+2. **ONIRIA** : projet `oniria` **distinct** conservé (tâches/recettes/tests
    propres) + le repo `oniria` (repo PBN, branche `oniria-preprod`) est rattaché
-   au produit `oniria` **et** au produit `mada-talk`.
+   au projet `oniria` **et** au projet `mada-talk`.
 3. **Outillage** `onirtech-backend`/`onirtech-frontend` : repos conservés
    enregistrés, **non liés** à Madatalk/ONIRIA pour l'instant.
 4. **Nommage** : le repo ONIRIA s'appelle **`oniria`** (git_path = repo PBN).
@@ -147,7 +153,7 @@ Migrer **sans perte de données**, par étapes idempotentes :
 
 ### Cible d'associations `project_repos`
 
-| Projet (produit) | Repos associés |
+| Projet | Repos associés |
 |---|---|
 | `mada-talk` | `mada-talk` (frontend client) · `oniria` (console admin/backend, partagé) |
 | `oniria` | `oniria` (repo PBN, branche `oniria-preprod`) |
@@ -168,13 +174,13 @@ Migrer **sans perte de données**, par étapes idempotentes :
    checkout du dépôt dans/du workspace Coder (ancre `--dir` des sessions).
    Chaque **repo** porte : nom, `workspace` (Coder), **répertoire du dépôt**,
    **branches** (dont la branche de déploiement), `e2e_repo_dir`/`e2e_base_url`.
-   Ces champs ne sont **PAS** des attributs du produit.
+   Ces champs ne sont **PAS** des attributs du projet.
 8. **Un workspace Coder peut héberger plusieurs repos** (chacun dans son
    sous-répertoire) — ex. le workspace ONIRIA contient PBN + onirtech-backend +
-   onirtech-frontend. À l'inverse un produit peut s'étendre sur plusieurs
+   onirtech-frontend. À l'inverse un projet peut s'étendre sur plusieurs
    workspaces (un par repo).
 9. **Chaque repo a sa propre URL/cible E2E** (`e2e_base_url`, `e2e_repo_dir`) —
-   pas une URL par produit.
+   pas une URL par projet.
 10. **Tâches multi-repos** : une tâche est associée à ≥1 projet ; un projet a N
     repos ; une tâche peut travailler sur **1..N repos**. **Par défaut, tous les
     repos du projet sont inclus** dans le périmètre d'une tâche ; le `scope`
@@ -189,7 +195,7 @@ Migrer **sans perte de données**, par étapes idempotentes :
 Les colonnes legacy de `projects` (`workspace`, `git_path`, `main_branch`,
 `e2e_repo_dir`, `e2e_base_url`) sont **obsolètes** : leur source de vérité est
 `repos`. Elles restent en lecture rétrocompat jusqu'à la fin de la migration,
-puis sont supprimées. Le formulaire/carte projet n'expose plus que le **produit**
+puis sont supprimées. Le formulaire/carte projet n'expose plus que le **projet**
 (id, nom) + la **liste de ses repos** (avec les attributs repo).
 
 ---
@@ -201,15 +207,15 @@ puis sont supprimées. Le formulaire/carte projet n'expose plus que le **produit
 > colonnes legacy.
 
 1. **Schéma** : créer `repos` + `project_repos` (N:N) ; `projects` devient le
-   registre des **produits** (les colonnes repo physiques y sont conservées en
+   registre des **projets** (les colonnes repo physiques y sont conservées en
    attendant la bascule).
-2. **Backfill** : chaque `projects.*` existant devient un **produit** ; chaque
+2. **Backfill** : chaque `projects.*` existant devient un **projet** ; chaque
    ligne avec données repo (`workspace`/`git_path` non nuls) génère un **repo**
-   rattaché à son produit.
+   rattaché à son projet.
 3. **Corrections ciblées** :
-   - produit `oniria` ← repo `oniria` (git_path = PBN, e2e_repo_dir =
+   - projet `oniria` ← repo `oniria` (git_path = PBN, e2e_repo_dir =
      `/root/oniria-preprod`, branche `oniria-preprod`) ;
-   - produit `mada-talk` ← repos `mada-talk` + `oniria` ;
+   - projet `mada-talk` ← repos `mada-talk` + `oniria` ;
    - `pbn` renommé `oniria` (références internes mises à jour si existantes).
 4. **Bascule code** : MCP (db/index), pilot, panel (server + UI), agents lisent
    les repos via `repos` + `project_repos` ; lecture rétrocompat temporaire.

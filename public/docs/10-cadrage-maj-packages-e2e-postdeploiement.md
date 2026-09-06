@@ -107,8 +107,16 @@ branche packages/<nom> (push)
   run E2E de recette depuis le registre `e2e_tests` (`origin=ci`), contre la
   cible préprod, une fois la version **active** (référence composite : version
   active + SHA cœur/package — cf. §4 doc E2E oniria).
-- [ ] Relier le run à la tâche en recette (`deployment_record` / `task_e2e`
-  REGRESSION/REQUIRED) pour la preuve.
+- [ ] Relier le run à la tâche en recette pour la preuve — chaîne détaillée au
+  **§8 (ADR 10)** :
+      - `e2e_test_link` (`task_e2e` `REGRESSION`/`REQUIRED`) : désigner, parmi
+        le socle ACTIVE exécuté, les tests qui font preuve pour la tâche
+        (§8.1) ;
+      - `deployment_record` : tracer `deploy_pending → deploying → deployed →
+        post_deploy_verified`, le run E2E alimentant `post_deploy_verified`
+        (§8.2) ;
+      - rapport E2E rattaché (`artifact_add` / `recette_doc_add`) et consultable
+        en recette via `e2e_list` / `e2e_execution_list` (§8.3).
 
 ### C. Tests E2E (recette)
 - [ ] Recréer/activer les tests E2E madatalk + oniria pertinents (le registre
@@ -177,7 +185,136 @@ branche packages/<nom> (push)
 
 ---
 
-## 8. Références
+## 8. Chaîne de preuve : du run E2E post-déploiement à la recette (ADR 10)
+
+Cette section détaille la **chaîne de preuve** qui fait du **run E2E
+post-déploiement** (§5.B, §7) la **preuve de la tâche livrée**, exploitable en
+**recette**. Elle repose sur trois maillons :
+
+1. le **rattachement des exécutions E2E du run CI à la tâche** via `task_e2e`
+   (`REGRESSION`/`REQUIRED`) — §8.1 ;
+2. le **traçage du déploiement** jusqu'à `post_deploy_verified`
+   (`deployment_record` + `plan_transition`) — §8.2 ;
+3. la **disponibilité du rapport E2E en recette** — §8.3.
+
+Cette section **précise** les décisions §1-7 (en particulier la **décision 3 du
+§7** : échecs hors périmètre notés, jamais silencieux) **sans les invalider** :
+le run E2E reste non bloquant pour le déploiement (Niveau 1 = seul gate) et
+l'agent ne traite que les résultats rattachés à son travail.
+
+### 8.1 Rattacher les exécutions E2E du run CI à la tâche (`task_e2e`)
+
+Le run CI post-déploiement exécute **tout le socle ACTIVE** du registre
+(décision 2 du §7). Pour qu'il devienne la **preuve d'une tâche livrée**, les
+tests dont les résultats comptent pour cette tâche doivent lui être
+**rattachés** dans le registre via `task_e2e` (N:N tâche ↔ test) — outil
+`e2e_test_link` (MCP task-orchestrator).
+
+**Sémantique des relations** (docs/07 §5, docs/08 §3.4, CHANGELOG v0.9.5) :
+
+| Relation | Sens |
+|---|---|
+| `CREATED` | test créé par la tâche (spec produit — « create » de l'analyse d'impact) |
+| `UPDATED` | test modifié par la tâche (scénario adapté — « update ») |
+| `REGRESSION` | test de **non-régression** : comportement existant que la livraison peut casser (« keep ») |
+| `EXISTING` | test existant simplement associé à la tâche |
+| `REQUIRED` | contrat « bloqué par » (v0.9.5) : **la tâche doit être `done` pour que le test soit `PASS`** — le test formalise le comportement attendu que la tâche doit livrer |
+
+**Quand / par qui** : le rattachement est posé au fil de la tâche par l'agent
+qui la traite (`atomic-plan` en exécution planifiée, `build-notify` en exécution
+directe — cf. docs/08 §6.1), dès qu'un test pertinent est identifié ou
+enregistré ; il est **vérifié / ajusté** au moment de rattacher le run
+post-déploiement à la tâche. Chaque lien porte une `reason` (justification
+tracée, obligatoire).
+
+**Pour le run post-déploiement** : le lien `task_e2e` ne change pas le périmètre
+du run (toujours le socle ACTIVE, décision 2 du §7) — il **désigne**, parmi les
+résultats du run, ceux qui font **preuve pour la tâche** :
+
+- `REGRESSION` pour les tests protégeant les comportements que la livraison
+  touche (non-régression) ;
+- `REQUIRED` pour les tests contractuels du comportement livré : `PASS` attendu
+  une fois la tâche terminée (donc après le déploiement de sa version).
+
+Les exécutions du run CI appartiennent au **test** (`e2e_executions`,
+`origin=ci`, docs/08 §3.3) ; elles sont consultables par tâche
+(`e2e_execution_list(taskId=…)`). La **preuve de la tâche** = pour chaque test
+lié, l'exécution du run post-déploiement est `PASSED` (verdict posé sur le
+**rapport texte**, docs/08 §6.3).
+
+### 8.2 Traçage du déploiement : `deployment_record` → `post_deploy_verified`
+
+Le déploiement est tracé dans le registre via `deployment_record` — séquence
+`deploy_pending → deploying → deployed → post_deploy_verified` (+
+`deploy_failed`) — et **relie le cycle du plan** (`plan_transition`) à la preuve
+E2E (docs/01 §4, docs/03 §2, docs/05 §2).
+
+**Séquence :**
+
+1. **`deploy_pending`** — le plan est `merged` (branche de déploiement à jour) ;
+   le déploiement est attendu.
+2. **`deploying` → `deployed`** — le pipeline déploie (merge de la branche dans
+   la cible, ingestion + activation auto → version active servie sur la
+   préprod). `deployed` n'est posé qu'une fois la version **active**. En cas
+   d'échec du pipeline (ex. activation impossible) → `deploy_failed`, état
+   bloqué + demande humaine, **jamais de run d'office** sur un comportement non
+   actif (§6).
+3. **Run E2E post-déploiement** — étape CI finale **non bloquante** (décision 4
+   du §7) : `e2e_run` (`origin=ci`) contre la préprod. Ses résultats (rapports
+   texte) **alimentent le passage à `post_deploy_verified`** :
+   - tests liés `PASSED` → déploiement vérifié ;
+   - échecs **liés au périmètre** de la tâche → traitement agent (correction +
+     relance, 3 itérations max — docs/08 §6.3), puis `post_deploy_verified` si
+     résolu ; sinon **décision humaine** (`decision_request`) — jamais de
+     validation silencieuse ;
+   - échecs **hors périmètre** → **notés** en écarts tracés (décision 3 du §7,
+     cf. §8.3) : ils n'empêchent pas `post_deploy_verified`, mais ne sont jamais
+     silencieux.
+4. **Lien `plan_transition`** : le plan suit `… → merged → deploy_pending →
+   deploying → deployed → post_deploy_verified → done` (docs/01 §4, docs/03 §2,
+   docs/05 §2). L'orchestrateur transitionne le plan vers `post_deploy_verified`
+   quand la vérification post-déploiement (dont le run E2E) est traitée, puis
+   vers `done`. La tâche ne passe `done` que lorsque **tous** ses plans sont
+   `done` (docs/03 §2).
+
+C'est ainsi que le run E2E est **ancré dans la machine à états** : il n'est pas
+un artefact à part, il **conditionne l'avancement du plan** vers la fin du cycle
+(`post_deploy_verified → done`).
+
+### 8.3 Rapport E2E disponible en recette
+
+Chaque exécution E2E produit un **rapport texte** (`report_artifact_id`) —
+preuve partagée IA + humain (la vidéo reste une preuve **humaine**, jamais
+interprétée par l'IA — docs/07 §7, docs/08 §6.3). Pour qu'une recette puisse
+s'appuyer dessus :
+
+- **rattachement** : `artifact_add` (kind=`report`, chemin du rapport) sur la
+  tâche, puis `recette_doc_add` pour lier le rapport à la recette couvrant la
+  tâche (nature : « preuve E2E du run post-déploiement ») ;
+- **consultation par `agent-recette`** : via `e2e_list(taskId=…)` /
+  `e2e_execution_list` — lecture du **rapport texte uniquement** ; l'agent peut
+  aussi relancer un test si besoin (`e2e_run`, `origin=recette`) ; verdict posé
+  sur le rapport texte (docs/08 §6.3) ;
+- **règle « échecs hors périmètre = écarts tracés, jamais silencieux »**
+  (décision 3 du §7) : tout échec hors périmètre constaté dans le rapport est
+  **consigné** (constat visible : `task_event`, mention explicite au rapport /
+  synthèse de recette, voire **élément de recette** `recette_item_add` ou tâche
+  émergente **proposée**) — il n'est ni corrigé par l'agent (hors périmètre), ni
+  passé sous silence. La recette humaine tranche in fine
+  (`recette approved` / `rejected`), éclairée par ces écarts tracés.
+
+**Récapitulatif de la chaîne de preuve :**
+
+| Maillon | Outil / registre | Résultat |
+|---|---|---|
+| Rattacher le run à la tâche | `e2e_test_link` (`task_e2e` `REGRESSION`/`REQUIRED`) | tests « preuve » identifiés pour la tâche |
+| Tracer le déploiement | `deployment_record` (`deploy_pending → deploying → deployed → post_deploy_verified`) | état du déploiement visible ; le run E2E alimente `post_deploy_verified` |
+| Clore le plan / la tâche | `plan_transition` (`deployed → post_deploy_verified → done`) | plan `done` → tâche `done` (tous plans done) |
+| Prouver en recette | `artifact_add` / `recette_doc_add` + `e2e_list` / `e2e_execution_list` | rapport texte consultable par `agent-recette` et l'humain |
+
+---
+
+## 9. Références
 
 - `docs/regles-tests-ci-cd-e2e-oniria.md` (repo oniria) — E2E niveau 2 non
   bloquant, post mise à jour active, référence composite de la preuve.
@@ -186,3 +323,16 @@ branche packages/<nom> (push)
 - `scripts/{deploy-package.mjs, build-package.mjs, p7-package-*.ts}`,
   `apps/admin-next/lib/oniria/packages/package-lifecycle-service.ts`.
 - Registre e2e (ADR 08) : `e2e_run`, `e2e_list`, `task_e2e`.
+- `docs/07-tests-e2e.md` §5 et `docs/08-tests-e2e-independants.md` §3.3-§3.4,
+  §6.3 — modèle `task_e2e` (relations `CREATED | UPDATED | REGRESSION |
+  EXISTING`), exécutions par test (`origin`), verdict sur **rapport texte**,
+  consultation recette (`e2e_list` / `e2e_execution_list`).
+- `CHANGELOG.md` v0.9.5 — relation `task_e2e.REQUIRED` (« la tâche doit être
+  `done` pour que le test soit `PASS` », contrat « bloqué par »).
+- `docs/01-architecture.md` §4, `docs/03-workflow.md` §2,
+  `docs/05-reference.md` §2 — `deployment_record` (`deploy_pending → deploying →
+  deployed → post_deploy_verified`, + `deploy_failed`) et `plan_transition`
+  (`… → deployed → post_deploy_verified → done`).
+- MCP task-orchestrator — outils de la chaîne de preuve : `e2e_test_link`,
+  `deployment_record`, `plan_transition`, `artifact_add`, `recette_doc_add`,
+  `e2e_list`, `e2e_execution_list`.

@@ -625,11 +625,20 @@ function mapE2EExecRow(r) {
 }
 
 // Ligne e2e_tests (existence + repo source) pour les routes /:id.
-async function registryE2ETest(id) {
-  try {
-    return (await registry().query("SELECT id, project, spec_file, scenario FROM e2e_tests WHERE id = $1", [id])).rows[0] || null;
-  } catch { return null; }
-}
+ async function registryE2ETest(id) {
+   try {
+     const t = (await registry().query("SELECT id, project, spec_file, scenario FROM e2e_tests WHERE id = $1", [id])).rows[0] || null;
+     if (!t) return null;
+     // ADR 11 : repos traversés du test (le spec vit dans l'un d'eux).
+     const repos = (await registry().query(
+       `SELECT r.id, r.name, r.e2e_repo_dir AS "e2eRepoDir", r.e2e_base_url AS "e2eBaseUrl", r.workspace, r.main_branch AS "mainBranch"
+        FROM e2e_test_repos x JOIN repos r ON r.id = x.repo_id
+        WHERE x.e2e_test_id = $1 ORDER BY r.name ASC`, [id],
+     )).rows;
+     t.repos = repos || [];
+     return t;
+   } catch { return null; }
+ }
 
 // Projets couverts indexés par test (fallback repo source côté appelant).
 async function e2eProjectsByTestIds(ids) {
@@ -702,6 +711,13 @@ async function registryE2ETestDetail(res, id) {
   if (!row) return sendJson(res, 404, { error: "test E2E inconnu" });
   const q = async (sql, p = []) => (await db.query(sql, p).catch(() => ({ rows: [] }))).rows;
   const projects = (await q("SELECT project FROM e2e_test_projects WHERE e2e_test_id = $1 ORDER BY project", [id])).map((x) => x.project);
+  // ADR 11 : repos traversés par le test (le spec vit dans l'un d'eux).
+  const repos = (await q(
+    `SELECT r.id, r.name, r.description, r.git_path AS "repoDir", r.workspace,
+            r.main_branch AS "mainBranch", r.e2e_repo_dir AS "e2eRepoDir", r.e2e_base_url AS "e2eBaseUrl"
+     FROM e2e_test_repos x JOIN repos r ON r.id = x.repo_id
+     WHERE x.e2e_test_id = $1 ORDER BY r.name ASC`, [id],
+  ));
   const params = (await q("SELECT name, kind, default_value, secret_ref, required FROM e2e_test_params WHERE e2e_test_id = $1 ORDER BY name", [id])).map((x) => ({
     name: x.name,
     kind: x.kind,
@@ -741,6 +757,7 @@ async function registryE2ETestDetail(res, id) {
   const test = {
     ...mapE2ETestRow(row),
     projects: projects.length ? projects : (row.project ? [row.project] : []),
+    repos,
     params,
     linkedTasks,
     requiredOpen: requiredOpenTasks.length,
@@ -855,12 +872,19 @@ async function handleE2ERun(res, id, b) {
   const t = await registryE2ETest(id);
   if (!t) return sendJson(res, 404, { error: "test E2E inconnu" });
   const { repoDir, baseUrl, origin, taskId, specPattern, playwrightConfig, pwArgs, paramValues, secretNames, runFromRef } = b || {};
-  // RepoDir/baseUrl par défaut : mapping E2E du projet (registre projects) puis
-  // convention hôte /root/<projet>-preprod pour les projets applicatifs connus.
-  const projDefaults = await e2eDefaultsForProject(t.project);
-  const finalRepoDir = (repoDir && String(repoDir).trim()) || projDefaults.repoDir;
-  const finalBaseUrl = (baseUrl && String(baseUrl).trim()) || projDefaults.baseUrl || undefined;
-  if (!finalRepoDir) return sendJson(res, 400, { error: "repoDir requis (dépôt applicatif à exécuter) — renseigner le checkout E2E du projet (Projets → Modifier, champ e2eRepoDir)" });
+  // ADR 11 — repo d'exécution par défaut : parmi les repos traversés du test,
+  // celui dont le checkout E2E contient le spec_file (repo « source » du spec) ;
+  // sinon le 1er repo traversé qui a un e2e_repo_dir ; sinon convention hôte.
+  const testRepos = (t.repos || []).filter((r) => r && r.e2eRepoDir);
+  let defaultRepo = testRepos.find((r) => {
+    try { return existsSync(join(String(r.e2eRepoDir).trim(), String(t.spec_file).replace(/^\.\//, ""))); } catch { return false; }
+  });
+  if (!defaultRepo) defaultRepo = testRepos[0];
+  const fallbackRepoDir = defaultRepo ? defaultRepo.e2eRepoDir : `/root/${t.project}-preprod`;
+  const fallbackBaseUrl = (defaultRepo && defaultRepo.e2eBaseUrl) || null;
+  const finalRepoDir = (repoDir && String(repoDir).trim()) || fallbackRepoDir;
+  const finalBaseUrl = (baseUrl && String(baseUrl).trim()) || fallbackBaseUrl || undefined;
+  if (!finalRepoDir) return sendJson(res, 400, { error: "repoDir requis (dépôt applicatif à exécuter) — renseigner le checkout E2E d'un repo du test (Projets → Modifier le repo, champ e2eRepoDir)" });
   // SÉCURITÉ : un secret ne peut JAMAIS être transmis en clair dans paramValues.
   // La sélection se fait par NOM (secretNames) ; les valeurs sont déchiffrées et
   // injectées par le MCP au run. On rejette toute tentative de forcer une clé

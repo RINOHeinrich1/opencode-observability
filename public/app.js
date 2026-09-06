@@ -2162,6 +2162,7 @@ async function renderProjects() {
                   ${r.mainBranch ? `<span class="muted-sm">· branche dépl. <code>${esc(r.mainBranch)}</code></span>` : ''}
                 </div>
                 ${r.description ? `<div class="muted-sm" style="font-size:11px">${esc(r.description)}</div>` : ''}
+                ${r.deploy ? `<div class="muted-sm" style="font-size:11px" title="${esc(r.deploy)}"><strong>déploiement :</strong> ${esc(String(r.deploy).replace(/\s+/g, ' ').slice(0, 90))}${r.deploy.length > 90 ? '…' : ''}</div>` : ''}
                 ${r.repoDir ? `<div class="muted-sm" style="font-size:11px">répertoire : <code>${esc(r.repoDir)}</code></div>` : ''}
                 ${r.e2eBaseUrl ? `<div class="muted-sm" style="font-size:11px">e2e : <code>${esc(r.e2eBaseUrl)}</code>${r.e2eRepoDir ? ' · ' + esc(r.e2eRepoDir) : ''}</div>` : ''}
                 <div class="repo-mini-actions">
@@ -2200,6 +2201,9 @@ function repoFormModal(repo) {
         <label class="modal-field">Description <span class="muted-sm">— à quoi sert ce repo pour le projet</span>
           <input id="rm-description" placeholder="ex. frontend client SPA du produit Madatalk" value="${esc(repo?.description || '')}">
         </label>
+        <label class="modal-field">Mécanisme de déploiement CI/CD <span class="muted-sm">— workflows, branches de déclenchement, cibles de CE repo (fourni en contexte à l'orchestrateur)</span>
+          <textarea id="rm-deploy" class="modal-textarea" rows="4" placeholder="ex. GitHub Actions preprod-deploy.yml sur push main → /var/www/... ; runner self-hosted">${esc(repo?.deploy || '')}</textarea>
+        </label>
         <label class="modal-field">Workspace Coder <span class="muted-sm">— où vit le checkout</span>
           <input id="rm-workspace" placeholder="ex: madatalk, ONIRIA" value="${esc(ws)}">
         </label>
@@ -2231,6 +2235,7 @@ function repoFormModal(repo) {
         id: document.getElementById('rm-id').value.trim(),
         name: document.getElementById('rm-name').value.trim() || undefined,
         description: document.getElementById('rm-description').value.trim() || undefined,
+        deploy: document.getElementById('rm-deploy').value.trim() || undefined,
         workspace: document.getElementById('rm-workspace').value.trim() || undefined,
         repoDir: document.getElementById('rm-repodir').value.trim() || undefined,
         mainBranch: document.getElementById('rm-mainbranch').value.trim() || undefined,

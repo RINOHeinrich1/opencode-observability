@@ -5,6 +5,35 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.9.5 — 2026-09-06 · Contrat BDD/TDD : créer une tâche depuis un test + Gherkin + REQUIRED
+
+Le test E2E devient un **contrat de comportement** (BDD/TDD) : rédigé par
+test-agent avec une formalisation **Gherkin**, indépendant de l'état
+d'implémentation, il peut **générer des tâches requises** à traiter avant d'être
+PASS (ex. « bouton Traiter », « permission dashboard opérateur »).
+
+- **MCP task-orchestrator v0.8.5** : `e2e_tests.gherkin` (Given/When/Then du
+  comportement, description = demande libre) + relation `task_e2e.REQUIRED`
+  (« la tâche doit être done pour que le test soit PASS »).
+- **Panel v0.9.5** :
+  - Détail d'un test : affiche le Gherkin, badge « ⚠ bloqué par N tâches
+    REQUIRED non terminées » (avec liste + « Ouvrir la tâche »), bouton
+    « + Créer une tâche (requise) » ;
+  - Modale de création de tâche depuis un test (pré-remplie : projet = repo
+    source, titre, demande = en-tête + description + Gherkin ; type
+    feature/debug ; scope ; exécution directe) ;
+  - Endpoint `POST /api/e2e-tests/:id/create-task` (création + lien REQUIRED) ;
+  - Labels relation REQUIRED (« requis (bloquant) »).
+- **Agents v0.6.1** : test-agent produit le Gherkin, signale les écarts
+  (comportement non implémenté) comme tâches requises potentielles.
+- **Cohérence checkouts** : `/root/mada-talk-preprod` (checkout hôte E2E) était
+  en retard sur `origin/main` → resync marquait tout OBSOLETE. Mis à jour sur
+  main + resync : mada-talk 18 ACTIVE. Purge totale E2E oniria assumée (152
+  OBSOLETE) — tests oniria à recréer via test-agent.
+
+Dépôts : `opencode-mcp-task-orchestrator` (v0.8.5) · `opencode-agents` (v0.6.1) ·
+`opencode-observability` (v0.9.5).
+
 ## v0.9.4 — 2026-09-06 · Création de test E2E via session test-agent (flux Oui/Non)
 
 Problème UX : « Nouveau test » enregistrait une entité dans le registre sans

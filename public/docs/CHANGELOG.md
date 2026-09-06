@@ -5,6 +5,18 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## INCO-012 (résolution, 2026-09-06) — run E2E CI rejeté (repoDir absent)
+
+Écart tracé par la tâche B ADR 10 (étape CI finale E2E) : au 1er déclenchement
+réel, le step CI « Run E2E recette » exécutait `e2e-run-ci.mjs` mais `e2e_run`
+rejetait l'appel (`repoDir: expected string, received undefined`) — le script
+(corrigé ADR 11) ne passe plus `repoDir`, le MCP l'exigeait.
+
+**Résolu (MCP v0.8.21)** : `e2e_run` rend `repoDir` **optionnel** quand
+`e2eTestId` est fourni et résout le repo d'exécution depuis les repos traversés
+du test (celui dont `e2eRepoDir` contient le spec). Validé : run sans `repoDir`
+fonctionne. Détail : ADR 10 §10.
+
 ## v0.9.17 — 2026-09-06 · Mécanisme de déploiement CI/CD par repo (champ `deploy`)
 
 Le mécanisme de déploiement n'est plus une instruction d'agent éparse : il vit au

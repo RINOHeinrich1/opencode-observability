@@ -336,3 +336,32 @@ s'appuyer dessus :
 - MCP task-orchestrator — outils de la chaîne de preuve : `e2e_test_link`,
   `deployment_record`, `plan_transition`, `artifact_add`, `recette_doc_add`,
   `e2e_list`, `e2e_execution_list`.
+
+---
+
+## 10. Écart tracé & résolution — INCO-012 (run E2E CI rejeté, repoDir absent)
+
+**Signalé par** : tâche B (T-20260906-124955-ohto, « étape CI finale E2E »), clôturée
+`done` le 2026-09-06 — écart tracé dans son rapport/événement (règle ADR 10 :
+les échecs hors périmètre sont **notés**, jamais silencieux).
+
+**Constat** : au 1er déclenchement réel, le step CI « Run E2E recette » s'exécute
+mais le run n'aboutit pas — `e2e_run` rejette l'appel du script `e2e-run-ci.mjs`
+(corrigé ADR 11) : `repoDir: expected string, received undefined`.
+
+**Cause racine** : incohérence entre le script CI et le MCP.
+- Le script `e2e-run-ci.mjs` (tâche C, conformité ADR 11) ne passe plus `repoDir` :
+  il suppose que le serveur/MCP le résout depuis le test (repos traversés).
+- Or le MCP `e2e_run` exigeait `repoDir` (obligatoire) → rejet.
+
+**Résolution (2026-09-06, MCP v0.8.21)** : `e2e_run` accepte désormais
+`repoDir` **optionnel** quand `e2eTestId` est fourni, et **résout le repo
+d'exécution** depuis les repos traversés du test — le repo dont `e2eRepoDir`
+contient le `spec_file` (sinon 1er repo traversé avec `e2eRepoDir`), cohérent
+avec ADR 11. Validé : run S2 sans `repoDir` fonctionne (repo résolu
+automatiquement).
+
+**Impact** : le mécanisme ADR 10 déployé par B (workflows core+package) est
+correct ; il se déclenche désormais réellement (plus de rejet repoDir). La
+création d'une tâche émergente dédiée n'a pas été nécessaire — la correction a
+été portée directement au MCP.

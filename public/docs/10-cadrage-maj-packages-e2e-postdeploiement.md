@@ -150,9 +150,14 @@ branche packages/<nom> (push)
    des projets couverts (plus large, plus fidèle à « après déploiement, la
    préprod doit être saine »). Périmètre cible : projets `madatalk` (front) et
    `oniria` (console).
-3. **L'agent ne traite QUE les résultats rattachés à son travail** : parmi les
-   résultats du run E2E, il ignore les erreurs hors de sa portée (les écarts
-   hors scope sont signalés, pas traités par lui).
+3. **L'agent ne TRAITE QUE les résultats rattachés à son travail** : parmi les
+   résultats du run E2E, il **corrige** uniquement les échecs liés à son
+   périmètre. Les échecs **hors périmètre ne sont pas corrigés par lui, MAIS
+   DOIVENT ÊTRE NOTÉS** : il les consigne comme **écarts tracés** (constat
+   visible, ex. `task_event`/synthèse de recette, ou mention explicite au
+   rapport) — jamais silencieux. Selon le contexte, il peut en proposer le
+   traitement (ex. tâche émergente ou élément de recette) sans l'exécuter
+   lui-même.
 4. **Déclencheur = étape CI finale** appelant le registre (`origin=ci`) : le
    workflow (runner auto-hébergé, qui a accès à l'hôte et donc au MCP
    task-orchestrator) lance, en dernière étape non bloquante, un run E2E qui
@@ -165,8 +170,10 @@ branche packages/<nom> (push)
 - Le déploiement n'est **jamais bloqué** par l'E2E (Niveau 1 = gate seul) ;
   le run E2E alimente la recette/preuve de la tâche (`deployment_record`,
   `task_e2e`).
-- L'agent (orchestrateur/build-notify) reçoit le rapport E2E et ne retient que
-  les échecs **liés à son travail** ; le reste est ignoré (ou signalé hors scope).
+- L'agent (orchestrateur/build-notify) reçoit le rapport E2E et ne retient pour
+  **traitement** que les échecs **liés à son travail** ; les échecs **hors
+  périmètre sont notés** (consignés comme écarts tracés — jamais silencieux),
+  sans être corrigés par lui.
 
 ---
 

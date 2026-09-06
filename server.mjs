@@ -839,7 +839,7 @@ async function e2eDefaultsForProject(project) {
 async function handleE2ERun(res, id, b) {
   const t = await registryE2ETest(id);
   if (!t) return sendJson(res, 404, { error: "test E2E inconnu" });
-  const { repoDir, baseUrl, origin, taskId, specPattern, playwrightConfig, pwArgs, paramValues, secretNames } = b || {};
+  const { repoDir, baseUrl, origin, taskId, specPattern, playwrightConfig, pwArgs, paramValues, secretNames, runFromRef } = b || {};
   // RepoDir/baseUrl par défaut : mapping E2E du projet (registre projects) puis
   // convention hôte /root/<projet>-preprod pour les projets applicatifs connus.
   const projDefaults = await e2eDefaultsForProject(t.project);
@@ -880,6 +880,7 @@ async function handleE2ERun(res, id, b) {
     pwArgs,
     paramValues,
     secretNames,
+    runFromRef: runFromRef || undefined,
   };
   const payloadFile = join(E2E_JOBS, `${jobId}.json`);
   const resultFile = join(E2E_JOBS, `${jobId}.result.json`);

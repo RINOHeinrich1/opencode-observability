@@ -951,6 +951,15 @@ async function e2eRunModal(e2eTestId) {
           return;
         }
         if (st && st.status === 'ERROR') {
+          // Pré-vol : spec absent du checkout mais récupérable depuis git →
+          // proposer un run via worktree temporaire au commit choisi.
+          let pre = null;
+          const rawErr = (st && st.error) || '';
+          try { pre = JSON.parse(String(rawErr).replace(/^ERREUR\s*:\s*/, '').trim()); } catch {}
+          if (pre && pre.code === 'SPEC_NOT_IN_CHECKOUT' && Array.isArray(pre.candidates) && pre.candidates.length) {
+            e2eRunFromGitModal(e2eTestId, pre);
+            return;
+          }
           closeModal();
           alert('Le run a échoué : ' + ((st && st.error) || 'erreur worker'));
           e2eDetailModal(e2eTestId);
@@ -961,6 +970,70 @@ async function e2eRunModal(e2eTestId) {
     };
     setTimeout(pollJob, 3000);
   });
+}
+
+// Modale « spec absent du checkout » — le test existe dans l'historique git.
+// Propose de relancer via un WORKTREE temporaire au commit choisi (spec +
+// helpers + config complets au commit ; rien n'est restauré dans main).
+function e2eRunFromGitModal(e2eTestId, pre) {
+  const short = (s) => String(s || '').slice(0, 10);
+  const msgLine = String(pre.message || '').slice(0, 260);
+  showModal(`
+    <div class="modal modal-wide">
+      <h2>Test introuvable dans le checkout — mais récupérable via git</h2>
+      <p class="muted">Test <code class="e2e-id">${esc(e2eTestId)}</code></p>
+      <p class="muted-sm">${esc(msgLine)}</p>
+      <p class="muted-sm"><strong>Ce spec existe dans l'historique git</strong> (création / modification). Vous pouvez lancer le run depuis un <strong>worktree temporaire</strong> au commit choisi : le spec + ses helpers + la config Playwright sont pris au commit, exécutés dans un dossier isolé (<code>/root/test-E2E/…</code>), puis nettoyés. Rien n'est modifié dans la branche <code>${esc(pre.repoDir || '')}</code>.</p>
+      <div class="actions-section"><h3>Choisir une origine (commit où le spec existe)</h3>
+        <div class="recette-list">${(pre.candidates || []).map((c) => `<div class="recette-item">
+          <code>${esc(c.branch || 'historique')} @ ${esc(c.short)}</code>
+          <span class="muted-sm">${esc(fmtTS(c.date))}</span>
+          <span class="muted-sm">${esc((c.subject || '').slice(0, 80))}</span>
+          <button type="button" class="launch-btn" data-run-ref="${esc(c.sha)}">▶ Lancer depuis ce commit</button>
+        </div>`).join('')}</div>
+      </div>
+      <p class="muted-sm">Alternative : <strong>merger d'abord la branche</strong> contenant ce spec sur main puis relancer (le run s'exécutera alors normalement dans le checkout).</p>
+      <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
+      <div id="git-run-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.querySelectorAll('#modal-backdrop [data-run-ref]').forEach((b) => b.addEventListener('click', async () => {
+    const msg = document.getElementById('git-run-msg');
+    const sha = b.dataset.runRef;
+    const runBody = { origin: 'manual', runFromRef: sha };
+    msg.textContent = `Création d'un worktree temporaire au commit ${short(sha)} puis lancement… (peut prendre plusieurs minutes)`;
+    msg.className = 'msg';
+    try {
+      const r = await api(`/api/e2e-tests/${encodeURIComponent(e2eTestId)}/run`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(runBody),
+      });
+      closeModal();
+      if (r && r.jobId) e2eRunJobWait(e2eTestId, r.jobId);
+      else alert((r && r.message) || 'Run terminé.');
+    } catch (err) { msg.textContent = 'Échec : ' + (err.message || err); msg.className = 'msg error'; }
+  }));
+}
+
+// Attend un job asynchrone puis ouvre le détail (réutilisé par la modale run).
+function e2eRunJobWait(e2eTestId, jobId) {
+  let tries = 0;
+  const t = () => {
+    tries++;
+    if (tries > 180) { alert('Le run est toujours en cours en arrière-plan — consultez l\'historique du test (Détail).'); e2eDetailModal(e2eTestId); return; }
+    api(`/api/e2e/jobs/${encodeURIComponent(jobId)}`).then((st) => {
+      if (st && st.status === 'DONE') { e2eDetailModal(e2eTestId); return; }
+      if (st && st.status === 'ERROR') {
+        let pre = null;
+        try { pre = JSON.parse(String(st.error || '').replace(/^ERREUR\s*:\s*/, '').trim()); } catch {}
+        if (pre && pre.code === 'SPEC_NOT_IN_CHECKOUT') { alert('Le commit choisi ne contient pas le spec — choisissez une autre origine.'); e2eRunFromGitModal(e2eTestId, pre); return; }
+        alert('Le run a échoué : ' + (st.error || 'erreur worker'));
+        e2eDetailModal(e2eTestId);
+        return;
+      }
+      setTimeout(t, 4000);
+    }).catch(() => setTimeout(t, 4000));
+  };
+  setTimeout(t, 3000);
 }
 
 function e2eObsoleteModal(e2eTestId) {

@@ -229,13 +229,22 @@ async function registryTaskDetail(id) {
      WHERE tr.task_id = $1 ORDER BY r.name ASC`, [id],
   );
   const linkedTasks = await q(
-    `SELECT l.linked_task_id, l.description,
+    `SELECT l.linked_task_id, l.description, l.relation_type AS "relationType",
             t.request AS linked_request, t.recette_status AS linked_recette,
             (SELECT x.status FROM executions x WHERE x.task_id = l.linked_task_id ORDER BY attempt DESC LIMIT 1) AS linked_status,
             (SELECT COUNT(*) FROM plans p WHERE p.task_id = l.linked_task_id) AS linked_plans,
             (SELECT COUNT(*) FROM artifacts a WHERE a.task_id = l.linked_task_id) AS linked_artifacts
      FROM task_links l LEFT JOIN tasks t ON t.id = l.linked_task_id
      WHERE l.task_id = $1 ORDER BY l.id ASC`,
+    [id],
+  );
+  // Tâches émergentes créées depuis cette tâche (lien inverse emergent).
+  const emergentFrom = await q(
+    `SELECT t.id AS task_id, t.request, t.title, t.recette_status,
+            (SELECT x.status FROM executions x WHERE x.task_id = t.id ORDER BY attempt DESC LIMIT 1) AS status,
+            l.description AS reason
+     FROM task_links l JOIN tasks t ON t.id = l.task_id
+     WHERE l.linked_task_id = $1 AND l.relation_type = 'emergent' ORDER BY l.id ASC`,
     [id],
   );
   let recette = null;
@@ -250,7 +259,7 @@ async function registryTaskDetail(id) {
     const projs = (await q("SELECT project FROM recette_projects WHERE recette_id = $1 ORDER BY project", [rec.recette_id])).map((x) => x.project);
     recette = { recetteId: rec.recette_id, project: rec.project, projects: projs.length ? projs : (rec.project ? [rec.project] : []), title: rec.title, sessionId: rec.session_id, status: rec.status, confirmedAt: rec.confirmed_at, confirmedBy: rec.confirmed_by, tasks, items };
   }
-  return { task: { ...task, repos: taskRepos }, executions, events, deployments, decisions, artifacts, sessions, linkedTasks, recette, archived: (await archivedTaskIds()).has(id) };
+  return { task: { ...task, repos: taskRepos }, executions, events, deployments, decisions, artifacts, sessions, linkedTasks, emergentFrom, recette, archived: (await archivedTaskIds()).has(id) };
 }
 
 async function snapshotForTask(taskId) {

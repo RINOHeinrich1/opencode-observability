@@ -2522,8 +2522,23 @@ async function taskActionsModal(taskId) {
         ${linked.map((l) => `
           <div class="link-item">
             <code>${esc(l.linked_task_id || l.linkedTaskId)}</code>
+            ${(l.relationType || l.relation_type) === 'emergent' ? '<span class="badge danger" title="Tâche émergente — créée hors scope, liée à sa source">émergente</span>' : ''}
             <span class="muted-sm">${esc((l.description || '').slice(0, 90) || '—')}</span>
             <span class="muted-sm">${esc((l.linked_request || '').slice(0, 50))}${l.linked_status ? ` · ${esc(l.linked_status)}` : ''}</span>
+          </div>`).join('')}
+      </div>` : ''}
+
+      ${(detail.emergentFrom && detail.emergentFrom.length) ? `
+      <div class="actions-section">
+        <h3>Tâches émergentes créées depuis cette tâche (${detail.emergentFrom.length})</h3>
+        <p class="muted-sm">Demandes utilisateur hors scope reçues pendant cette tâche → créées comme nouvelles tâches liées (source).</p>
+        ${detail.emergentFrom.map((e) => `
+          <div class="link-item">
+            <code>${esc(e.task_id)}</code>
+            <span class="badge danger">émergente</span>
+            <span class="muted-sm">${esc((e.title || '').slice(0, 60))} ${e.status ? `· ${esc(e.status)}` : ''}</span>
+            ${e.reason ? `<span class="muted-sm" title="${esc(e.reason)}">${esc((e.reason || '').slice(0, 70))}</span>` : ''}
+            <button type="button" class="ghost" data-goto-task="${esc(e.task_id)}">Ouvrir</button>
           </div>`).join('')}
       </div>` : ''}
 
@@ -2591,6 +2606,7 @@ async function taskActionsModal(taskId) {
   if (recetteDetail) recetteDetail.onclick = () => { closeModal(); recetteDetailItemsModal(recetteDetail.dataset.recId); };
   const archive = document.getElementById('act-archive');
   if (archive) archive.onclick = () => { closeModal(); openArchiveConfirm(taskId); };
+  document.querySelectorAll('#modal-backdrop [data-goto-task]').forEach((b) => b.addEventListener('click', () => { const tid = b.dataset.gotoTask; closeModal(); taskActionsModal(tid); refreshActive(); }));
   const consumption = document.getElementById('act-consumption');
   if (consumption) consumption.onclick = () => { closeModal(); renderConsumptionModal(taskId); };
   const kill = document.getElementById('act-kill');

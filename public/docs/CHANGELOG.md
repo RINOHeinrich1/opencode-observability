@@ -5,6 +5,35 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.9.6 — 2026-09-06 · Run E2E asynchrone + module Secrets E2E (retour utilisateur)
+
+Le lancement d'un test E2E depuis le panneau tournait en rond (modale synchrone
+bloquante, aucun feedback) et créait un test fantôme « (aucun test exécuté) » à
+chaque run sans spec trouvé ; les « secrets » renseignés à la création n'étaient
+jamais résolus.
+
+- **Run ASYNCHRONE** : `POST /api/e2e-tests/:id/run` répond immédiatement
+  (202 + jobId) ; un worker détaché (`e2e-run-worker.mjs`) relaie l'appel MCP
+  e2e_run (jusqu'à 15 min) ; `GET /api/e2e/jobs/:jobId` suit l'état. La modale
+  affiche « Run lancé (job …) » puis le détail s'ouvre au polling (4 s).
+- **Module Secrets E2E** : variables d'env par PROJET (ex. `E2E_ADMIN_PASSWORD`),
+  valeur chiffrée AES-256-GCM (MCP, clé root-only hors registre). Onglet
+  « Secrets E2E » : CRUD (valeur saisie en password, jamais ré-affichée).
+  Sélection par NOM dans la modale de lancement. Un secret ne peut pas être
+  forcé via paramValues.
+- **Anti-fantôme** : le runner n'émet plus d'entrée « (aucun test exécuté) » ;
+  un run sans test renvoie une erreur explicite et trace (si ciblé) une
+  exécution ERROR sur le test — pas de nouvelle entité.
+- **Anti-doublon** : un run ciblé rattache l'exécution au test existant (plus de
+  doublon spec relatif vs canonique).
+- **Paramètres** : les anciens params `kind=secret` (secretRef fantômes) sont
+  retirés ; les params ne portent que des valeurs non sensibles.
+- **Grain test()** : sync alignée (scénario = titre du `test()`, pas du
+  `describe`) — la création manuelle via test-agent produit le même grain.
+
+Dépôts : `opencode-mcp-task-orchestrator` (v0.8.8) · `opencode-observability`
+(v0.9.6) · `opencode-scripts` (v0.2.2) · `opencode-agents` (v0.6.2).
+
 ## v0.9.5 — 2026-09-06 · Contrat BDD/TDD : créer une tâche depuis un test + Gherkin + REQUIRED
 
 Le test E2E devient un **contrat de comportement** (BDD/TDD) : rédigé par

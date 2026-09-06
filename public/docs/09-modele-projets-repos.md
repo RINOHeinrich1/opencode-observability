@@ -162,6 +162,36 @@ Migrer **sans perte de données**, par étapes idempotentes :
 | `onirtech-backend` | référentiel onirtech backend | ONIRIA | `main` | — | outillage |
 | `onirtech-frontend` | référentiel onirtech frontend | ONIRIA | `main` | — | outillage |
 
+### Décisions complémentaires (2026-09-06, 2e validation)
+
+7. **Le champ `git_path` = « Répertoire du dépôt »** : c'est le chemin du
+   checkout du dépôt dans/du workspace Coder (ancre `--dir` des sessions).
+   Chaque **repo** porte : nom, `workspace` (Coder), **répertoire du dépôt**,
+   **branches** (dont la branche de déploiement), `e2e_repo_dir`/`e2e_base_url`.
+   Ces champs ne sont **PAS** des attributs du produit.
+8. **Un workspace Coder peut héberger plusieurs repos** (chacun dans son
+   sous-répertoire) — ex. le workspace ONIRIA contient PBN + onirtech-backend +
+   onirtech-frontend. À l'inverse un produit peut s'étendre sur plusieurs
+   workspaces (un par repo).
+9. **Chaque repo a sa propre URL/cible E2E** (`e2e_base_url`, `e2e_repo_dir`) —
+   pas une URL par produit.
+10. **Tâches multi-repos** : une tâche est associée à ≥1 projet ; un projet a N
+    repos ; une tâche peut travailler sur **1..N repos**. **Par défaut, tous les
+    repos du projet sont inclus** dans le périmètre d'une tâche ; le `scope`
+    (chemins) peut restreindre à certains repos. Une tâche peut produire des
+    patches sur plusieurs repos à la fois.
+11. La **branche principale n'existe plus au niveau projet** : chaque repo porte
+    sa branche de déploiement (`main_branch`/`branches`). Le déploiement d'une
+    tâche se fait repo par repo.
+
+### Conséquence sur le schéma
+
+Les colonnes legacy de `projects` (`workspace`, `git_path`, `main_branch`,
+`e2e_repo_dir`, `e2e_base_url`) sont **obsolètes** : leur source de vérité est
+`repos`. Elles restent en lecture rétrocompat jusqu'à la fin de la migration,
+puis sont supprimées. Le formulaire/carte projet n'expose plus que le **produit**
+(id, nom) + la **liste de ses repos** (avec les attributs repo).
+
 ---
 
 ## 6. Plan de migration (validé — à exécuter par étapes)

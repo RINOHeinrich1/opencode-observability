@@ -21,3 +21,7 @@ storage/recette-docs/
 
 # Résultats E2E Playwright (runs/vidéos — données runtime)
 storage/e2e/
+
+# Artefacts de travail (plans/reports déposés par les agents) — pas versionnés
+plans/
+reports/

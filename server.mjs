@@ -998,6 +998,11 @@ const server = createServer(async (req, res) => {
       try { return sendJson(res, 200, await pilot.registerRepo({ ...b, createdBy: user.username })); }
       catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
     }
+    const repoDelMatch = path.match(/^\/api\/repos\/([^/]+)$/);
+    if (repoDelMatch && req.method === "DELETE") {
+      try { return sendJson(res, 200, await pilot.deleteRepo(repoDelMatch[1])); }
+      catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
+    }
     const repoLinkMatch = path.match(/^\/api\/projects\/([^/]+)\/repos\/([^/]+)$/);
     if (repoLinkMatch && req.method === "PUT") {
       const b = await readBody(req).catch(() => ({}));

@@ -712,3 +712,10 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 
 .e2e-speedrow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
 .e2e-speed.active { background: rgba(79,140,255,.25); border-color: var(--accent); }
+
+/* Repos par projet (ADR 09) */
+.chip { display:inline-block; padding: 0 6px; border-radius: 8px; background: rgba(255,255,255,.08); font-size: 11px; }
+.repo-mini { border: 1px solid rgba(255,255,255,.1); border-radius: 8px; padding: 6px 8px; background: rgba(255,255,255,.03); }
+.repo-mini-actions { display: flex; gap: 6px; margin-top: 4px; }
+.repo-mini-actions .tiny { font-size: 11px; padding: 1px 6px; }
+.danger-text { color: #ff6b6b; }

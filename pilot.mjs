@@ -39,8 +39,8 @@ export async function listProjects() {
 export async function listRepos(projectId) {
   return taskOrchestrator("repo_list", { projectId: projectId || undefined });
 }
-export async function registerRepo({ id, name, workspace, gitPath, branches, mainBranch, e2eRepoDir, e2eBaseUrl, createdBy }) {
-  return taskOrchestrator("repo_register", { id, name: name || undefined, workspace: workspace || undefined, gitPath: gitPath || undefined, branches, mainBranch: mainBranch || undefined, e2eRepoDir: e2eRepoDir || undefined, e2eBaseUrl: e2eBaseUrl || undefined, createdBy });
+export async function registerRepo({ id, name, workspace, repoDir, branches, mainBranch, e2eRepoDir, e2eBaseUrl, createdBy }) {
+  return taskOrchestrator("repo_register", { id, name: name || undefined, workspace: workspace || undefined, repoDir: repoDir || undefined, branches, mainBranch: mainBranch || undefined, e2eRepoDir: e2eRepoDir || undefined, e2eBaseUrl: e2eBaseUrl || undefined, createdBy });
 }
 export async function linkRepoToProject({ projectId, repoId, role }) {
   return taskOrchestrator("project_repo_link", { projectId, repoId, role: role || undefined });
@@ -48,20 +48,24 @@ export async function linkRepoToProject({ projectId, repoId, role }) {
 export async function unlinkRepoFromProject({ projectId, repoId }) {
   return taskOrchestrator("project_repo_unlink", { projectId, repoId });
 }
+export async function deleteRepo(id) {
+  if (!id) throw new Error("id requis");
+  return taskOrchestrator("repo_delete", { id });
+}
 
 export async function createProject({ id, name, workspace, gitPath, mainBranch, e2eRepoDir, e2eBaseUrl, createdBy }) {
-  if (!id || !name) throw new Error("id et name requis pour créer un projet");
-  if (!mainBranch || !String(mainBranch).trim()) {
-    throw new Error("branche principale requise (obligatoire pour autoriser le déploiement)");
-  }
+  if (!id || !name) throw new Error("id et name requis pour créer un projet (produit)");
+  // ADR 09 : le PRODUIT ne porte plus de branche/repo (attributs du REPO).
+  // Les champs workspace/gitPath/mainBranch restent acceptés en rétrocompat
+  // pour les anciens flux, mais ne sont plus requis.
   const reg = await taskOrchestrator("project_register", {
-    id, name, workspace, gitPath, mainBranch: mainBranch.trim(), createdBy,
+    id, name, workspace: workspace || undefined, gitPath: gitPath || undefined,
+    mainBranch: mainBranch || undefined, createdBy,
     e2eRepoDir: e2eRepoDir || undefined, e2eBaseUrl: e2eBaseUrl || undefined,
   });
 
-  // Bug 1 — crée automatiquement le répertoire du projet dans le workspace Coder
-  // (mkdir + git init). Non bloquant : un échec (workspace arrêté/inconnu)
-  // renvoie un avertissement sans empêcher l'enregistrement du projet.
+  // Rétrocompat : crée le répertoire du projet dans le workspace Coder si un
+  // workspace est fourni (ancien flux). Non bloquant.
   let dirCreated = false;
   let dirWarning = null;
   if (workspace) {

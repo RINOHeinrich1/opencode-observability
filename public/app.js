@@ -2137,69 +2137,179 @@ async function editAgentModelModal(name, currentModel) {
 async function renderProjects() {
   const projs = await api('/api/projects');
   const projects = projs.projects || [];
+  const repos = await api('/api/repos').catch(() => ({ repos: [] }));
+  const repoMap = new Map((repos.repos || []).map((r) => [r.id, r]));
   document.getElementById('pane-projects').innerHTML = `
-    <h2>Projets</h2>
+    <h2>Projets (produits)</h2>
     <div class="projects-toolbar">
       <button id="new-project-btn" class="launch-btn">+ Nouveau projet</button>
     </div>
     <div class="project-cards">
-      ${projects.map((p) => `
+      ${projects.map((p) => {
+        const pRepos = (p.repos || []).map((rid) => repoMap.get(rid)).filter(Boolean);
+        return `
         <article class="project-card">
           <div class="project-card-head">
             <strong>${esc(p.name || p.id)}</strong>
             <code class="muted-sm">${esc(p.id)}</code>
           </div>
           <div class="project-card-body">
-            <div class="project-kv"><span class="lbl">Workspace Coder</span><span>${esc(p.workspace || '—')}</span></div>
-            <div class="project-kv"><span class="lbl">Branche git principale</span>${p.mainBranch ? `<code class="muted-sm">${esc(p.mainBranch)}</code>` : '<span class="badge danger">manquante — déploiement bloqué</span>'}</div>
-            <div class="project-kv"><span class="lbl">Chemin git</span><code class="muted-sm">${esc(p.gitPath || '—')}</code></div>
-            <div class="project-kv"><span class="lbl">Checkout E2E</span><code class="muted-sm">${esc(p.e2eRepoDir || '—')}</code></div>
-            <div class="project-kv"><span class="lbl">URL de test (E2E)</span>${p.e2eBaseUrl ? `<code class="muted-sm">${esc(p.e2eBaseUrl)}</code>` : '<span class="muted-sm">— (défaut : champ baseUrl du run)</span>'}</div>
             <div class="project-kv"><span class="lbl">Créé le</span><span class="muted-sm">${esc((p.createdAt || '').replace('T', ' ').slice(0, 19))}</span></div>
-            ${(p.repos || []).length ? `<div class="project-kv"><span class="lbl">Repos associés</span><span>${p.repos.map((rid) => `<code class="chip">${esc(rid)}</code>`).join(' ')}</span></div>` : ''}
+            ${pRepos.length ? `<div class="project-kv" style="align-items:flex-start"><span class="lbl">Repos associés</span><div style="display:flex;flex-direction:column;gap:8px;flex:1">
+              ${pRepos.map((r) => `<div class="repo-mini">
+                <div><strong>${esc(r.name || r.id)}</strong> <code class="chip">${esc(r.id)}</code>
+                  ${r.workspace ? `<span class="muted-sm">· ws <code>${esc(r.workspace)}</code></span>` : ''}
+                  ${r.mainBranch ? `<span class="muted-sm">· branche dépl. <code>${esc(r.mainBranch)}</code></span>` : ''}
+                </div>
+                ${r.repoDir ? `<div class="muted-sm" style="font-size:11px">répertoire : <code>${esc(r.repoDir)}</code></div>` : ''}
+                ${r.e2eBaseUrl ? `<div class="muted-sm" style="font-size:11px">e2e : <code>${esc(r.e2eBaseUrl)}</code>${r.e2eRepoDir ? ' · ' + esc(r.e2eRepoDir) : ''}</div>` : ''}
+                <div class="repo-mini-actions">
+                  <button class="ghost tiny" data-edit-repo="${esc(r.id)}">Modifier</button>
+                  <button class="ghost tiny danger-text" data-unlink-repo="${esc(p.id)}|${esc(r.id)}">Retirer</button>
+                </div>
+              </div>`).join('')}
+            </div></div>` : '<p class="muted-sm">Aucun repo associé.</p>'}
           </div>
           <div class="project-card-actions">
-            <button class="ghost" data-edit-project="${esc(p.id)}">Modifier</button>
+            <button class="ghost" data-add-repo-to="${esc(p.id)}">+ Associer un repo</button>
+            <button class="ghost" data-edit-project="${esc(p.id)}">Modifier le produit</button>
             <button class="danger" data-del-project="${esc(p.id)}">Supprimer</button>
           </div>
-        </article>`).join('') || '<p class="muted">Aucun projet enregistré.</p>'}
+        </article>`;
+      }).join('') || '<p class="muted">Aucun projet enregistré.</p>'}
     </div>`;
   document.getElementById('new-project-btn').addEventListener('click', () => projectFormModal(null));
-  document.querySelectorAll('[data-edit-project]').forEach((b) => {
-    b.addEventListener('click', () => projectFormModal(projects.find((x) => x.id === b.dataset.editProject)));
-  });
-  document.querySelectorAll('[data-del-project]').forEach((b) => {
-    b.addEventListener('click', () => projectDeleteModal(b.dataset.delProject));
-  });
+  document.querySelectorAll('[data-edit-project]').forEach((b) => b.addEventListener('click', () => projectFormModal(projects.find((x) => x.id === b.dataset.editProject))));
+  document.querySelectorAll('[data-del-project]').forEach((b) => b.addEventListener('click', () => projectDeleteModal(b.dataset.delProject)));
+  document.querySelectorAll('[data-edit-repo]').forEach((b) => b.addEventListener('click', () => repoFormModal(repoMap.get(b.dataset.editRepo) || null)));
+  document.querySelectorAll('[data-add-repo-to]').forEach((b) => b.addEventListener('click', () => repoLinkModal(b.dataset.addRepoTo, repoMap)));
+  document.querySelectorAll('[data-unlink-repo]').forEach((b) => b.addEventListener('click', () => repoUnlinkModal(...b.dataset.unlinkRepo.split('|'))));
 }
 
-async function projectFormModal(project) {
-  let wsNames = [];
-  try { wsNames = ((await api('/api/workspaces')).workspaces || []).map((w) => w.name); } catch {}
-  const editing = !!project;
+// Modale édition d'un REPO (le repo porte workspace/répertoire/branches/e2e).
+function repoFormModal(repo) {
+  const editing = !!repo;
+  const ws = (repo && repo.workspace) || '';
   showModal(`
     <div class="modal">
-      <h2>${editing ? 'Modifier le projet' : 'Nouveau projet'}</h2>
-      <form id="project-modal-form" class="pilot-form">
-        <input id="pm-id" placeholder="identifiant (ex: oniria)" value="${esc(project?.id || '')}" ${editing ? 'readonly' : ''} required>
-        <input id="pm-name" placeholder="nom lisible" value="${esc(project?.name || '')}" required>
-        <select id="pm-workspace">
-          <option value="">— workspace Coder —</option>
-          ${wsNames.map((w) => `<option value="${esc(w)}" ${project?.workspace === w ? 'selected' : ''}>${esc(w)}</option>`).join('')}
-        </select>
-        <input id="pm-gitpath" placeholder="chemin du dépôt sur disque (ex: /home/coder/oniria)" value="${esc(project?.gitPath || '')}">
-        <label class="modal-field">Branche git principale <span class="muted-sm">(obligatoire pour déployer)</span>
-          <input id="pm-main-branch" placeholder="ex: main, oniria-preprod" value="${esc(project?.mainBranch || '')}" required>
+      <h2>${editing ? `Modifier le repo <code>${esc(repo.id)}</code>` : 'Nouveau repo'}</h2>
+      <form id="repo-modal-form" class="pilot-form">
+        <input id="rm-id" placeholder="identifiant (ex: mada-talk, oniria)" value="${esc(repo?.id || '')}" ${editing ? 'readonly' : ''} required>
+        <input id="rm-name" placeholder="nom lisible" value="${esc(repo?.name || '')}">
+        <label class="modal-field">Workspace Coder <span class="muted-sm">— où vit le checkout</span>
+          <input id="rm-workspace" placeholder="ex: madatalk, ONIRIA" value="${esc(ws)}">
         </label>
-        <label class="modal-field">Checkout E2E (e2eRepoDir) <span class="muted-sm">— dossier hôte où s'exécutent les runs E2E</span>
-          <input id="pm-e2e-repodir" placeholder="ex: /root/oniria-preprod" value="${esc(project?.e2eRepoDir || '')}">
+        <label class="modal-field">Répertoire du dépôt <span class="muted-sm">— chemin du checkout dans/du workspace</span>
+          <input id="rm-repodir" placeholder="ex: /home/coder/mada-talk" value="${esc(repo?.repoDir || '')}">
         </label>
-        <label class="modal-field">URL de test (e2eBaseUrl) <span class="muted-sm">— cible par défaut des runs E2E de ce projet</span>
-          <input id="pm-e2e-baseurl" placeholder="ex: https://preprod.madatalk.fr" value="${esc(project?.e2eBaseUrl || '')}">
+        <label class="modal-field">Branche de déploiement <span class="muted-sm">— par défaut (requise pour déployer ce repo)</span>
+          <input id="rm-mainbranch" placeholder="ex: main, oniria-preprod" value="${esc(repo?.mainBranch || '')}">
+        </label>
+        <label class="modal-field">Checkout E2E hôte (e2eRepoDir)</label>
+          <input id="rm-e2e-dir" placeholder="ex: /root/mada-talk-preprod" value="${esc(repo?.e2eRepoDir || '')}">
+        </label>
+        <label class="modal-field">URL de test E2E (e2eBaseUrl)</label>
+          <input id="rm-e2e-url" placeholder="ex: https://preprod-client.madatalk.fr" value="${esc(repo?.e2eBaseUrl || '')}">
         </label>
         <div class="modal-actions">
           <button type="button" class="ghost" id="modal-cancel">Annuler</button>
-          <button type="submit" class="launch-btn">${editing ? 'Enregistrer' : 'Créer'}</button>
+          <button type="submit" class="launch-btn">${editing ? 'Enregistrer' : 'Créer le repo'}</button>
+        </div>
+      </form>
+      <div id="repo-modal-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('repo-modal-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById('repo-modal-msg');
+    try {
+      const body = {
+        id: document.getElementById('rm-id').value.trim(),
+        name: document.getElementById('rm-name').value.trim() || undefined,
+        workspace: document.getElementById('rm-workspace').value.trim() || undefined,
+        repoDir: document.getElementById('rm-repodir').value.trim() || undefined,
+        mainBranch: document.getElementById('rm-mainbranch').value.trim() || undefined,
+        e2eRepoDir: document.getElementById('rm-e2e-dir').value.trim() || undefined,
+        e2eBaseUrl: document.getElementById('rm-e2e-url').value.trim() || undefined,
+      };
+      await api('/api/repos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      closeModal();
+      refreshActive();
+    } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
+  });
+}
+
+// Modale « associer un repo existant à ce projet » (N:N).
+function repoLinkModal(projectId, repoMap) {
+  const allRepos = [...repoMap.values()];
+  showModal(`
+    <div class="modal">
+      <h2>Associer un repo à <code>${esc(projectId)}</code></h2>
+      <p class="muted-sm">Le repo doit être enregistré au préalable (bouton « Nouveau repo » depuis un projet, ou via API /api/repos).</p>
+      <form id="repo-link-form" class="pilot-form">
+        <select id="rl-repo" required>
+          <option value="">— repo —</option>
+          ${allRepos.map((r) => `<option value="${esc(r.id)}">${esc(r.name || r.id)}</option>`).join('')}
+        </select>
+        <input id="rl-role" placeholder="rôle (frontend, backend, console…)" value="">
+        <div class="modal-actions">
+          <button type="button" class="ghost" id="modal-cancel">Annuler</button>
+          <button type="submit" class="launch-btn">Associer</button>
+        </div>
+      </form>
+      <div id="repo-link-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('repo-link-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById('repo-link-msg');
+    const repoId = document.getElementById('rl-repo').value;
+    try {
+      await api(`/api/projects/${encodeURIComponent(projectId)}/repos/${encodeURIComponent(repoId)}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: document.getElementById('rl-role').value.trim() || undefined }),
+      });
+      closeModal();
+      refreshActive();
+    } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
+  });
+}
+
+function repoUnlinkModal(projectId, repoId) {
+  showModal(`
+    <div class="modal">
+      <h2>Retirer le repo du projet</h2>
+      <p>Retirer <code>${esc(repoId)}</code> du projet <code>${esc(projectId)}</code> ? Le repo reste enregistré.</p>
+      <div class="modal-actions">
+        <button class="ghost" id="modal-cancel">Annuler</button>
+        <button class="danger" id="modal-confirm">Retirer</button>
+      </div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('modal-confirm').onclick = async () => {
+    try {
+      await api(`/api/projects/${encodeURIComponent(projectId)}/repos/${encodeURIComponent(repoId)}`, { method: 'DELETE' });
+      closeModal();
+      refreshActive();
+    } catch (e) { alert('Échec : ' + (e.message || e)); }
+  };
+}
+
+async function projectFormModal(project) {
+  const editing = !!project;
+  showModal(`
+    <div class="modal">
+      <h2>${editing ? 'Modifier le produit' : 'Nouveau projet (produit)'}</h2>
+      <p class="muted-sm">Un <strong>produit</strong> porte un nom et référence un ou plusieurs <strong>repos</strong> (workspace Coder + répertoire du dépôt + branches + e2e). Créez le produit puis associez-lui ses repos.</p>
+      <form id="project-modal-form" class="pilot-form">
+        <label class="modal-field">Identifiant <span class="muted-sm">— ex: madatalk, oniria</span>
+          <input id="pm-id" placeholder="identifiant" value="${esc(project?.id || '')}" ${editing ? 'readonly' : ''} required>
+        </label>
+        <label class="modal-field">Nom lisible
+          <input id="pm-name" placeholder="nom lisible" value="${esc(project?.name || '')}" required>
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="ghost" id="modal-cancel">Annuler</button>
+          <button type="submit" class="launch-btn">${editing ? 'Enregistrer' : 'Créer le produit'}</button>
         </div>
       </form>
       <div id="project-modal-msg" class="msg"></div>
@@ -2209,18 +2319,14 @@ async function projectFormModal(project) {
     e.preventDefault();
     const msg = document.getElementById('project-modal-msg');
     try {
-      await api('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+      const body = {
         id: document.getElementById('pm-id').value.trim(),
         name: document.getElementById('pm-name').value.trim(),
-        workspace: document.getElementById('pm-workspace').value,
-        gitPath: document.getElementById('pm-gitpath').value.trim() || undefined,
-        mainBranch: document.getElementById('pm-main-branch').value.trim(),
-        e2eRepoDir: document.getElementById('pm-e2e-repodir').value.trim() || undefined,
-        e2eBaseUrl: document.getElementById('pm-e2e-baseurl').value.trim() || undefined,
-      }) });
+      };
+      await api('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       closeModal();
       refreshActive();
-    } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
+    } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
   });
 }
 

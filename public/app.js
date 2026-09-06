@@ -597,6 +597,7 @@ async function renderE2ETests() {
       <select id="e2e-f-project" title="Filtrer par projet couvert"><option value="">Tous les projets</option>${projects.map((p) => `<option value="${esc(p)}" ${e2eFilterProject === p ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>
       <select id="e2e-f-status" title="Filtrer par statut du test"><option value="">Tous les statuts</option>${E2E_STATUS_OPTIONS}</select>
       <input id="e2e-f-search" placeholder="recherche (titre / scénario / spec)…" value="${esc(e2eFilterSearch)}">
+      <button id="agent-session-btn" class="ghost" title="Ouvrir l'agent de test — reprendre une session existante ou en ouvrir une nouvelle (sans forcément créer un test)">Session test-agent</button>
       <button id="new-e2e-btn" class="launch-btn">+ Nouveau test</button>
     </div>
     <table><thead><tr><th>Titre / Comportement</th><th>Projet</th><th>Repos traversés</th><th>Scénario</th><th>Statut</th><th>Dernier run</th><th>Actions</th></tr></thead>
@@ -609,6 +610,7 @@ async function renderE2ETests() {
   const searchInp = document.getElementById('e2e-f-search');
   searchInp.addEventListener('change', () => { e2eFilterSearch = searchInp.value; refreshActive(); });
   document.getElementById('new-e2e-btn').addEventListener('click', () => e2eCreateModal());
+  document.getElementById('agent-session-btn').addEventListener('click', () => agentSessionModal());
   document.querySelectorAll('#pane-e2etests [data-e2e-detail]').forEach((b) => b.addEventListener('click', () => e2eDetailModal(b.dataset.e2eDetail)));
   document.querySelectorAll('#pane-e2etests [data-e2e-run]').forEach((b) => b.addEventListener('click', () => e2eRunModal(b.dataset.e2eRun)));
   document.querySelectorAll('#pane-e2etests [data-e2e-obsolete]').forEach((b) => b.addEventListener('click', () => e2eObsoleteModal(b.dataset.e2eObsolete)));
@@ -632,6 +634,72 @@ function e2eTableRow(t) {
       ${t.status === 'ACTIVE' ? `<button class="icon-btn danger-btn" data-e2e-obsolete="${esc(t.e2eTestId)}" title="Marquer obsolète (spec disparu)">⚠ Obsolète</button>` : ''}
     </div></td>
   </tr>`;
+}
+
+// Modale « Session test-agent » : accéder à l'agent de test SANS forcément créer
+// un test — reprendre une session existante OU en ouvrir une nouvelle.
+async function agentSessionModal() {
+  let projects = [];
+  try { projects = ((await api('/api/projects')).projects || []); } catch {}
+  let sessions = [];
+  try { const d = await api('/api/e2e/agent-sessions'); sessions = d.sessions || []; } catch {}
+  const openSid = (sid) => { if (sid && /^ses_/.test(sid)) window.open(sessionHref(sid), '_blank'); };
+  const sessRows = sessions.slice(0, 25).map((s) => `
+    <div class="recette-item">
+      <div class="recette-task">
+        <strong>${esc(s.title || s.sessionId)}</strong>
+        <span class="muted-sm">${s.boundToTest ? '<span class="badge approved">lié à un test</span> ' : ''}${s.inRepo ? '<span class="badge queued">dans un dépôt projet</span> ' : ''}${s.directory ? '<span class="muted-sm">' + esc(String(s.directory).split('/').pop()) + '</span>' : ''}${s.updated ? ' · ' + esc(fmtTS(s.updated)) : ''}</span>
+      </div>
+      <div class="e2e-actions"><button type="button" class="launch-btn" data-reopen-session="${esc(s.sessionId)}">Reprendre la session</button></div>
+    </div>`).join('');
+  showModal(`
+    <div class="modal modal-wide">
+      <h2>Session test-agent</h2>
+      <p class="muted-sm">Accéder à l'agent de test (création / mise à jour / diagnostic de tests E2E) <strong>sans forcément créer un test</strong>. Vous pouvez <strong>reprendre une session existante</strong> ou <strong>en ouvrir une nouvelle</strong>.</p>
+
+      <div class="actions-section">
+        <h3>1 · Reprendre une session existante</h3>
+        ${sessions.length ? `<div class="recette-list" style="max-height:32vh;overflow:auto">${sessRows}</div>`
+          : '<p class="muted-sm">Aucune session ouverte actuellement — ouvrez-en une nouvelle.</p>'}
+      </div>
+
+      <div class="actions-section">
+        <h3>2 · Ouvrir une nouvelle session</h3>
+        <form id="agent-session-form" class="pilot-form">
+          <label class="modal-field">Projet (contexte) <span class="muted-sm">— optionnel, ancre la session dans le workspace du projet</span>
+            <select id="as-project"><option value="">— aucun —</option>${projects.map((p) => `<option value="${esc(p.id)}">${esc(p.name || p.id)}</option>`).join('')}</select>
+          </label>
+          <label class="modal-field">Message / demande (optionnel)
+            <textarea id="as-message" class="modal-textarea" rows="3" placeholder="ex. aide-moi à préparer un test pour … / explique-moi le référentiel E2E / diagnostique un écart"></textarea>
+          </label>
+          <div class="modal-actions">
+            <button type="button" class="ghost" id="modal-cancel">Fermer</button>
+            <button type="submit" class="launch-btn">Ouvrir la session</button>
+          </div>
+        </form>
+        <div id="agent-session-msg" class="msg"></div>
+      </div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.querySelectorAll('#modal-backdrop [data-reopen-session]').forEach((b) => b.addEventListener('click', () => openSid(b.dataset.reopenSession)));
+  document.getElementById('agent-session-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById('agent-session-msg');
+    msg.textContent = 'Ouverture de la session…'; msg.className = 'msg';
+    try {
+      const project = document.getElementById('as-project').value;
+      const r = await api('/api/e2e/agent-sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        action: 'new', project: project || undefined,
+        message: document.getElementById('as-message').value.trim() || undefined,
+      }) });
+      if (r && r.sessionId && /^ses_/.test(r.sessionId)) {
+        closeModal();
+        window.open(sessionHref(r.sessionId), '_blank');
+      } else {
+        msg.textContent = r.error || 'Session ouverte (id inconnu).'; msg.className = 'msg error';
+      }
+    } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
+  });
 }
 
 async function e2eDetailModal(e2eTestId) {

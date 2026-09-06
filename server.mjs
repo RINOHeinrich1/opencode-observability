@@ -868,7 +868,7 @@ async function handleE2ECreate(res, b) {
     // Passe l'entité en DRAFT (spec pas encore rédigé) puis lance la session.
     await pilot.draftE2ETest(test.e2eTestId);
     let session = null;
-    try { session = await pilot.launchTestSession({ e2eTestId: test.e2eTestId, mode: "create", docIds: Array.isArray(docIds) && docIds.length ? docIds : undefined }); } catch (e) { session = { error: (e && e.message) || String(e) }; }
+    try { session = await pilot.launchTestSession({ e2eTestId: test.e2eTestId, mode: "create", docIds: Array.isArray(docIds) ? docIds : undefined }); } catch (e) { session = { error: (e && e.message) || String(e) }; }
     return sendJson(res, 201, { ok: true, test: { ...test, status: "DRAFT" }, session, viaAgent: true });
   }
 
@@ -1407,6 +1407,27 @@ const server = createServer(async (req, res) => {
       } catch (e) {
         const msg = String((e && e.message) || e);
         if (/indisponible|inconnu|absent/i.test(msg)) return sendJson(res, 400, { error: msg });
+        return sendJson(res, 500, { error: msg });
+      }
+    }
+    // --- Sessions test-agent libres (accès agent sans créer de test) ---
+    // GET /api/e2e/agent-sessions : liste les sessions opencode pertinentes.
+    if (path === "/api/e2e/agent-sessions" && req.method === "GET") {
+      try { return sendJson(res, 200, { sessions: await pilot.listTestAgentSessions() }); }
+      catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
+    }
+    // POST /api/e2e/agent-sessions { action: 'new'|'continue', project?, repoId?,
+    //      message?, sessionId? } — new = ouvre une session ; continue = reprend.
+    if (path === "/api/e2e/agent-sessions" && req.method === "POST") {
+      const b = await readBody(req).catch(() => ({}));
+      try {
+        if ((b && b.action) === "continue") {
+          return sendJson(res, 200, await pilot.continueFreeTestSession({ sessionId: b.sessionId, message: b.message }));
+        }
+        return sendJson(res, 200, await pilot.launchFreeTestSession({ project: (b && b.project) || undefined, repoId: (b && b.repoId) || undefined, message: (b && b.message) || undefined }));
+      } catch (e) {
+        const msg = String((e && e.message) || e);
+        if (/indisponible|inconnu|absent|expir/i.test(msg)) return sendJson(res, 400, { error: msg });
         return sendJson(res, 500, { error: msg });
       }
     }

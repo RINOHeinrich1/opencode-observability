@@ -5,6 +5,25 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.9.26 — 2026-09-06 · Session test-agent libre (accès agent sans créer de test)
+
+Sur la page **Tests E2E**, bouton **« Session test-agent »** : accéder à l'agent
+de test sans forcément créer un test.
+
+- **Reprendre une session existante** : liste les sessions test-agent ouvertes
+  (rattachées à un test via `e2e_tests.session_id`, ou au titre explicite
+  création/MAJ test / session test-agent), agrégées depuis les répertoires des
+  projets/repos (`session list` est scopé par répertoire) — bouton « Reprendre ».
+- **Ouvrir une nouvelle session** : choix du projet (contexte/workspace) +
+  message optionnel → session test-agent libre (aucun test créé), ouverte dans
+  le navigateur.
+
+Backend : `listTestAgentSessions` / `launchFreeTestSession` /
+`continueFreeTestSession` (pilot) + routes `/api/e2e/agent-sessions`
+(GET list, POST new/continue) ; `buildFreeTestPrompt` (session-bridge).
+
+Dépôt : `opencode-observability` (v0.9.26).
+
 ## v0.9.25 — 2026-09-06 · Tests E2E : filtre de statut « actif » par défaut
 
 La page **Tests E2E** filtrait par défaut sur « tous les statuts » (y compris

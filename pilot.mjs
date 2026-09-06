@@ -5,7 +5,7 @@
 // sessions opencode est délégué au bridge `session-bridge.mjs` (Plan C).
 
 import { taskOrchestrator, coderWorkspaces } from "./mcp-client.mjs";
-import { launchSession, injectMessage, buildLaunchPrompt, buildReworkPrompt, buildRecettePrompt, buildTestPrompt, killSession, sessionExists } from "./session-bridge.mjs";
+import { launchSession, injectMessage, buildLaunchPrompt, buildReworkPrompt, buildRecettePrompt, buildTestPrompt, buildFreeTestPrompt, listSessions, killSession, sessionExists } from "./session-bridge.mjs";
 
 // Décision n°7 : agents contraints par type de tâche.
 export function agentsForType(type, auditTarget) {
@@ -492,6 +492,96 @@ export async function draftE2ETest(e2eTestId) {
   return taskOrchestrator("e2e_test_draft", { e2eTestId });
 }
 
+// --- Sessions test-agent libres (page Tests E2E) ----------------------------
+// Accéder à l'agent de test SANS forcément créer un test : l'utilisateur choisit
+// entre reprendre une session test-agent existante ou en ouvrir une nouvelle.
+
+// Liste les sessions opencode existantes pertinentes pour les tests E2E.
+// `opencode session list` est SCOPÉ par répertoire : on agrège donc les sessions
+// de tous les checkouts connus (gitPath/workspace des projets + e2eRepoDir des
+// repos), dédupliquées par sessionId. Marquées si rattachées à un test
+// (e2e_tests.session_id) pour l'afficher.
+export async function listTestAgentSessions() {
+  // Répertoires à scruter : gitPath des projets + e2eRepoDir des repos + dossiers
+  // des sessions déjà connues (répertoire porté par la session elle-même).
+  let dirs = new Set();
+  try {
+    const pr = await taskOrchestrator("project_list", {});
+    const projects = (pr && pr.projects) || [];
+    for (const p of projects) {
+      if (p.gitPath) dirs.add(String(p.gitPath).replace(/\/+$/, ""));
+      for (const rid of p.repos || []) {
+        try {
+          const g = await taskOrchestrator("repo_get", { id: rid });
+          if (g && g.repo) {
+            for (const d of [g.repo.repoDir, g.repo.e2eRepoDir].filter(Boolean)) dirs.add(String(d).replace(/\/+$/, ""));
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+  dirs.add("/root/orchestrator-panel"); // sessions du panneau lui-même
+  const byId = new Map();
+  for (const dir of dirs) {
+    let sessions = [];
+    try { sessions = listSessions(dir) || []; } catch { sessions = []; }
+    for (const s of sessions) {
+      if (s && s.id && !byId.has(s.id)) byId.set(s.id, { ...s, directory: s.directory || dir });
+    }
+  }
+  // Sessions rattachées à un test (registre).
+  let testSessionIds = new Set();
+  try {
+    const list = await taskOrchestrator("e2e_list", { status: undefined, limit: 1000 });
+    for (const t of (list && list.tests) || []) if (t.sessionId && /^ses_/.test(t.sessionId)) testSessionIds.add(t.sessionId);
+  } catch {}
+  // On ne présente QUE les sessions test-agent pertinentes : rattachées à un test
+  // (registre) ou au titre explicite (création/MAJ test, session test-agent libre).
+  const testRelevant = (title) => {
+    if (!title) return false;
+    const t = String(title).toLowerCase();
+    return t.startsWith("création test") || t.startsWith("maj test") || t.includes("session test-agent") || t.includes("test-agent");
+  };
+  return [...byId.values()]
+    .filter((s) => testSessionIds.has(s.id) || testRelevant(s.title))
+    .map((s) => ({
+      sessionId: s.id,
+      title: s.title || null,
+      directory: s.directory || null,
+      updated: s.updated ? new Date(s.updated).toISOString() : null,
+      boundToTest: testSessionIds.has(s.id),
+      inRepo: true,
+    }))
+    .sort((a, b) => (a.updated || "").localeCompare(b.updated || "") * -1);
+}
+
+// Ouvre une session test-agent LIBRE (aucun test créé) dans le workspace d'un
+// projet/repo. Retourne { sessionId } (l'utilisateur reprendra via l'UI).
+export async function launchFreeTestSession({ project, repoId, message }) {
+  // Résolution du répertoire d'ancrage : le repo donné (sinon le projet → 1er repo).
+  let dir = null;
+  if (repoId) {
+    try { const g = await taskOrchestrator("repo_get", { id: repoId }); if (g && g.repo && g.repo.repoDir) dir = g.repo.repoDir; } catch {}
+  }
+  if (!dir && project) dir = await projectGitPath(project);
+  const projects = project ? [project] : [];
+  const title = `Session test-agent ${project ? "— " + project : ""}`;
+  const prompt = buildFreeTestPrompt({ project, projects, message });
+  const { sessionId } = await launchSession({ dir, agent: "test-agent", prompt, title });
+  if (!sessionId || !/^ses_/.test(sessionId)) {
+    throw new Error("échec de lancement de la session test-agent (agent indisponible ?)");
+  }
+  return { sessionId, resumed: false, dir };
+}
+
+// Relance/reprend une session test-agent existante (la continue via injectMessage).
+export async function continueFreeTestSession({ sessionId, message }) {
+  if (!sessionId) throw new Error("sessionId requis");
+  if (!sessionExists(sessionId)) throw new Error(`session inconnue ou expirée : ${sessionId}`);
+  const r = injectMessage({ sessionId, prompt: message || "Poursuis notre échange sur les tests E2E." });
+  return { sessionId: r.sessionId || sessionId, resumed: true };
+}
+
 // Lance (ou reprend) la session de CRÉATION / MISE À JOUR d'un test E2E (entité
 // 1er niveau) via l'agent `test-agent`. `force = true` : nouvelle session.
 // `docIds` (optionnel) : sous-ensemble de documents de référence (ADR-12) à
@@ -517,11 +607,15 @@ export async function launchTestSession({ e2eTestId, force = false, mode, docIds
     if (g) { dir = g; break; }
   }
   // ADR-12 : docs de référence — toutes celles du projet (défaut), ou seulement
-  // la sous-sélection cochée (docIds). Le test expose déjà `t.docs`.
+  // la sous-sélection cochée (docIds). Un tableau FOURNI même vide = aucun doc.
   let sessionDocs = t.docs || [];
-  if (Array.isArray(docIds) && docIds.length) {
-    const wanted = new Set(docIds.map((x) => String(x).trim()).filter(Boolean));
-    sessionDocs = (t.docs || []).filter((d) => d && wanted.has(d.docId));
+  if (Array.isArray(docIds)) {
+    if (docIds.length) {
+      const wanted = new Set(docIds.map((x) => String(x).trim()).filter(Boolean));
+      sessionDocs = (t.docs || []).filter((d) => d && wanted.has(d.docId));
+    } else {
+      sessionDocs = [];
+    }
   }
   const testMode = mode || (t.status === "DRAFT" ? "create" : "update");
   const prompt = buildTestPrompt({

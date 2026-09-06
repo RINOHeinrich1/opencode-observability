@@ -246,7 +246,7 @@ export function killSession({ taskId, sessionId }) {
  * Prompt de lancement d'une session orchestrateur : mission + cadre.
  * Aucune consigne de méthode d'exécution (règle « mission ≠ méthode »).
  */
-export function buildLaunchPrompt({ taskId, executionId, project, workspace, scope, request, title, acceptanceCriteria, auditTarget, directExecution }) {
+export function buildLaunchPrompt({ taskId, executionId, project, workspace, scope, request, title, acceptanceCriteria, auditTarget, directExecution, repos }) {
   const lines = ["Traite la tâche orchestrée suivante.", ""];
   if (taskId) lines.push(`- taskId : ${taskId}`);
   if (executionId) lines.push(`- executionId : ${executionId}`);
@@ -255,6 +255,13 @@ export function buildLaunchPrompt({ taskId, executionId, project, workspace, sco
   if (auditTarget) lines.push(`- cible d'audit : ${auditTarget} (backend | frontend | both)`);
   if (directExecution) lines.push("- mode : EXÉCUTION DIRECTE (pas de planification atomic-plan) — délègue directement à build-notify (la demande est le travail).");
   if (scope && scope.length) lines.push(`- scope : ${scope.join(", ")}`);
+  if (repos && repos.length) {
+    lines.push("", "Repos concernés par la tâche (ADR 09 — travaille sur chacun des repos ciblés) :");
+    for (const r of repos) {
+      lines.push(`  - repo ${r.id || r.repoId}${r.name ? ` (${r.name})` : ""} · workspace ${r.workspace || "?"} · répertoire ${r.repoDir || "?"} · branche ${r.mainBranch || r.branch || "?"}`);
+    }
+    lines.push("Pour chaque repo ciblé, réserve un worktree dans SON workspace Coder (en non-root via workspace_exec), isole et trace. Le scope/les patches peuvent couvrir plusieurs repos.");
+  }
   lines.push("", "Titre :", title || "(—)");
   lines.push("", "Demande :", request || "");
   if (acceptanceCriteria && acceptanceCriteria.length) lines.push("", "Critère d'acceptation / livrable attendu :", acceptanceCriteria.join("\n"));

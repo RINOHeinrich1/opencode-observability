@@ -224,7 +224,11 @@ export async function launchTask({ taskId, kind = "launch" }) {
   //    quand il déléguera à atomic-plan.
   await taskOrchestrator("task_transition", { taskId, to: "started", by: "orchestrator" });
 
-  // 4. Lancement de la session orchestrateur + lien.
+  // 4. Lancement de la session orchestrateur + lien. ADR 09 : la tâche cible
+  //    1..N repos ; on ancre la session sur le 1er repo et on passe la liste au
+  //    prompt pour que l'orchestrateur travaille repo par repo.
+  const repos = (task && task.repos) || [];
+  const anchor = repos[0] && repos[0].repoDir ? repos[0].repoDir : (await projectGitPath(task && task.project));
   const prompt = buildLaunchPrompt({
     taskId,
     executionId: exec && exec.executionId,
@@ -236,8 +240,9 @@ export async function launchTask({ taskId, kind = "launch" }) {
     acceptanceCriteria: task && task.acceptanceCriteria,
     auditTarget: task && task.auditTarget,
     directExecution: task && task.directExecution,
+    repos,
   });
-  const dir = await projectGitPath(task && task.project);
+  const dir = anchor;
   const { sessionId } = await launchSession({ dir, agent: "orchestrator", prompt, title: `Tâche ${taskId}` });
   if (sessionId) {
     await taskOrchestrator("task_link_session", { taskId, sessionId, kind });

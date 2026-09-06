@@ -655,6 +655,13 @@ async function e2eDetailModal(e2eTestId) {
         <div class="project-kv"><span class="lbl">Scénario</span><span class="muted-sm">${esc(test.scenario || '—')}</span></div>
         <div class="project-kv"><span class="lbl">Suivi</span><span class="muted-sm">vu depuis ${esc(fmtTS(test.firstSeenAt))} · màj ${esc(fmtTS(test.updatedAt))} · ${(test.taskCount != null ? test.taskCount : linked.length)} tâche(s) liée(s)</span></div>
       </div>
+      ${(test.docs && test.docs.length) ? `<div class="actions-section"><h3>Documents de référence du projet (contexte test-agent / recette)</h3>
+        <div class="recette-list">${test.docs.map((d) => `<div class="recette-item">
+          <code class="chip">${esc(docKindLabel(d.kind))}</code> <strong>${esc(d.title || d.docId)}</strong>
+          <span class="muted-sm">${esc(d.path)}</span>
+        </div>`).join('')}</div>
+        <p class="muted-sm">Ces documents (ADR technique, specs, Gherkin) sont fournis en contexte lors des sessions de création / recette — voir l'onglet Projets → 📄 Docs de référence pour les gérer.</p>
+      </div>` : ''}
       ${test.description ? `<div class="modal-request">${esc(test.description)}</div>` : ''}
       ${test.gherkin ? `<div class="actions-section"><h3>Comportement (Gherkin)</h3>
         <pre style="background:rgba(255,255,255,0.05);padding:12px;border-radius:6px;overflow:auto;white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:12px;line-height:1.5">${esc(test.gherkin)}</pre>
@@ -1181,7 +1188,8 @@ async function e2eRegisterModal(projects, projOpts) {
 // --- Cas « Non » : le test n'existe pas → création via session test-agent ---
 // Champs minimaux : projet (produit) + titre/comportement. Le spec file et
 // scénario seront définis pendant la session test-agent. Les repos de code
-// associés (couverture) sont choisis dès maintenant (transmis au test-agent).
+// associés (couverture) et les documents de référence (ADR/specs/Gherkin,
+// ADR-12) sont choisis dès maintenant (transmis au test-agent).
 async function e2eCreateViaAgentModal(projects, projOpts) {
   const reposRes = await api('/api/repos').catch(() => ({ repos: [] }));
   const reposById = new Map((reposRes.repos || []).map((r) => [r.id, r]));
@@ -1190,6 +1198,8 @@ async function e2eCreateViaAgentModal(projects, projOpts) {
     return (p && p.repos || []).map((rid) => reposById.get(rid)).filter(Boolean);
   };
   const selectedRepoIds = () => [...document.querySelectorAll('#modal-backdrop .ea-repo:checked')].map((c) => c.value);
+  const selectedDocIds = () => [...document.querySelectorAll('#modal-backdrop .ea-doc:checked')].map((c) => c.value);
+  const projRepoIds = {};
   showModal(`
     <div class="modal modal-wide">
       <h2>Créer un test E2E (via test-agent)</h2>
@@ -1201,6 +1211,10 @@ async function e2eCreateViaAgentModal(projects, projOpts) {
         <fieldset id="ea-repos-fieldset" class="pilot-fieldset" hidden>
           <legend>Repos de code associés <span class="muted-sm">— couverture du test : repos traversés par le comportement (ex. parcours client + console = mada-talk ET oniria). Le test-agent écrira le spec dans l'un d'eux. Défaut : tous les repos du projet.</span></legend>
           <div id="ea-repos-list"></div>
+        </fieldset>
+        <fieldset id="ea-docs-fieldset" class="pilot-fieldset" hidden>
+          <legend>Documents de référence <span class="muted-sm">— ADR technique, specs fonctionnelles, scénarios Gherkin du projet fournis en contexte au test-agent (ADR-12). Défaut : tous.</span></legend>
+          <div id="ea-docs-list"></div>
         </fieldset>
         <label class="modal-field">Comportement à tester (titre) <span class="muted-sm">— requis</span>
           <input id="ea-title" placeholder="ex: Connexion puis création d'une demande de chatbot" required>
@@ -1219,8 +1233,10 @@ async function e2eCreateViaAgentModal(projects, projOpts) {
   // Binding projet → repos de code associés (défaut : tous cochés).
   const reposList = document.getElementById('ea-repos-list');
   const reposFieldset = document.getElementById('ea-repos-fieldset');
+  const docsFieldset = document.getElementById('ea-docs-fieldset');
+  const docsList = document.getElementById('ea-docs-list');
   const projSel = document.getElementById('ea-project');
-  const projRepoIds = {};
+  const docsCache = {};
   const renderRepoChecks = (pid) => {
     const reps = reposOf(pid);
     if (!reps.length) { reposFieldset.hidden = true; reposList.innerHTML = ''; return; }
@@ -1232,11 +1248,27 @@ async function e2eCreateViaAgentModal(projects, projOpts) {
         <code>${esc(r.id)}</code>${r.workspace ? ` <span class="muted-sm">· ${esc(r.workspace)}</span>` : ''}${r.mainBranch ? ` <span class="muted-sm">· ${esc(r.mainBranch)}</span>` : ''}
       </label>`).join('');
   };
-  projSel.addEventListener('change', () => {
+  const renderDocChecks = async (pid) => {
+    if (!pid) { docsFieldset.hidden = true; docsList.innerHTML = ''; return; }
+    if (!docsCache[pid]) {
+      const d = await api(`/api/docs?projectId=${encodeURIComponent(pid)}&includeRepoDocs=1`).catch(() => ({ docs: [] }));
+      docsCache[pid] = d.docs || [];
+    }
+    const docs = docsCache[pid];
+    if (!docs.length) { docsFieldset.hidden = true; docsList.innerHTML = ''; return; }
+    docsFieldset.hidden = false;
+    docsList.innerHTML = docs.map((d) => `
+      <label class="filter-check" title="${esc(d.path)}"><input type="checkbox" class="ea-doc" value="${esc(d.docId)}" checked>
+        <code class="chip">${esc(docKindLabel(d.kind))}</code> ${esc(d.title || d.docId)} <span class="muted-sm">· ${esc(d.path)}</span>
+      </label>`).join('');
+  };
+  const sync = async () => {
     const pid = projSel.value;
     if (pid) projRepoIds[pid] = selectedRepoIds();
     renderRepoChecks(pid);
-  });
+    await renderDocChecks(pid);
+  };
+  projSel.addEventListener('change', sync);
   document.getElementById('e2e-agent-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const msg = document.getElementById('ea-msg');
@@ -1253,6 +1285,7 @@ async function e2eCreateViaAgentModal(projects, projOpts) {
         description: document.getElementById('ea-description').value.trim() || undefined,
         viaAgent: true,
         repoIds: projRepoIds[pid] && projRepoIds[pid].length ? projRepoIds[pid] : undefined,
+        docIds: selectedDocIds().length ? selectedDocIds() : undefined,
       }) });
       closeModal();
       if (r && r.session && r.session.sessionId && /^ses_/.test(r.session.sessionId)) {
@@ -1561,6 +1594,10 @@ async function recetteCreateModal() {
           <div class="rm-projects">${projects.map((p) => `<label class="filter-check"><input type="checkbox" class="rm-project" value="${esc(p.id)}"> ${esc(p.name || p.id)}</label>`).join('') || '<p class="muted-sm">Aucun projet enregistré.</p>'}</div>
           <button type="button" class="ghost" id="rm-load-cands">Charger les tâches disponibles</button>
         </fieldset>
+        <fieldset id="rm-docs-ref-fieldset" class="pilot-fieldset" hidden>
+          <legend>Documents de référence des projets <span class="muted-sm">— ADR technique, specs fonctionnelles, scénarios Gherkin (ADR-12) fournis à l'agent de recette. Défaut : tous les projets sélectionnés.</span></legend>
+          <div id="rm-docs-ref-list"></div>
+        </fieldset>
         <input id="rm-title" placeholder="titre court (ex: Recette du module chatbot)" required>
         <textarea id="rm-description" class="modal-textarea" placeholder="description longue (détail du périmètre vérifié) — optionnel"></textarea>
         <label class="modal-field">Tâches couvertes <span class="muted-sm">(0..N — tâches non encore recettées, tous projets sélectionnés)</span></label>
@@ -1602,8 +1639,30 @@ async function recetteCreateModal() {
     } catch (e) { candBox.innerHTML = '<p class="muted-sm">Erreur de chargement : ' + esc(e.message || e) + '</p>'; }
   };
   document.getElementById('rm-load-cands').addEventListener('click', loadCandidates);
+  const refDocsBox = document.getElementById('rm-docs-ref-list');
+  const refDocsFieldset = document.getElementById('rm-docs-ref-fieldset');
+  const refDocsCache = {};
+  const selectedRefDocIds = () => [...document.querySelectorAll('#modal-backdrop .rm-refdoc:checked')].map((c) => c.value);
+  const loadRefDocs = async () => {
+    const projs = selectedProjects();
+    if (!projs.length) { refDocsFieldset.hidden = true; refDocsBox.innerHTML = ''; return; }
+    const seen = new Map();
+    for (const pid of projs) {
+      if (!refDocsCache[pid]) {
+        try { const d = await api(`/api/docs?projectId=${encodeURIComponent(pid)}&includeRepoDocs=1`); refDocsCache[pid] = d.docs || []; } catch { refDocsCache[pid] = []; }
+      }
+      for (const d of refDocsCache[pid]) if (!seen.has(d.docId)) seen.set(d.docId, d);
+    }
+    if (!seen.size) { refDocsFieldset.hidden = true; refDocsBox.innerHTML = ''; return; }
+    refDocsFieldset.hidden = false;
+    refDocsBox.innerHTML = [...seen.values()].map((d) => `
+      <label class="filter-check" title="${esc(d.path)}"><input type="checkbox" class="rm-refdoc" value="${esc(d.docId)}" checked>
+        <code class="chip">${esc(docKindLabel(d.kind))}</code> ${esc(d.title || d.docId)} <span class="muted-sm">· ${esc(d.path)}</span>
+      </label>`).join('');
+  };
   document.querySelectorAll('.rm-project').forEach((cb) => cb.addEventListener('change', () => {
     if (!selectedProjects().length) candBox.innerHTML = '<p class="muted-sm">Cochez ≥ 1 projet puis « Charger les tâches disponibles ».</p>';
+    loadRefDocs();
   }));
 
   // Éditeur de documents (import / artefact + nature).
@@ -1671,6 +1730,7 @@ async function recetteCreateModal() {
         description: document.getElementById('rm-description').value.trim() || undefined,
         taskIds,
         documents,
+        docIds: selectedRefDocIds().length ? selectedRefDocIds() : undefined,
       }) });
       closeModal();
       refreshActive();
@@ -2211,6 +2271,7 @@ async function renderProjects() {
     <div class="project-cards">
       ${projects.map((p) => {
         const pRepos = (p.repos || []).map((rid) => repoMap.get(rid)).filter(Boolean);
+        const pDocs = p.docs || [];
         return `
         <article class="project-card">
           <div class="project-card-head">
@@ -2229,15 +2290,21 @@ async function renderProjects() {
                 ${r.deploy ? `<div class="muted-sm" style="font-size:11px" title="${esc(r.deploy)}"><strong>déploiement :</strong> ${esc(String(r.deploy).replace(/\s+/g, ' ').slice(0, 90))}${r.deploy.length > 90 ? '…' : ''}</div>` : ''}
                 ${r.repoDir ? `<div class="muted-sm" style="font-size:11px">répertoire : <code>${esc(r.repoDir)}</code></div>` : ''}
                 ${r.e2eBaseUrl ? `<div class="muted-sm" style="font-size:11px">e2e : <code>${esc(r.e2eBaseUrl)}</code>${r.e2eRepoDir ? ' · ' + esc(r.e2eRepoDir) : ''}</div>` : ''}
+                ${(r.docs && r.docs.length) ? `<div class="muted-sm" style="font-size:11px">docs : ${r.docs.map((d) => `<code class="chip" title="${esc(d.path)}">${esc(docKindLabel(d.kind))}</code>`).join(' ')}</div>` : ''}
                 <div class="repo-mini-actions">
                   <button class="ghost tiny" data-edit-repo="${esc(r.id)}">Modifier</button>
+                  <button class="ghost tiny" data-repo-docs="${esc(r.id)}" title="Documents de référence de ce repo (ADR-12)">📄 Docs</button>
                   <button class="ghost tiny danger-text" data-unlink-repo="${esc(p.id)}|${esc(r.id)}">Retirer</button>
                 </div>
               </div>`).join('')}
             </div></div>` : '<p class="muted-sm">Aucun repo associé.</p>'}
+            ${pDocs.length ? `<div class="project-kv" style="align-items:flex-start"><span class="lbl">Docs de référence</span><div style="display:flex;flex-direction:column;gap:4px;flex:1">
+              ${pDocs.map((d) => `<div class="muted-sm" style="font-size:11px"><code class="chip">${esc(docKindLabel(d.kind))}</code> <code>${esc(d.docId)}</code> ${d.title ? '— ' + esc(d.title) : ''}<div>${esc(d.path)}</div></div>`).join('')}
+            </div></div>` : ''}
           </div>
           <div class="project-card-actions">
             <button class="ghost" data-add-repo-to="${esc(p.id)}">+ Associer un repo</button>
+            <button class="ghost" data-project-docs="${esc(p.id)}" title="Documents de référence : ADR technique, specs fonctionnelles, scénarios Gherkin">📄 Docs de référence</button>
             <button class="ghost" data-edit-project="${esc(p.id)}">Modifier le projet</button>
             <button class="danger" data-del-project="${esc(p.id)}">Supprimer</button>
           </div>
@@ -2248,8 +2315,94 @@ async function renderProjects() {
   document.querySelectorAll('[data-edit-project]').forEach((b) => b.addEventListener('click', () => projectFormModal(projects.find((x) => x.id === b.dataset.editProject))));
   document.querySelectorAll('[data-del-project]').forEach((b) => b.addEventListener('click', () => projectDeleteModal(b.dataset.delProject)));
   document.querySelectorAll('[data-edit-repo]').forEach((b) => b.addEventListener('click', () => repoFormModal(repoMap.get(b.dataset.editRepo) || null)));
+  document.querySelectorAll('[data-project-docs]').forEach((b) => b.addEventListener('click', () => projectDocsModal(b.dataset.projectDocs, repoMap)));
+  document.querySelectorAll('[data-repo-docs]').forEach((b) => b.addEventListener('click', () => projectDocsModal(null, repoMap, b.dataset.repoDocs)));
   document.querySelectorAll('[data-add-repo-to]').forEach((b) => b.addEventListener('click', () => repoLinkModal(b.dataset.addRepoTo, repoMap)));
   document.querySelectorAll('[data-unlink-repo]').forEach((b) => b.addEventListener('click', () => repoUnlinkModal(...b.dataset.unlinkRepo.split('|'))));
+}
+
+// Libellé court d'un kind de document (ADR-12).
+function docKindLabel(kind) {
+  return { 'adr-tech': 'ADR tech', 'specs-fonctionnelles': 'Specs fonct.', 'scenarios-gherkin': 'Gherkin' }[kind] || kind;
+}
+function docKindLabelLong(kind) {
+  return { 'adr-tech': 'ADR — Architecture technique', 'specs-fonctionnelles': 'Spécifications fonctionnelles (User stories / règles métier)', 'scenarios-gherkin': 'Scénarios (Gherkin)' }[kind] || kind;
+}
+
+// Modale documents de référence (ADR-12) d'un projet ou d'un repo : liste les
+// docs + ajout (kind/titre/chemin) rattaché à un projet ou un repo.
+async function projectDocsModal(projectId, repoMap, repoOnly) {
+  let allDocs = [];
+  const ctx = { scopeLabel: '', scopeId: projectId || repoOnly || '' };
+  let scopeTitle = '';
+  let projects = [];
+  try { projects = ((await api('/api/projects')).projects || []); } catch {}
+  const loadDocs = async () => {
+    const q = projectId ? `projectId=${encodeURIComponent(projectId)}&includeRepoDocs=1` : (repoOnly ? `repoId=${encodeURIComponent(repoOnly)}` : '');
+    const r = await api(`/api/docs?${q}`).catch(() => ({ docs: [] }));
+    allDocs = r.docs || [];
+  };
+  await loadDocs();
+  if (projectId) {
+    const p = projects.find((x) => x.id === projectId);
+    scopeTitle = p ? (p.name || p.id) : projectId;
+  } else if (repoOnly) {
+    const rr = repoMap.get(repoOnly);
+    scopeTitle = (rr && (rr.name || rr.id)) || repoOnly;
+  }
+  const kindOpts = `<option value="adr-tech">ADR — Architecture technique</option><option value="specs-fonctionnelles">Specs fonctionnelles</option><option value="scenarios-gherkin">Scénarios (Gherkin)</option>`;
+  const targetOpts = projectId ? projects.filter((x) => x.id === projectId).flatMap((x) => [{ v: 'project:' + projectId, l: 'Projet ' + (x.name || x.id) }, ...(x.repos || []).map((rid) => { const r = repoMap.get(rid); return { v: 'repo:' + rid, l: 'Repo ' + (r ? (r.name || r.id) : rid) }; })]) : [{ v: 'repo:' + repoOnly, l: 'Repo ' + scopeTitle }];
+  const renderList = () => {
+    const list = document.getElementById('pd-list');
+    if (!allDocs.length) { list.innerHTML = '<p class="muted-sm">Aucun document de référence. Ajoutez-en (ADR technique, specs, Gherkin).</p>'; return; }
+    list.innerHTML = allDocs.map((d) => `
+      <div class="recette-item">
+        <div><code class="chip">${esc(docKindLabel(d.kind))}</code> <strong>${esc(d.title || d.docId)}</strong>
+          <span class="muted-sm">${d.projects && d.projects.length ? '· projets ' + esc(d.projects.join(', ')) : ''}${d.repos && d.repos.length ? '· repos ' + esc(d.repos.join(', ')) : ''}</span>
+        </div>
+        <div class="muted-sm">${esc(d.path)}</div>
+        <div class="e2e-actions"><button type="button" class="ghost tiny danger-text" data-del-doc="${esc(d.docId)}">Supprimer</button></div>
+      </div>`).join('');
+    document.querySelectorAll('#pd-list [data-del-doc]').forEach((b) => b.addEventListener('click', async () => {
+      await api(`/api/docs/${encodeURIComponent(b.dataset.delDoc)}`, { method: 'DELETE' }).catch(() => {});
+      await loadDocs(); renderList();
+    }));
+  };
+  showModal(`
+    <div class="modal modal-wide">
+      <h2>Documents de référence <code class="muted-sm">${esc(scopeTitle)}</code></h2>
+      <p class="muted-sm">ADR-12 — registre de docs (adr-tech / specs-fonctionnelles / scenarios-gherkin) fournis en contexte aux agents (création de test, recette). Le fichier doit exister au chemin indiqué (workspace/checkout).</p>
+      <div id="pd-list" class="recette-list" style="max-height:36vh;overflow:auto"></div>
+      <form id="pd-form" class="pilot-form" style="border-top:1px solid rgba(255,255,255,.1);padding-top:10px">
+        <div class="row-2" style="display:flex;gap:8px;flex-wrap:wrap">
+          <select id="pd-kind" style="flex:1;min-width:180px">${kindOpts}</select>
+          <select id="pd-target" style="flex:1;min-width:150px">${targetOpts.map((t) => `<option value="${esc(t.v)}">${esc(t.l)}</option>`).join('')}</select>
+        </div>
+        <input id="pd-title" placeholder="titre (ex. ADR — Architecture madatalk)" style="margin-top:8px">
+        <input id="pd-path" placeholder="chemin du fichier (ex. /home/coder/mada-talk/docs/adr-technique.md)" style="margin-top:8px" required>
+        <div class="modal-actions" style="margin-top:8px">
+          <button type="button" class="ghost" id="modal-cancel">Fermer</button>
+          <button type="submit" class="launch-btn">+ Ajouter le document</button>
+        </div>
+      </form>
+      <div id="pd-msg" class="msg"></div>
+    </div>`);
+  renderList();
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('pd-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById('pd-msg');
+    const [targetType, targetId] = document.getElementById('pd-target').value.split(':');
+    try {
+      const body = { kind: document.getElementById('pd-kind').value, title: document.getElementById('pd-title').value.trim() || undefined, path: document.getElementById('pd-path').value.trim() };
+      if (targetType === 'project') body.projectId = targetId; else body.repoId = targetId;
+      await api('/api/docs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      document.getElementById('pd-path').value = '';
+      document.getElementById('pd-title').value = '';
+      await loadDocs(); renderList();
+      msg.textContent = 'Document enregistré.'; msg.className = 'msg ok';
+    } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
+  });
 }
 
 // Modale édition d'un REPO (le repo porte workspace/répertoire/branches/e2e).

@@ -321,7 +321,38 @@ export async function relaunchTask({ taskId }) {
 // ===========================================================================
 
 // Crée une recette de PROJET (titre + tâches couvertes 0..N) + documents éventuels.
-export async function createRecette({ project, projects, title, description, taskIds, documents, by }) {
+// --- Documents de référence (ADR-12) : contexte architecture & comportement ---
+// Registre générique N:N docs ⇄ projets et/ou repos. Pas de contenu en base :
+// `path` pointe le fichier (workspace/checkout) que les agents LISENT.
+export async function listDocs(args = {}) {
+  return taskOrchestrator("doc_list", {
+    kind: args.kind || undefined,
+    projectId: args.projectId || undefined,
+    repoId: args.repoId || undefined,
+    includeRepoDocs: args.includeRepoDocs,
+    limit: args.limit || undefined,
+  });
+}
+export async function registerDoc(args) {
+  return taskOrchestrator("doc_register", {
+    kind: args.kind, title: args.title || undefined, path: args.path,
+    description: args.description || undefined,
+    projectId: args.projectId || undefined, repoId: args.repoId || undefined, createdBy: args.createdBy,
+  });
+}
+export async function updateDoc(args) {
+  return taskOrchestrator("doc_update", {
+    docId: args.docId, kind: args.kind || undefined, title: args.title,
+    path: args.path, description: args.description,
+    addProjectId: args.addProjectId || undefined, addRepoId: args.addRepoId || undefined,
+  });
+}
+export async function deleteDoc(docId) {
+  if (!docId) throw new Error("docId requis");
+  return taskOrchestrator("doc_delete", { docId });
+}
+
+export async function createRecette({ project, projects, title, description, taskIds, documents, docIds, by }) {
   const projs = [...new Set(((projects && projects.length ? projects : (project ? [project] : [])).map((p) => p && String(p).trim()).filter(Boolean)))];
   if (!projs.length) throw new Error("au moins un projet requis pour créer une recette");
   if (!title || !String(title).trim()) throw new Error("titre requis pour créer une recette");
@@ -333,12 +364,13 @@ export async function createRecette({ project, projects, title, description, tas
     taskIds: (taskIds || []).filter(Boolean),
     status: "pending",
   });
+  const recetteId = r.recette.recetteId;
   // Rattache les documents fournis à la création (import ou artefact).
   for (const doc of documents || []) {
     if (!doc) continue;
     try {
       await addRecetteDocument({
-        recetteId: r.recette.recetteId,
+        recetteId,
         mode: doc.mode === "artifact" ? "artifact" : "import",
         filename: doc.filename,
         dataBase64: doc.dataBase64,
@@ -347,6 +379,31 @@ export async function createRecette({ project, projects, title, description, tas
         title: doc.title,
       });
     } catch {}
+  }
+  // ADR-12 : docs de référence cochées (cases à cocher) → rattachées à la recette
+  // comme documents à lire (chemin existant, nature par kind). L'agent de recette
+  // les liste via recette_get et les lit pour confronter le constat.
+  if (Array.isArray(docIds) && docIds.length) {
+    const wanted = new Set(docIds.map((x) => String(x).trim()).filter(Boolean));
+    const allDocs = [];
+    for (const p of projs) {
+      try {
+        const rl = await taskOrchestrator("doc_list", { projectId: p, includeRepoDocs: true });
+        for (const d of ((rl && rl.docs) || [])) if (d && !allDocs.some((x) => x.docId === d.docId)) allDocs.push(d);
+      } catch {}
+    }
+    for (const d of allDocs) {
+      if (!wanted.has(d.docId)) continue;
+      try {
+        await taskOrchestrator("recette_doc_add", {
+          recetteId,
+          source: "import",
+          path: d.path,
+          title: d.title || d.docId,
+          nature: `[${d.kind}] ${d.kind === "adr-tech" ? "Architecture technique" : d.kind === "specs-fonctionnelles" ? "Specs fonctionnelles (User stories/règles métier)" : "Scénarios Gherkin"} — document de référence du projet à lire pour la recette.`,
+        });
+      } catch {}
+    }
   }
   return { ok: true, recette: r.recette };
 }
@@ -376,7 +433,18 @@ export async function launchRecetteSession({ recetteId, force = false }) {
     const g = await projectGitPath(p);
     if (g) { dir = g; break; }
   }
-  const prompt = buildRecettePrompt({ project: projs[0] || rec.project, projects: projs, title: rec.title, taskIds: rec.tasks || [] });
+  // ADR-12 : documents de référence des projets couverts (adr-tech, specs,
+  // gherkin) — lus en contexte par l'agent de recette pour confronter le constat.
+  let recDocs = [];
+  try {
+    for (const p of projs) {
+      const r = await taskOrchestrator("doc_list", { projectId: p, includeRepoDocs: true });
+      const pDocs = (r && r.docs) || [];
+      const seen = new Set(recDocs.map((d) => d.docId));
+      for (const d of pDocs) if (d && d.docId && !seen.has(d.docId)) { recDocs.push(d); seen.add(d.docId); }
+    }
+  } catch {}
+  const prompt = buildRecettePrompt({ project: projs[0] || rec.project, projects: projs, title: rec.title, taskIds: rec.tasks || [], docs: recDocs });
   const { sessionId } = await launchSession({ dir, agent: "agent-recette", prompt, title: `Recette ${rec.title || projs.join(", ")}` });
   if (!sessionId || !/^ses_/.test(sessionId)) {
     throw new Error("échec de lancement de la session de recette (agent-recette indisponible ?)");
@@ -393,7 +461,10 @@ export async function draftE2ETest(e2eTestId) {
 
 // Lance (ou reprend) la session de CRÉATION / MISE À JOUR d'un test E2E (entité
 // 1er niveau) via l'agent `test-agent`. `force = true` : nouvelle session.
-export async function launchTestSession({ e2eTestId, force = false, mode }) {
+// `docIds` (optionnel) : sous-ensemble de documents de référence (ADR-12) à
+// fournir en contexte (les cases à cocher du panneau). Défaut : tous les docs
+// du projet.
+export async function launchTestSession({ e2eTestId, force = false, mode, docIds }) {
   if (!e2eTestId) throw new Error("e2eTestId requis");
   const r = await taskOrchestrator("e2e_test_get", { e2eTestId });
   const t = r && r.test;
@@ -412,6 +483,13 @@ export async function launchTestSession({ e2eTestId, force = false, mode }) {
     const g = await projectGitPath(p);
     if (g) { dir = g; break; }
   }
+  // ADR-12 : docs de référence — toutes celles du projet (défaut), ou seulement
+  // la sous-sélection cochée (docIds). Le test expose déjà `t.docs`.
+  let sessionDocs = t.docs || [];
+  if (Array.isArray(docIds) && docIds.length) {
+    const wanted = new Set(docIds.map((x) => String(x).trim()).filter(Boolean));
+    sessionDocs = (t.docs || []).filter((d) => d && wanted.has(d.docId));
+  }
   const testMode = mode || (t.status === "DRAFT" ? "create" : "update");
   const prompt = buildTestPrompt({
     e2eTestId: t.e2eTestId,
@@ -422,6 +500,7 @@ export async function launchTestSession({ e2eTestId, force = false, mode }) {
     mode: testMode,
     specFile: t.specFile,
     scenario: t.scenario,
+    docs: sessionDocs,   // ADR-12 : docs de référence du projet (contexte)
   });
   const { sessionId } = await launchSession({ dir, agent: "test-agent", prompt, title: `${testMode === "create" ? "Création" : "MAJ"} test ${t.title || t.e2eTestId}` });
   if (!sessionId || !/^ses_/.test(sessionId)) {

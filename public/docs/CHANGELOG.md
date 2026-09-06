@@ -5,6 +5,33 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## v0.9.22 — 2026-09-06 · Documents de référence projets/repos (ADR-12)
+
+Un projet (produit) et un repo peuvent être associés à des **documents de
+référence** : ADR technique (`adr-tech` — stack, archi cible, composants,
+design patterns, structure de dossiers), specs fonctionnelles (`specs-
+fonctionnelles` — User stories + règles métier), scénarios Gherkin
+(`scenarios-gherkin`). Pas de contenu en base : `path` pointe le fichier que
+les agents **lisent en contexte**.
+
+- **Registre** : tables `docs` + `doc_projects` + `doc_repos` (N:N) ; MCP
+  `doc_register/update/delete/get/list` ; docs exposées sur `project_list`/
+  `project_get`, `repo_list`/`repo_get`, `e2e_test_get` (`test.docs`).
+- **Contexte agents (chemins, cases à cocher)** : création/MAJ de test E2E —
+  les modales proposent les documents du projet (cochés par défaut) →
+  injectés dans `buildTestPrompt` ; recette — les documents des projets
+  couverts sont proposés à la création et rattachés à la recette
+  (`recette_documents`, nature `[kind]`) + liste dans `buildRecettePrompt`.
+- **Panel** : onglet Projets — bouton « 📄 Docs de référence » (gestion par
+  projet/repo) ; cases à cocher dans la création de test via agent et la
+  création de recette ; bloc documents dans le détail d'un test E2E.
+- **Agents** : `test-agent` lit les docs fournis avant d'écrire un spec ;
+  `agent-recette` lit les documents rattachés (ADR/specs/Gherkin) pour
+  confronter le constat.
+
+Dépôts : `opencode-mcp-task-orchestrator` (v0.8.24) · `opencode-observability`
+(v0.9.22) · `opencode-agents` (v0.6.11). Doc : ADR-12.
+
 ## v0.9.21 — 2026-09-06 · Rapport E2E texte RICHE : transcript horodaté des étapes (PASSED / SKIPPED / FAILED)
 
 Le « rapport texte » d'une exécution E2E n'est plus un JSON squelettique

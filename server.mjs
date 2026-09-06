@@ -728,6 +728,14 @@ async function registryE2ETestDetail(res, id) {
      FROM e2e_test_repos x JOIN repos r ON r.id = x.repo_id
      WHERE x.e2e_test_id = $1 ORDER BY r.name ASC`, [id],
   ));
+  // ADR-12 : documents de référence du projet (contexte test-agent / recette).
+  const docs = (await q(
+    `SELECT DISTINCT d.id AS "docId", d.kind, d.title, d.path, d.description
+     FROM docs d
+     WHERE d.id IN (SELECT doc_id FROM doc_projects WHERE project_id = $1)
+        OR d.id IN (SELECT dr.doc_id FROM doc_repos dr JOIN project_repos pr ON pr.repo_id = dr.repo_id WHERE pr.project_id = $1)
+     ORDER BY d.kind, d.title NULLS LAST, d.created_at DESC`, [row.project],
+  ));
   const params = (await q("SELECT name, kind, default_value, secret_ref, required FROM e2e_test_params WHERE e2e_test_id = $1 ORDER BY name", [id])).map((x) => ({
     name: x.name,
     kind: x.kind,
@@ -768,6 +776,7 @@ async function registryE2ETestDetail(res, id) {
     ...mapE2ETestRow(row),
     projects: projects.length ? projects : (row.project ? [row.project] : []),
     repos,
+    docs, // ADR-12 : documents de référence du projet (contexte)
     params,
     linkedTasks,
     requiredOpen: requiredOpenTasks.length,
@@ -837,7 +846,7 @@ function e2eTitleSlug(title) {
 }
 
 async function handleE2ECreate(res, b) {
-  const { project, specFile, scenario, title, description, coveredProjects, repoIds, repos, params, viaAgent } = b || {};
+  const { project, specFile, scenario, title, description, coveredProjects, repoIds, repos, params, viaAgent, docIds } = b || {};
   if (!project) return sendJson(res, 400, { error: "project requis (projet produit)" });
   const guard = e2eParamsGuard(params);
   if (guard) return sendJson(res, 400, { error: guard });
@@ -859,7 +868,7 @@ async function handleE2ECreate(res, b) {
     // Passe l'entité en DRAFT (spec pas encore rédigé) puis lance la session.
     await pilot.draftE2ETest(test.e2eTestId);
     let session = null;
-    try { session = await pilot.launchTestSession({ e2eTestId: test.e2eTestId, mode: "create" }); } catch (e) { session = { error: (e && e.message) || String(e) }; }
+    try { session = await pilot.launchTestSession({ e2eTestId: test.e2eTestId, mode: "create", docIds: Array.isArray(docIds) && docIds.length ? docIds : undefined }); } catch (e) { session = { error: (e && e.message) || String(e) }; }
     return sendJson(res, 201, { ok: true, test: { ...test, status: "DRAFT" }, session, viaAgent: true });
   }
 
@@ -1070,6 +1079,29 @@ const server = createServer(async (req, res) => {
       try { return sendJson(res, 200, await pilot.unlinkRepoFromProject({ projectId: repoLinkMatch[1], repoId: repoLinkMatch[2] })); }
       catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
     }
+    // --- Documents de référence (ADR-12) : registre générique docs ⇄ projets/repos ---
+    // GET /api/docs?kind=&projectId=&repoId=&includeRepoDocs=1 — POST {kind,title,path,…}
+    if (path === "/api/docs" && req.method === "GET") {
+      try {
+        const r = await pilot.listDocs({
+          kind: url.searchParams.get("kind") || undefined,
+          projectId: url.searchParams.get("projectId") || undefined,
+          repoId: url.searchParams.get("repoId") || undefined,
+          includeRepoDocs: url.searchParams.get("includeRepoDocs") === "1",
+        });
+        return sendJson(res, 200, { docs: (r && r.docs) || [] });
+      } catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
+    }
+    if (path === "/api/docs" && req.method === "POST") {
+      const b = await readBody(req);
+      try { return sendJson(res, 201, await pilot.registerDoc({ ...b, createdBy: user.username })); }
+      catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    const docDelMatch = path.match(/^\/api\/docs\/([^/]+)$/);
+    if (docDelMatch && req.method === "DELETE") {
+      try { return sendJson(res, 200, await pilot.deleteDoc(docDelMatch[1])); }
+      catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
+    }
     if (path === "/api/projects" && req.method === "POST") {
       const b = await readBody(req);
       return sendJson(res, 200, await pilot.createProject({ ...b, createdBy: user.username }));
@@ -1253,7 +1285,7 @@ const server = createServer(async (req, res) => {
     }
     if (path === "/api/recettes" && req.method === "POST") {
       const b = await readBody(req);
-      return sendJson(res, 200, await pilot.createRecette({ project: b.project, projects: b.projects, title: b.title, description: b.description, taskIds: b.taskIds, documents: b.documents, by: user.username }));
+      return sendJson(res, 200, await pilot.createRecette({ project: b.project, projects: b.projects, title: b.title, description: b.description, taskIds: b.taskIds, documents: b.documents, docIds: b.docIds, by: user.username }));
     }
     const recetteAction = path.match(/^\/api\/recettes\/([^/]+)\/(session|finish)$/);
     if (recetteAction && req.method === "POST") {
@@ -1361,7 +1393,7 @@ const server = createServer(async (req, res) => {
       if (!t) return sendJson(res, 404, { error: "test E2E inconnu" });
       const sb = await readBody(req).catch(() => ({}));
       try {
-        const s = await pilot.launchTestSession({ e2eTestId: e2eSessionMatch[1], force: !!(sb && sb.force) });
+        const s = await pilot.launchTestSession({ e2eTestId: e2eSessionMatch[1], force: !!(sb && sb.force), mode: (sb && sb.mode) || undefined, docIds: (sb && sb.docIds) || undefined });
         return sendJson(res, 200, s);
       } catch (e) {
         const msg = String((e && e.message) || e);

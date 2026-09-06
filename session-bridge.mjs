@@ -289,15 +289,25 @@ export function buildReworkPrompt({ taskId, remarks, by }) {
  * La recette est un objet de PROJET (titre + 0..N tâches couvertes).
  * Mission + cadre, jamais méthode.
  */
-export function buildRecettePrompt({ project, projects, title, taskIds }) {
+export function buildRecettePrompt({ project, projects, title, taskIds, docs = [] }) {
   const projs = (projects && projects.length ? projects : (project ? [project] : []));
   const first = projs[0] || project || "";
+  const docBlock = (docs && docs.length)
+    ? [
+        "",
+        "Documents de référence des projets couverts (à LIRE avant la vérification) :",
+        ...docs.map((d, i) => `  ${i + 1}. [${d.kind}] ${d.title || d.docId || ""} — chemin : \`${d.path}\``),
+        "Lis chacun de ces fichiers : architecture technique (stack, archi cible, composants, patterns, structure de dossiers), specs fonctionnelles (User stories, règles métier) et scénarios Gherkin. Confronte le constat (comportement réel) à ces références — un écart entre le réalisé et l'architecture/spécification documentée est un élément de recette (rework/bug).",
+        "",
+      ]
+    : [];
   return [
     `Ouvre la recette **« ${title || first} »** (projets : ${projs.join(", ")}) (v0.9.0).`,
     "",
     taskIds && taskIds.length ? `Tâches couvertes par cette recette : ${taskIds.join(", ")}.` : "Cette recette ne couvre aucune tâche (parcours global / exploratoire).",
     "Une recette peut couvrir **un ou plusieurs projets** (pas de projet principal). Chaque élément relevé est rattaché à **UN projet cible** (celui où la future tâche sera créée) — renseigne `project` dans `recette_item_add`, obligatoirement parmi les projets de la recette.",
     "Les tâches couvertes restent HISTORIQUEMENT INTACTES : tu ne les modifies jamais (aucune transition, aucun rework direct).",
+    ...docBlock,
     "Mission :",
     "- Récupère le contexte : `recette_get(<recetteId>)` (titre, projets, tâches couvertes, éléments), et pour chaque tâche couverte `task_get` (plans, commits, artefacts, tâches liées), `artifact_list`, `events_list`.",
     "- Accompagne l'utilisateur dans la vérification du périmètre : réponds à ses questions, aide-le à comprendre ce qui a été réalisé.",
@@ -313,13 +323,22 @@ export function buildRecettePrompt({ project, projects, title, taskIds }) {
 // (agent `test-agent`). Le test est une entité de 1er niveau : la session est
 // rattachée au test (e2e_tests.session_id). mission ≠ méthode : le prompt porte
 // la mission et le cadre, jamais la méthode d'écriture du spec.
-export function buildTestPrompt({ e2eTestId, project, projects, title, description, mode = "create", specFile, scenario }) {
+export function buildTestPrompt({ e2eTestId, project, projects, title, description, mode = "create", specFile, scenario, docs = [] }) {
   const projs = (projects && projects.length ? projects : (project ? [project] : []));
   const first = projs[0] || project || "";
   const header =
     mode === "create"
       ? `Ouvre la session de CRÉATION du test E2E **« ${title || first} »** (projet repo source : ${projs.join(", ")}) (cadrage 08). Le test n'existe pas encore — tu vas le créer de bout en bout.`
       : `Ouvre la session de MISE À JOUR du test E2E **« ${title || e2eTestId} »** (projet repo source : ${projs.join(", ")}) (cadrage 08).`;
+  const docBlock = (docs && docs.length)
+    ? [
+        "",
+        "Documents de référence fournis en contexte (à LIRE avant d'écrire le spec) :",
+        ...docs.map((d, i) => `  ${i + 1}. [${d.kind}] ${d.title || d.docId || ""} — chemin : \`${d.path}\``),
+        "Lis chacun de ces fichiers (via read/cat/workspace) : ils portent l'architecture technique (stack, archi cible, composants, patterns, structure de dossiers), les specs fonctionnelles (User stories, règles métier) et les scénarios Gherkin existants. Le spec que tu écris DOIT respecter l'architecture (où placer/comment structurer) et couvrir le comportement décrit.",
+        "",
+      ]
+    : [];
   return [
     header,
     "",
@@ -327,11 +346,12 @@ export function buildTestPrompt({ e2eTestId, project, projects, title, descripti
     description ? `Comportement à couvrir : ${description}.` : "Comportement à couvrir : à préciser avec l'utilisateur.",
     specFile ? `Emplacement du spec : \`${specFile}\`.` : "Emplacement du spec : à déterminer (tests/playwright/ ou testDir de la config du dépôt).",
     scenario ? `Scénario cible : ${scenario}.` : "",
+    ...docBlock,
     "",
     "Mission :",
     "- Récupère le contexte : `e2e_list` (référentiel, éviter les doublons), `e2e_test_get(<e2eTestId>)` si le test existe déjà (DRAFT), et le contexte du dépôt (config Playwright, socle E2E existant, helpers).",
     "- Où écrire : dans le WORKSPACE CODER du projet repo source, sur une **branche de travail** dédiée (jamais l'hôte, jamais la branche principale).",
-    "- Crée ou mets à jour le spec Playwright (test() = un scénario ; comportement transverse = une seule entité), enregistre l'entité via `e2e_test_register` (project = repo source, coveredProjects = projets couverts), déclare les paramètres via `e2e_test_param_set` (défauts NON sensibles, secretRef pour les tokens), rattache la session via `e2e_test_session_set`.",
+    "- Crée ou mets à jour le spec Playwright (test() = un scénario ; comportement transverse = une seule entité), enregistre l'entité via `e2e_test_register` (project = projet produit, repoIds = repos traversés), déclare les paramètres via `e2e_test_param_set` (défauts NON sensibles, secretRef pour les tokens), rattache la session via `e2e_test_session_set`.",
     "- Vérifie si possible par un run ciblé (`e2e_run`, origine `session`) : lis le **rapport texte** uniquement, corrige si besoin.",
     "- Règle IA : tu ne traites que le **texte** ; la vidéo est une preuve humaine (jamais interprétée).",
     "",

@@ -1,0 +1,84 @@
+# 12 — Documents de référence projets/repos (ADR technique, specs fonctionnelles, scénarios Gherkin)
+
+> **Statut : VALIDÉ (2026-09-06).**
+> Un projet peut être associé à **un ou plusieurs documents de référence**, de
+> même qu'un repo. Il n'y a PAS de contenu en base : un document est un **chemin
+> de fichier** (workspace Coder / checkout) que les agents LISENT en contexte
+> (test-agent à la création d'un test E2E, agent-recette en début de recette).
+
+---
+
+## 1. Le besoin
+
+Créer / vérifier un test E2E sans le contexte du projet est aveugle :
+- **architecture** inconnue → le test-agent ne sait pas où le spec vit, quels
+  composants sont en jeu, quelle structure de dossiers est cible ;
+- **spécifications fonctionnelles** inconnues (User stories + règles métier) →
+  impossible de savoir si le comportement couvert est le bon ;
+- **scénarios Gherkin** existants inconnus → risque de doublons ou de scénarios
+  qui contredisent la couverture.
+
+## 2. Modèle
+
+```
+DOCUMENT de référence  (kind, titre, chemin)   ── N:N ──▶ PROJET (produit)
+                                                   N:N ──▶ REPO (dépôt de code)
+```
+
+`docs` : entité document (kind, title, **path**, description). `doc_projects` /
+`doc_repos` : rattachements N:N. Le fichier est lu **au chemin indiqué** par
+l'agent — jamais stocké/copié en base.
+
+### Kinds (vocabulaire)
+- `adr-tech` — **Architecture technique** du projet/repo : stack, architectures
+  cibles, composants, design patterns s'ils existent, structure de dossiers
+  cible. (Un fichier par projet et par repo — « l'ADR » du projet.)
+- `specs-fonctionnelles` — User stories + règles métier.
+- `scenarios-gherkin` — scénarios Gherkin (parcours couverts / à couvrir).
+
+Un projet peut être associé à un ou plusieurs ADR (le sien + ceux de ses repos) ;
+un repo peut être associé à son ADR.
+
+## 3. Où ces chemins sont-ils fournis en contexte ?
+
+Les documents sont **fournis en contexte aux agents**, paramétrables par cases à
+cocher au lancement :
+
+1. **Création / MAJ d'un test E2E** (session test-agent) : les modales du panneau
+   proposent les documents du projet (+ repos) — cochés par défaut. Les chemins
+   sélectionnés sont injectés dans le prompt de session (`buildTestPrompt`) ;
+   le test-agent **lit** chaque fichier avant d'écrire le spec.
+2. **Recette** (session agent-recette) : à la création d'une recette, les
+   documents de référence des projets couverts sont proposés (cases à cocher).
+   Ceux sélectionnés sont **rattachés à la recette** (`recette_documents`,
+   nature `[kind]`) ; l'agent-recette les lit pour confronter le constat réel à
+   l'architecture et aux règles documentées. Il peut aussi les consulter via
+   `doc_list`.
+
+## 4. MCP / données
+
+- `doc_register({ kind, title, path, projectId?, repoId? })`, `doc_update`,
+  `doc_delete`, `doc_get`, `doc_list({ kind?, projectId?, repoId?, includeRepoDocs })`.
+- `project_list` / `project_get` → `projects[].docs` (docs du projet + de ses
+  repos) ; `repo_get` / `repo_list` → `repos[].docs` ; `e2e_test_get` →
+  `test.docs` (docs du projet du test).
+- `recette_doc_add` accepte un `path` existant (les docs de référence sélectionnés
+  y sont attachés).
+
+## 5. Panel
+
+- Onglet **Projets** : chaque carte projet/repo expose « 📄 Docs de référence » —
+  modal de gestion (liste + ajout kind/titre/chemin rattaché à un projet ou un repo).
+- Création de test via agent : fieldset **Documents de référence** (cases à cocher).
+- Création de recette : fieldset **Documents de référence des projets** (cases à cocher).
+
+## 6. Points de vigilance
+
+- **Contenu jamais en base** : le chemin doit pointer un fichier réellement
+  présent dans le workspace/checkout lu par l'agent (chemin absolu hôte ou
+  `/home/coder/...`).
+- **Un « ADR » ≠ ADR du framework** : `adr-tech` désigne l'architecture technique
+  du produit (madatalk, oniria…), distinct des ADR 08-11 du framework
+  d'orchestration.
+- Le chemin est un **contexte**, pas une exigence de build : l'agent lit ce qui
+  existe, signale un chemin mort (fichier absent) comme écart.

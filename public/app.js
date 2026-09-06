@@ -2161,6 +2161,7 @@ async function renderProjects() {
                   ${r.workspace ? `<span class="muted-sm">· ws <code>${esc(r.workspace)}</code></span>` : ''}
                   ${r.mainBranch ? `<span class="muted-sm">· branche dépl. <code>${esc(r.mainBranch)}</code></span>` : ''}
                 </div>
+                ${r.description ? `<div class="muted-sm" style="font-size:11px">${esc(r.description)}</div>` : ''}
                 ${r.repoDir ? `<div class="muted-sm" style="font-size:11px">répertoire : <code>${esc(r.repoDir)}</code></div>` : ''}
                 ${r.e2eBaseUrl ? `<div class="muted-sm" style="font-size:11px">e2e : <code>${esc(r.e2eBaseUrl)}</code>${r.e2eRepoDir ? ' · ' + esc(r.e2eRepoDir) : ''}</div>` : ''}
                 <div class="repo-mini-actions">
@@ -2196,11 +2197,14 @@ function repoFormModal(repo) {
       <form id="repo-modal-form" class="pilot-form">
         <input id="rm-id" placeholder="identifiant (ex: mada-talk, oniria)" value="${esc(repo?.id || '')}" ${editing ? 'readonly' : ''} required>
         <input id="rm-name" placeholder="nom lisible" value="${esc(repo?.name || '')}">
+        <label class="modal-field">Description <span class="muted-sm">— à quoi sert ce repo pour le projet</span>
+          <input id="rm-description" placeholder="ex. frontend client SPA du produit Madatalk" value="${esc(repo?.description || '')}">
+        </label>
         <label class="modal-field">Workspace Coder <span class="muted-sm">— où vit le checkout</span>
           <input id="rm-workspace" placeholder="ex: madatalk, ONIRIA" value="${esc(ws)}">
         </label>
-        <label class="modal-field">Répertoire du dépôt <span class="muted-sm">— chemin du checkout dans/du workspace</span>
-          <input id="rm-repodir" placeholder="ex: /home/coder/mada-talk" value="${esc(repo?.repoDir || '')}">
+        <label class="modal-field">Répertoire du dépôt <span class="muted-sm">— chemin du checkout (hôte : volume Coder, ex. /var/lib/docker/volumes/coder-…/_data/&lt;projet&gt;)</span>
+          <input id="rm-repodir" placeholder="ex: /var/lib/docker/volumes/coder-…/_data/mada-talk" value="${esc(repo?.repoDir || '')}">
         </label>
         <label class="modal-field">Branche de déploiement <span class="muted-sm">— par défaut (requise pour déployer ce repo)</span>
           <input id="rm-mainbranch" placeholder="ex: main, oniria-preprod" value="${esc(repo?.mainBranch || '')}">
@@ -2226,6 +2230,7 @@ function repoFormModal(repo) {
       const body = {
         id: document.getElementById('rm-id').value.trim(),
         name: document.getElementById('rm-name').value.trim() || undefined,
+        description: document.getElementById('rm-description').value.trim() || undefined,
         workspace: document.getElementById('rm-workspace').value.trim() || undefined,
         repoDir: document.getElementById('rm-repodir').value.trim() || undefined,
         mainBranch: document.getElementById('rm-mainbranch').value.trim() || undefined,

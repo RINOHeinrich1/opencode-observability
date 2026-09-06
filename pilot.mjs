@@ -39,8 +39,8 @@ export async function listProjects() {
 export async function listRepos(projectId) {
   return taskOrchestrator("repo_list", { projectId: projectId || undefined });
 }
-export async function registerRepo({ id, name, description, workspace, repoDir, branches, mainBranch, e2eRepoDir, e2eBaseUrl, createdBy }) {
-  return taskOrchestrator("repo_register", { id, name: name || undefined, description: description || undefined, workspace: workspace || undefined, repoDir: repoDir || undefined, branches, mainBranch: mainBranch || undefined, e2eRepoDir: e2eRepoDir || undefined, e2eBaseUrl: e2eBaseUrl || undefined, createdBy });
+export async function registerRepo({ id, name, description, deploy, workspace, repoDir, branches, mainBranch, e2eRepoDir, e2eBaseUrl, createdBy }) {
+  return taskOrchestrator("repo_register", { id, name: name || undefined, description: description || undefined, deploy: deploy || undefined, workspace: workspace || undefined, repoDir: repoDir || undefined, branches, mainBranch: mainBranch || undefined, e2eRepoDir: e2eRepoDir || undefined, e2eBaseUrl: e2eBaseUrl || undefined, createdBy });
 }
 export async function linkRepoToProject({ projectId, repoId, role }) {
   return taskOrchestrator("project_repo_link", { projectId, repoId, role: role || undefined });

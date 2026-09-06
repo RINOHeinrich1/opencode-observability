@@ -259,8 +259,10 @@ export function buildLaunchPrompt({ taskId, executionId, project, workspace, sco
     lines.push("", "Repos concernés par la tâche (ADR 09 — travaille sur chacun des repos ciblés) :");
     for (const r of repos) {
       lines.push(`  - repo ${r.id || r.repoId}${r.name ? ` (${r.name})` : ""} · workspace ${r.workspace || "?"} · répertoire ${r.repoDir || "?"} · branche ${r.mainBranch || r.branch || "?"}`);
+      if (r.deploy) lines.push(`    MÉCANISME DE DÉPLOIEMENT de ce repo : ${String(r.deploy).split("\n").map((l) => l.trim()).join(" ")}`);
     }
     lines.push("Pour chaque repo ciblé, réserve un worktree dans SON workspace Coder (en non-root via workspace_exec), isole et trace. Le scope/les patches peuvent couvrir plusieurs repos.");
+    lines.push("Le DÉPLOIEMENT se fait repo par repo via SON mécanisme CI/CD (champ deploy ci-dessus) : pousse sur la branche de travail puis laisse le CI déployer — jamais de déploiement manuel.");
   }
   lines.push("", "Titre :", title || "(—)");
   lines.push("", "Demande :", request || "");

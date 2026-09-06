@@ -655,6 +655,13 @@ async function e2eDetailModal(e2eTestId) {
         <div class="project-kv"><span class="lbl">Suivi</span><span class="muted-sm">vu depuis ${esc(fmtTS(test.firstSeenAt))} · màj ${esc(fmtTS(test.updatedAt))} · ${(test.taskCount != null ? test.taskCount : linked.length)} tâche(s) liée(s)</span></div>
       </div>
       ${test.description ? `<div class="modal-request">${esc(test.description)}</div>` : ''}
+      ${(test.status === 'DRAFT' || test.sessionId) ? `<div class="actions-section"><h3>Session de création / mise à jour</h3>
+        <p class="muted-sm">${test.status === 'DRAFT' ? 'Test en DRAFT : le spec est en cours de rédaction par la session test-agent.' : 'Une session test-agent est rattachée à ce test (création / mise à jour).'}</p>
+        <div class="actions-buttons">
+          <button type="button" class="launch-btn" data-e2e-session="${esc(test.e2eTestId || e2eTestId)}" title="${test.sessionId ? 'Reprendre la session de création en cours' : 'Ouvrir une session de création (test-agent)'}">${test.sessionId ? 'Reprendre la session' : 'Session de création'}</button>
+          <button type="button" class="ghost" data-e2e-session-force="${esc(test.e2eTestId || e2eTestId)}" title="Démarrer une NOUVELLE session test-agent (force)">Nouvelle session</button>
+        </div>
+      </div>` : ''}
       ${params.length ? `<div class="actions-section"><h3>Paramètres (${params.length})</h3>
         <div class="table-scroll"><table><thead><tr><th>Nom</th><th>Type</th><th>Défaut</th><th>Référence secrète</th><th>Requis</th></tr></thead>
         <tbody>${params.map((p) => `<tr>
@@ -682,8 +689,22 @@ async function e2eDetailModal(e2eTestId) {
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
   document.getElementById('e2e-launch-btn').onclick = () => { closeModal(); e2eRunModal(e2eTestId); };
+  document.querySelectorAll('#modal-backdrop [data-e2e-session]').forEach((b) => b.addEventListener('click', () => openTestSession(b.dataset.e2eSession, false)));
+  document.querySelectorAll('#modal-backdrop [data-e2e-session-force]').forEach((b) => b.addEventListener('click', () => openTestSession(b.dataset.e2eSessionForce, true)));
   document.querySelectorAll('#modal-backdrop [data-e2e-task-goto]').forEach((b) => b.addEventListener('click', () => { closeModal(); taskActionsModal(b.dataset.e2eTaskGoto); }));
   document.querySelectorAll('#modal-backdrop [data-e2e-video]').forEach((b) => b.addEventListener('click', () => openE2EVideoModal(b.dataset.e2eVideo, b.dataset.title)));
+}
+
+// Ouvre la session de création/mise à jour d'un test (agent test-agent).
+// Reprend la session rattachée si elle existe ; `force = true` en démarre une.
+async function openTestSession(e2eTestId, force) {
+  try {
+    const r = await api(`/api/e2e-tests/${encodeURIComponent(e2eTestId)}/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: !!force }) });
+    if (r.sessionId && /^ses_/.test(r.sessionId)) window.open(sessionHref(r.sessionId), '_blank');
+    else alert(r.error || 'Aucune session test-agent disponible.');
+    closeModal();
+    refreshActive();
+  } catch (e) { alert('Échec de la session test-agent : ' + (e.message || e)); }
 }
 
 function e2eExecItem(x, test) {
@@ -840,107 +861,197 @@ function e2eObsoleteModal(e2eTestId) {
 async function e2eCreateModal() {
   let projects = [];
   try { projects = ((await api('/api/projects')).projects || []); } catch {}
+  const projOpts = projects.map((p) => `<option value="${esc(p.id)}">${esc(p.name || p.id)}</option>`).join('') || '<option value="">— aucun projet enregistré —</option>';
+
+  // --- Étape 1 : le spec existe-t-il déjà ? ---
+  showModal(`
+    <div class="modal">
+      <h2>Nouveau test E2E</h2>
+      <p class="muted-sm">Le <strong>spec Playwright</strong> de ce test existe-t-il déjà dans le dépôt ?</p>
+      <div class="actions-buttons" style="margin-top:12px">
+        <button type="button" class="approve" id="ec-existing">Oui — enregistrer un test existant</button>
+        <button type="button" class="launch-btn" id="ec-new">Non — créer le test (session test-agent)</button>
+      </div>
+      <div class="modal-actions"><button type="button" class="ghost" id="modal-cancel">Annuler</button></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('ec-existing').addEventListener('click', () => e2eRegisterModal(projects, projOpts));
+  document.getElementById('ec-new').addEventListener('click', () => e2eCreateViaAgentModal(projects, projOpts));
+}
+
+// --- Cas « Oui » : le spec existe déjà → enregistrement (champs obligatoires) ---
+function e2eRegisterModal(projects, projOpts) {
   showModal(`
     <div class="modal modal-wide">
-      <h2>Nouveau test E2E</h2>
-      <form id="e2e-create-form" class="pilot-form">
-        <label class="modal-field">Projet (repo source) <span class="muted-sm">— dépôt où vit le spec</span>
-          <select id="ec-project" required><option value="">— projet —</option>${projects.map((p) => `<option value="${esc(p.id)}">${esc(p.name || p.id)}</option>`).join('') || '<option value="">— aucun projet enregistré —</option>'}</select>
+      <h2>Enregistrer un test E2E existant</h2>
+      <p class="muted-sm">Le spec Playwright est déjà écrit dans le dépôt — on l'enregistre comme entité (repo source + scénario).</p>
+      <form id="e2e-register-form" class="pilot-form">
+        <label class="modal-field">Projet (repo source) <span class="muted-sm">— dépôt où vit le spec — requis</span>
+          <select id="er-project" required><option value="">— projet —</option>${projOpts}</select>
         </label>
-        <label class="modal-field">Spec file <span class="muted-sm">— chemin du spec Playwright</span>
-          <input id="ec-specfile" placeholder="ex: tests/e2e/auth/login.spec.ts" required>
+        <label class="modal-field">Spec file <span class="muted-sm">— requis</span>
+          <input id="er-specfile" placeholder="ex: tests/e2e/auth/login.spec.ts" required>
         </label>
-        <label class="modal-field">Scénario <span class="muted-sm">— titre du test()</span>
-          <input id="ec-scenario" placeholder="ex: connexion réussie" required>
+        <label class="modal-field">Scénario <span class="muted-sm">— titre du test() — requis</span>
+          <input id="er-scenario" placeholder="ex: connexion réussie" required>
         </label>
         <label class="modal-field">Titre court / comportement (optionnel)
-          <input id="ec-title" placeholder="ex: Connexion — parcours nominal">
+          <input id="er-title" placeholder="ex: Connexion — parcours nominal">
         </label>
         <label class="modal-field">Description (optionnel)
-          <textarea id="ec-description" class="modal-textarea" rows="2" placeholder="comportement vérifié (éventuellement multi-projets)"></textarea>
+          <textarea id="er-description" class="modal-textarea" rows="2" placeholder="comportement vérifié (éventuellement multi-projets)"></textarea>
         </label>
         <fieldset class="pilot-fieldset">
           <legend>Projets couverts <span class="muted-sm">— le repo source est toujours inclus</span></legend>
-          <div class="rm-projects">${projects.map((p) => `<label class="filter-check"><input type="checkbox" class="ec-covered" value="${esc(p.id)}"> ${esc(p.name || p.id)}</label>`).join('') || '<p class="muted-sm">Aucun projet enregistré.</p>'}</div>
+          <div class="rm-projects">${projects.map((p) => `<label class="filter-check"><input type="checkbox" class="er-covered" value="${esc(p.id)}"> ${esc(p.name || p.id)}</label>`).join('') || '<p class="muted-sm">Aucun projet enregistré.</p>'}</div>
         </fieldset>
         <div class="links-editor">
           <div class="links-head"><label class="modal-field" style="margin:0">Paramètres <span class="muted-sm">(défauts NON sensibles — secret = secretRef uniquement)</span></label>
-          <button type="button" class="ghost" id="ec-add-param">+ Ajouter</button></div>
-          <div id="ec-params-list"></div>
+          <button type="button" class="ghost" id="er-add-param">+ Ajouter</button></div>
+          <div id="er-params-list"></div>
         </div>
         <div class="modal-actions">
           <button type="button" class="ghost" id="modal-cancel">Annuler</button>
-          <button type="submit" class="launch-btn">Créer</button>
+          <button type="submit" class="approve">Enregistrer</button>
         </div>
       </form>
-      <div id="e2e-create-msg" class="msg"></div>
+      <div id="er-msg" class="msg"></div>
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
-  const paramsList = document.getElementById('ec-params-list');
-  const addParamRow = () => {
-    const row = document.createElement('div');
-    row.className = 'link-row ec-param-row';
-    row.innerHTML = `
-      <input type="text" class="ec-p-name" placeholder="nom (ex: baseUrl)" style="flex:1;min-width:110px">
-      <select class="ec-p-kind" style="width:105px">
-        <option value="string">string</option><option value="url">url</option><option value="int">int</option>
-        <option value="bool">bool</option><option value="secret">secret</option>
-      </select>
-      <input type="text" class="ec-p-default" placeholder="défaut" style="flex:1;min-width:110px">
-      <input type="text" class="ec-p-secretref" placeholder="secretRef (secret)" style="flex:1;min-width:110px" hidden>
-      <label class="filter-check" title="Paramètre requis pour l'exécution"><input type="checkbox" class="ec-p-required"> requis</label>
-      <button type="button" class="ghost ec-p-del" title="Retirer">✕</button>`;
-    const kindSel = row.querySelector('.ec-p-kind');
-    const defaultInp = row.querySelector('.ec-p-default');
-    const refInp = row.querySelector('.ec-p-secretref');
-    const sync = () => {
-      const isSecret = kindSel.value === 'secret';
-      refInp.hidden = !isSecret;
-      defaultInp.placeholder = isSecret ? '— secret : valeur via secretRef —' : 'défaut (vide = aucun)';
-      if (isSecret) defaultInp.value = ''; // jamais de valeur en clair pour un secret
-    };
-    kindSel.addEventListener('change', sync);
-    sync();
-    row.querySelector('.ec-p-del').addEventListener('click', () => row.remove());
-    paramsList.appendChild(row);
-  };
-  document.getElementById('ec-add-param').addEventListener('click', addParamRow);
-  document.getElementById('e2e-create-form').addEventListener('submit', async (ev) => {
+  bindE2EParamEditor('er');
+  document.getElementById('e2e-register-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
-    const msg = document.getElementById('e2e-create-msg');
-    const project = document.getElementById('ec-project').value;
-    const specFile = document.getElementById('ec-specfile').value.trim();
-    const scenario = document.getElementById('ec-scenario').value.trim();
-    if (!project || !specFile || !scenario) { msg.textContent = 'project (repo source), specFile et scenario sont requis.'; msg.className = 'msg error'; return; }
-    const coveredProjects = [...document.querySelectorAll('#modal-backdrop .ec-covered:checked')].map((x) => x.value);
-    const params = [];
-    for (const row of paramsList.querySelectorAll('.ec-param-row')) {
-      const name = row.querySelector('.ec-p-name').value.trim();
-      if (!name) continue;
-      const kind = row.querySelector('.ec-p-kind').value;
-      const defaultValue = row.querySelector('.ec-p-default').value.trim();
-      const secretRef = row.querySelector('.ec-p-secretref').value.trim();
-      if (kind === 'secret' && defaultValue) {
-        msg.textContent = 'Paramètre secret « ' + name + ' » : aucune valeur en clair (secretRef uniquement).';
-        msg.className = 'msg error';
-        return;
-      }
-      params.push({ name, kind, defaultValue: defaultValue || undefined, secretRef: secretRef || undefined, required: row.querySelector('.ec-p-required').checked });
-    }
+    const msg = document.getElementById('er-msg');
+    const project = document.getElementById('er-project').value;
+    const specFile = document.getElementById('er-specfile').value.trim();
+    const scenario = document.getElementById('er-scenario').value.trim();
+    if (!project || !specFile || !scenario) { msg.textContent = 'project (repo source), specFile et scenario sont requis pour un test existant.'; msg.className = 'msg error'; return; }
+    const coveredProjects = [...document.querySelectorAll('#modal-backdrop .er-covered:checked')].map((x) => x.value);
+    const params = collectE2EParams('er', msg);
+    if (params === null) return;
     try {
       await api('/api/e2e-tests', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-        project,
-        specFile,
-        scenario,
-        title: document.getElementById('ec-title').value.trim() || undefined,
-        description: document.getElementById('ec-description').value.trim() || undefined,
-        coveredProjects,
-        params,
+        project, specFile, scenario,
+        title: document.getElementById('er-title').value.trim() || undefined,
+        description: document.getElementById('er-description').value.trim() || undefined,
+        coveredProjects, params,
       }) });
       closeModal();
       refreshActive();
     } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
   });
+}
+
+// --- Cas « Non » : le test n'existe pas → création via session test-agent ---
+// Champs minimaux : projet (repo source) + titre/comportement. Le spec file,
+// scénario, paramètres et projets couverts seront définis pendant la session.
+async function e2eCreateViaAgentModal(projects, projOpts) {
+  const defRepo = projects.find((p) => p.e2eRepoDir) ? projects.find((p) => p.e2eRepoDir) : (projects[0] || {});
+  showModal(`
+    <div class="modal modal-wide">
+      <h2>Créer un test E2E (via test-agent)</h2>
+      <p class="muted-sm">Le spec n'existe pas encore : on crée l'entité (DRAFT) puis on ouvre une <strong>session test-agent</strong> qui rédige le spec, les paramètres et les projets couverts dans le repo (workspace Coder, branche de travail).</p>
+      <form id="e2e-agent-form" class="pilot-form">
+        <label class="modal-field">Projet (repo source) <span class="muted-sm">— où le spec sera écrit — requis</span>
+          <select id="ea-project" required><option value="">— projet —</option>${projOpts}</select>
+        </label>
+        <label class="modal-field">Comportement à tester (titre) <span class="muted-sm">— requis</span>
+          <input id="ea-title" placeholder="ex: Connexion puis création d'une demande de chatbot" required>
+        </label>
+        <label class="modal-field">Description <span class="muted-sm">— optionnel, guide l'agent</span>
+          <textarea id="ea-description" class="modal-textarea" rows="3" placeholder="parcours à couvrir, préconditions, données, ce qui doit être vérifié…"></textarea>
+        </label>
+        <fieldset class="pilot-fieldset">
+          <legend>Projets couverts <span class="muted-sm">— optionnel ; défaut = repo source ; le repo source est toujours inclus</span></legend>
+          <div class="rm-projects">${projects.map((p) => `<label class="filter-check"><input type="checkbox" class="ea-covered" value="${esc(p.id)}"> ${esc(p.name || p.id)}</label>`).join('') || '<p class="muted-sm">Aucun projet enregistré.</p>'}</div>
+        </fieldset>
+        <div class="modal-actions">
+          <button type="button" class="ghost" id="modal-cancel">Annuler</button>
+          <button type="submit" class="launch-btn">Créer + ouvrir la session test-agent</button>
+        </div>
+      </form>
+      <div id="ea-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('e2e-agent-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const msg = document.getElementById('ea-msg');
+    const project = document.getElementById('ea-project').value;
+    const title = document.getElementById('ea-title').value.trim();
+    if (!project || !title) { msg.textContent = 'project (repo source) et comportement (titre) sont requis.'; msg.className = 'msg error'; return; }
+    const coveredProjects = [...document.querySelectorAll('#modal-backdrop .ea-covered:checked')].map((x) => x.value);
+    msg.textContent = 'Création de l\'entité + lancement de la session test-agent… (peut prendre quelques secondes).';
+    msg.className = 'msg';
+    try {
+      const r = await api('/api/e2e-tests', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        project, title,
+        description: document.getElementById('ea-description').value.trim() || undefined,
+        coveredProjects,
+        viaAgent: true,
+      }) });
+      closeModal();
+      if (r && r.session && r.session.sessionId && /^ses_/.test(r.session.sessionId)) {
+        window.open(sessionHref(r.session.sessionId), '_blank');
+      } else {
+        const eid = r && r.test && (r.test.e2eTestId || r.test.id);
+        if (eid) e2eDetailModal(eid);
+        alert((r.session && r.session.error) ? ('Test DRAFT créé mais session indisponible : ' + r.session.error) : 'Test créé (DRAFT).');
+      }
+      refreshActive();
+    } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
+  });
+}
+
+// Éditeur de paramètres partagé (cas « Oui »). Renvoie null si erreur (message posé).
+function bindE2EParamEditor(prefix) {
+  const paramsList = document.getElementById(prefix + '-params-list');
+  const addRow = () => {
+    const row = document.createElement('div');
+    row.className = 'link-row ec-param-row';
+    row.innerHTML = `
+      <input type="text" class="${prefix}-p-name" placeholder="nom (ex: baseUrl)" style="flex:1;min-width:110px">
+      <select class="${prefix}-p-kind" style="width:105px">
+        <option value="string">string</option><option value="url">url</option><option value="int">int</option>
+        <option value="bool">bool</option><option value="secret">secret</option>
+      </select>
+      <input type="text" class="${prefix}-p-default" placeholder="défaut" style="flex:1;min-width:110px">
+      <input type="text" class="${prefix}-p-secretref" placeholder="secretRef (secret)" style="flex:1;min-width:110px" hidden>
+      <label class="filter-check" title="Paramètre requis pour l'exécution"><input type="checkbox" class="${prefix}-p-required"> requis</label>
+      <button type="button" class="ghost ${prefix}-p-del" title="Retirer">✕</button>`;
+    const kindSel = row.querySelector('.' + prefix + '-p-kind');
+    const defaultInp = row.querySelector('.' + prefix + '-p-default');
+    const refInp = row.querySelector('.' + prefix + '-p-secretref');
+    const sync = () => {
+      const isSecret = kindSel.value === 'secret';
+      refInp.hidden = !isSecret;
+      defaultInp.placeholder = isSecret ? '— secret : valeur via secretRef —' : 'défaut (vide = aucun)';
+      if (isSecret) defaultInp.value = '';
+    };
+    kindSel.addEventListener('change', sync);
+    sync();
+    row.querySelector('.' + prefix + '-p-del').addEventListener('click', () => row.remove());
+    paramsList.appendChild(row);
+  };
+  document.getElementById(prefix + '-add-param').addEventListener('click', addRow);
+}
+
+function collectE2EParams(prefix, msg) {
+  const params = [];
+  const paramsList = document.getElementById(prefix + '-params-list');
+  for (const row of paramsList.querySelectorAll('.ec-param-row')) {
+    const name = row.querySelector('.' + prefix + '-p-name').value.trim();
+    if (!name) continue;
+    const kind = row.querySelector('.' + prefix + '-p-kind').value;
+    const defaultValue = row.querySelector('.' + prefix + '-p-default').value.trim();
+    const secretRef = row.querySelector('.' + prefix + '-p-secretref').value.trim();
+    if (kind === 'secret' && defaultValue) {
+      msg.textContent = 'Paramètre secret « ' + name + ' » : aucune valeur en clair (secretRef uniquement).';
+      msg.className = 'msg error';
+      return null;
+    }
+    params.push({ name, kind, defaultValue: defaultValue || undefined, secretRef: secretRef || undefined, required: row.querySelector('.' + prefix + '-p-required').checked });
+  }
+  return params;
 }
 
 // Ouvre la session de recette : reprend la session rattachée si elle existe

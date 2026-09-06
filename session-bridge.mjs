@@ -300,4 +300,34 @@ export function buildRecettePrompt({ project, projects, title, taskIds }) {
   ].join("\n");
 }
 
+// Prompt de mission pour la session de CRÉATION / MISE À JOUR d'un test E2E
+// (agent `test-agent`). Le test est une entité de 1er niveau : la session est
+// rattachée au test (e2e_tests.session_id). mission ≠ méthode : le prompt porte
+// la mission et le cadre, jamais la méthode d'écriture du spec.
+export function buildTestPrompt({ e2eTestId, project, projects, title, description, mode = "create", specFile, scenario }) {
+  const projs = (projects && projects.length ? projects : (project ? [project] : []));
+  const first = projs[0] || project || "";
+  const header =
+    mode === "create"
+      ? `Ouvre la session de CRÉATION du test E2E **« ${title || first} »** (projet repo source : ${projs.join(", ")}) (cadrage 08). Le test n'existe pas encore — tu vas le créer de bout en bout.`
+      : `Ouvre la session de MISE À JOUR du test E2E **« ${title || e2eTestId} »** (projet repo source : ${projs.join(", ")}) (cadrage 08).`;
+  return [
+    header,
+    "",
+    `Test (entité 1er niveau) : ${e2eTestId ? `\`${e2eTestId}\`` : "(non encore enregistré)"}.`,
+    description ? `Comportement à couvrir : ${description}.` : "Comportement à couvrir : à préciser avec l'utilisateur.",
+    specFile ? `Emplacement du spec : \`${specFile}\`.` : "Emplacement du spec : à déterminer (tests/playwright/ ou testDir de la config du dépôt).",
+    scenario ? `Scénario cible : ${scenario}.` : "",
+    "",
+    "Mission :",
+    "- Récupère le contexte : `e2e_list` (référentiel, éviter les doublons), `e2e_test_get(<e2eTestId>)` si le test existe déjà (DRAFT), et le contexte du dépôt (config Playwright, socle E2E existant, helpers).",
+    "- Où écrire : dans le WORKSPACE CODER du projet repo source, sur une **branche de travail** dédiée (jamais l'hôte, jamais la branche principale).",
+    "- Crée ou mets à jour le spec Playwright (test() = un scénario ; comportement transverse = une seule entité), enregistre l'entité via `e2e_test_register` (project = repo source, coveredProjects = projets couverts), déclare les paramètres via `e2e_test_param_set` (défauts NON sensibles, secretRef pour les tokens), rattache la session via `e2e_test_session_set`.",
+    "- Vérifie si possible par un run ciblé (`e2e_run`, origine `session`) : lis le **rapport texte** uniquement, corrige si besoin.",
+    "- Règle IA : tu ne traites que le **texte** ; la vidéo est une preuve humaine (jamais interprétée).",
+    "",
+    "Cadre : session dédiée au test ; à la fin, résume ce qui a été fait (branche, fichier(s), test enregistré ACTIVE, paramètres) et les prochaines étapes (merge de la branche, run de vérification).",
+  ].join("\n");
+}
+
 export { OPENCODE_BIN };

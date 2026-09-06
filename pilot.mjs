@@ -5,7 +5,7 @@
 // sessions opencode est délégué au bridge `session-bridge.mjs` (Plan C).
 
 import { taskOrchestrator, coderWorkspaces } from "./mcp-client.mjs";
-import { launchSession, injectMessage, buildLaunchPrompt, buildReworkPrompt, buildRecettePrompt, killSession, sessionExists } from "./session-bridge.mjs";
+import { launchSession, injectMessage, buildLaunchPrompt, buildReworkPrompt, buildRecettePrompt, buildTestPrompt, killSession, sessionExists } from "./session-bridge.mjs";
 
 // Décision n°7 : agents contraints par type de tâche.
 export function agentsForType(type, auditTarget) {
@@ -353,6 +353,52 @@ export async function launchRecetteSession({ recetteId, force = false }) {
   }
   await taskOrchestrator("recette_session_set", { recetteId, sessionId });
   return { recetteId, sessionId, resumed: false };
+}
+
+// Passe un test E2E en DRAFT (entité créée, spec en cours de rédaction via session).
+export async function draftE2ETest(e2eTestId) {
+  if (!e2eTestId) throw new Error("e2eTestId requis");
+  return taskOrchestrator("e2e_test_draft", { e2eTestId });
+}
+
+// Lance (ou reprend) la session de CRÉATION / MISE À JOUR d'un test E2E (entité
+// 1er niveau) via l'agent `test-agent`. `force = true` : nouvelle session.
+export async function launchTestSession({ e2eTestId, force = false, mode }) {
+  if (!e2eTestId) throw new Error("e2eTestId requis");
+  const r = await taskOrchestrator("e2e_test_get", { e2eTestId });
+  const t = r && r.test;
+  if (!t) throw new Error(`test E2E inconnu : ${e2eTestId}`);
+
+  // REPRISE : dès qu'une session est rattachée au test, on la REPREND (jamais de
+  // doublon). Pour repartir de zéro : `force = true`.
+  if (!force && t.sessionId && /^ses_/.test(t.sessionId)) {
+    return { e2eTestId, sessionId: t.sessionId, resumed: true };
+  }
+
+  // Ancrage : repo source du test (1er projet couvert avec un gitPath).
+  const projs = (t.projects && t.projects.length ? t.projects : (t.project ? [t.project] : []));
+  let dir = null;
+  for (const p of projs) {
+    const g = await projectGitPath(p);
+    if (g) { dir = g; break; }
+  }
+  const testMode = mode || (t.status === "DRAFT" ? "create" : "update");
+  const prompt = buildTestPrompt({
+    e2eTestId: t.e2eTestId,
+    project: t.project,
+    projects: projs,
+    title: t.title || t.scenario,
+    description: t.description,
+    mode: testMode,
+    specFile: t.specFile,
+    scenario: t.scenario,
+  });
+  const { sessionId } = await launchSession({ dir, agent: "test-agent", prompt, title: `${testMode === "create" ? "Création" : "MAJ"} test ${t.title || t.e2eTestId}` });
+  if (!sessionId || !/^ses_/.test(sessionId)) {
+    throw new Error("échec de lancement de la session test-agent (agent test-agent indisponible ?)");
+  }
+  await taskOrchestrator("e2e_test_session_set", { e2eTestId, sessionId });
+  return { e2eTestId, sessionId, resumed: false, mode: testMode };
 }
 
 // Rattache un document à une recette : import (upload base64) ou artefact existant.

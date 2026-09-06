@@ -730,11 +730,39 @@ function e2eParamsGuard(params) {
   return null;
 }
 
+// Slug minimal d'un titre → nom de spec Playwright (création via agent).
+function e2eTitleSlug(title) {
+  const s = String(title || "").toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+  return s || "test";
+}
+
 async function handleE2ECreate(res, b) {
-  const { project, specFile, scenario, title, description, coveredProjects, params } = b || {};
-  if (!project || !specFile || !scenario) return sendJson(res, 400, { error: "project, specFile et scenario requis" });
+  const { project, specFile, scenario, title, description, coveredProjects, params, viaAgent } = b || {};
+  if (!project) return sendJson(res, 400, { error: "project requis (repo source)" });
   const guard = e2eParamsGuard(params);
   if (guard) return sendJson(res, 400, { error: guard });
+
+  if (viaAgent) {
+    // Création via test-agent : le spec n'existe pas encore. On enregistre une
+    // entité DRAFT à l'emplacement cible (spec_file dérivé du titre, scenario =
+    // titre), puis on lance la session de création (test-agent) rattachée au test.
+    if (!title || !String(title).trim()) return sendJson(res, 400, { error: "title (comportement) requis pour créer un test via agent" });
+    const slug = e2eTitleSlug(title);
+    const specPath = (specFile && String(specFile).trim()) || `tests/playwright/${slug}.spec.ts`;
+    const sc = (scenario && String(scenario).trim()) || String(title).trim();
+    const r = await pilot.createE2ETest({ project, specFile: specPath, scenario: sc, title, description, coveredProjects, params });
+    const test = r && r.test;
+    if (!test) return sendJson(res, 500, { error: "création du test échouée" });
+    // Passe l'entité en DRAFT (spec pas encore rédigé) puis lance la session.
+    await pilot.draftE2ETest(test.e2eTestId);
+    let session = null;
+    try { session = await pilot.launchTestSession({ e2eTestId: test.e2eTestId, mode: "create" }); } catch (e) { session = { error: (e && e.message) || String(e) }; }
+    return sendJson(res, 201, { ok: true, test: { ...test, status: "DRAFT" }, session, viaAgent: true });
+  }
+
+  if (!specFile || !scenario) return sendJson(res, 400, { error: "project, specFile et scenario requis pour enregistrer un test existant" });
   const r = await pilot.createE2ETest({ project, specFile, scenario, title, description, coveredProjects, params });
   return sendJson(res, 201, { ok: true, test: r && r.test });
 }
@@ -1154,6 +1182,21 @@ const server = createServer(async (req, res) => {
     if (e2eRunMatch && req.method === "POST") {
       const b = await readBody(req);
       return handleE2ERun(res, e2eRunMatch[1], b);
+    }
+    // Session de création / mise à jour du test (agent test-agent) — reprise ou force.
+    const e2eSessionMatch = path.match(/^\/api\/e2e-tests\/([^/]+)\/session$/);
+    if (e2eSessionMatch && req.method === "POST") {
+      const t = await registryE2ETest(e2eSessionMatch[1]);
+      if (!t) return sendJson(res, 404, { error: "test E2E inconnu" });
+      const sb = await readBody(req).catch(() => ({}));
+      try {
+        const s = await pilot.launchTestSession({ e2eTestId: e2eSessionMatch[1], force: !!(sb && sb.force) });
+        return sendJson(res, 200, s);
+      } catch (e) {
+        const msg = String((e && e.message) || e);
+        if (/indisponible|inconnu|absent/i.test(msg)) return sendJson(res, 400, { error: msg });
+        return sendJson(res, 500, { error: msg });
+      }
     }
     const e2eParamsMatch = path.match(/^\/api\/e2e-tests\/([^/]+)\/params$/);
     if (e2eParamsMatch && req.method === "POST") {

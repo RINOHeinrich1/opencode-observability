@@ -64,6 +64,27 @@ Dépôts/tags : `opencode-mcp-task-orchestrator` v0.8.22→v0.8.24 ·
 
 ---
 
+## v0.9.31 — 2026-09-06 · Vidéo E2E avec sous-titres (génération à la demande, hors pipeline)
+
+À partir du **détail d'une exécution** (lecteur vidéo), bouton « Générer la vidéo
+avec sous-titres » : grave les **sous-titres dans la vidéo** (fichier téléchargeable),
+produits depuis le **rapport texte horodaté** (chaque `[TYPE] +MM:SS.mmm …` = un
+sous-titre à la même position temporelle que la vidéo).
+
+- **Couleurs par type** : `[STEP]` blanc · `[PASS]` vert · `[FAIL]` rouge ·
+  `[GAP]` orange · `[SKIPPED]` gris · `[INFO]` gris clair · `[RESULT]` coloré
+  selon le statut global du run (vert/rouge/gris).
+- **Endpoint** `POST /api/e2e/subtitled { executionId }` (admin) : lit rapport +
+  vidéo (mêmes origines temporelles), construit un ASS, `ffmpeg -vf ass=…`
+  (libass) → `storage/e2e/subtitled/<exec>.webm` (VP8, même durée). **Cache** :
+  réutilise si déjà généré.
+- **UI** : le bouton « ▶ Voir la vidéo » porte l'executionId ; la modale vidéo
+  propose « 🎬 Générer la vidéo avec sous-titres », puis bascule le lecteur sur la
+  vidéo sous-titrée + offre le téléchargement.
+- Dépendance système ajoutée : `ffmpeg` (avec libass).
+
+Dépôt : `opencode-observability` (v0.9.31).
+
 ## v0.9.30 — 2026-09-06 · Vue dédiée d'approbation (décision lisible, plein écran)
 
 Les décisions humaines à approuver étaient affichées dans de petits espaces

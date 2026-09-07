@@ -811,3 +811,6 @@ body.readonly #agent-session-btn {
   .decision-review { height: 100vh; height: 100dvh; max-width: none; border-radius: 0; border: none; }
   .dr-foot { flex-wrap: wrap; }
 }
+
+/* Génération vidéo sous-titrée (détail vidéo E2E) */
+.subtitled-gen { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 10px 0; padding: 10px 12px; background: rgba(255,255,255,.03); border: 1px dashed rgba(255,255,255,.15); border-radius: 8px; }

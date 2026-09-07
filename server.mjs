@@ -3,7 +3,7 @@
 // - Authentification par formulaire (session cookie) + gestion d'utilisateurs.
 import { createServer } from "node:http";
 import { readFileSync, existsSync, statSync, createReadStream, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
-import { join, dirname, extname, normalize, basename } from "node:path";
+import { join, dirname, extname, normalize, basename, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawn } from "node:child_process";
 import pg from "pg";
@@ -15,6 +15,7 @@ import * as pilot from "./pilot.mjs";
 import { sessionUsage, taskConsumption } from "./usage.mjs";
 import * as metrics from "./metrics.mjs";
 import { marked } from "marked";
+import { generateSubtitledVideo } from "./subtitles.mjs";
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1529,6 +1530,35 @@ const server = createServer(async (req, res) => {
       if (!project || !name) return sendJson(res, 400, { error: "project et name requis" });
       try { return sendJson(res, 200, await pilot.deleteE2ESecret({ project, name })); }
       catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
+    }
+
+    // Vidéo E2E avec SOUS-TITRES (gravés depuis le rapport texte horodaté).
+    // POST /api/e2e/subtitled { executionId } → génère storage/e2e/subtitled/<exec>.webm.
+    // Réservé admin (génération coûteuse, écrit des fichiers).
+    if (path === "/api/e2e/subtitled" && req.method === "POST") {
+      if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
+      const b = await readBody(req).catch(() => ({}));
+      const executionId = (b && b.executionId) || "";
+      if (!executionId) return sendJson(res, 400, { error: "executionId requis" });
+      try {
+        const row = (await registry().query("SELECT * FROM e2e_executions WHERE id = $1", [executionId])).rows[0];
+        if (!row) return sendJson(res, 404, { error: "exécution inconnue" });
+        const logsUrl = row.logs_url, videoUrl = row.video_url, status = row.status;
+        if (!logsUrl || !existsSync(logsUrl)) return sendJson(res, 400, { error: "rapport texte introuvable pour cette exécution" });
+        if (!videoUrl || !existsSync(videoUrl)) return sendJson(res, 400, { error: "vidéo introuvable pour cette exécution" });
+        const reportText = readFileSync(logsUrl, "utf8");
+        const outDir = join(__dirname, "storage", "e2e", "subtitled");
+        const outPath = join(outDir, `${executionId}.webm`);
+        let generated = existsSync(outPath) ? outPath : null; // cache : réutilise
+        const cached = !!generated;
+        if (!generated) {
+          generated = generateSubtitledVideo({ reportText, status, videoPath: videoUrl, outPath });
+        }
+        if (!generated) return sendJson(res, 500, { error: "génération impossible (rapport sans étapes horodatées ou ffmpeg en échec)" });
+        // URL d'accès au fichier (mécanisme e2e file, relatif à storage/e2e).
+        const rel = relative(E2E_STORAGE_DIR, generated).replace(/\\/g, "/");
+        return sendJson(res, 200, { ok: true, executionId, file: generated, url: `/api/e2e/file?p=${encodeURIComponent(rel)}`, cached });
+      } catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
     }
 
     const e2eParamsMatch = path.match(/^\/api\/e2e-tests\/([^/]+)\/params$/);

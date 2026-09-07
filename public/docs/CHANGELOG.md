@@ -64,6 +64,28 @@ Dépôts/tags : `opencode-mcp-task-orchestrator` v0.8.22→v0.8.24 ·
 
 ---
 
+## v0.9.30 — 2026-09-06 · Vue dédiée d'approbation (décision lisible, plein écran)
+
+Les décisions humaines à approuver étaient affichées dans de petits espaces
+(onglet Décisions en tableau / modal Actions de tâche) — difficile à lire, donc
+souvent approuvées sans réellement examiner.
+
+- **Vue d'approbation dédiée** (`decisionReviewModal`) : plein écran, responsive
+  (mobile = 100dvh), scrollable — en-tête décision (id/type/statut/tâche/plan/
+  échéance), section **Tâche** (request), section **Détail de la demande**,
+  résolution, zone de remarques, actions collantes (Approuver / Rejeter) en bas.
+  Le détail/request est **rendu en markdown** (endpoint GET `/api/render-md`).
+- **Bouton « Examiner »** : dans l'onglet **Décisions** et dans le **modal Actions**
+  (section Validation) — ouvre la vue. Approuver/Rejeter restent dispo en un clic ;
+  un rejet sans remarque demande confirmation.
+- API `/api/decisions` enrichie (`task_title`/`task_project`/`task_request` par
+  JOIN) ; résolution centralisée (`resolveDecision`).
+- Séparation : la liste des approbations reste dans l'onglet Décisions (filtrable
+  par tâche) et le modal Actions pointe vers la vue d'examen au lieu de tout
+  entasser.
+
+Dépôt : `opencode-observability` (v0.9.30).
+
 ## v0.9.29 — 2026-09-06 · Rôle « superviseur » (lecture seule) sur le panneau
 
 Nouveau rôle d'accès au centre de pilotage : **superviseur** = **lecture seule**

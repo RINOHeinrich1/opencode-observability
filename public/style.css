@@ -754,3 +754,60 @@ body.readonly [data-e2e-create-task],
 body.readonly #agent-session-btn {
   display: none !important;
 }
+
+/* === Vue dédiée d'APPROBATION (décision à prendre) — plein écran lisible === */
+.decision-review {
+  background: var(--panel, #161a22);
+  border: 1px solid var(--border, #2b3242);
+  border-radius: 12px;
+  width: 100%;
+  height: calc(100vh - 24px);
+  max-width: 1100px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.dr-head {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 16px; padding: 18px 24px; border-bottom: 1px solid var(--border, #2b3242);
+  background: rgba(255,255,255,.02);
+}
+.dr-head h2 { margin: 0 0 6px; font-size: 20px; }
+.dr-head p { margin: 0; line-height: 1.7; }
+.dr-head [data-dr-close] { font-size: 16px; flex: 0 0 auto; }
+.dr-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 20px 24px;
+  display: flex; flex-direction: column; gap: 22px;
+  -webkit-overflow-scrolling: touch;
+}
+.dr-section { border: 1px solid rgba(255,255,255,.07); border-radius: 10px; padding: 16px 18px; background: rgba(255,255,255,.02); }
+.dr-section h3 { margin: 0 0 10px; font-size: 14px; text-transform: uppercase; letter-spacing: .04em; opacity: .75; }
+.dr-section .project-kv { display:flex; gap:10px; margin: 4px 0; }
+.dr-section .lbl { opacity:.6; min-width: 70px; }
+.dr-pre {
+  white-space: pre-wrap; word-break: break-word; margin: 6px 0 0;
+  font-family: ui-monospace, monospace; font-size: 13px; line-height: 1.6;
+  background: rgba(0,0,0,.25); border-radius: 8px; padding: 12px;
+}
+.dr-remarks {
+  width: 100%; box-sizing: border-box; min-height: 70px; margin-top: 8px;
+  padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border,#3a4256);
+  background: rgba(0,0,0,.2); color: var(--text, #e6e8ee); font-size: 14px;
+}
+.md-body.markdown-view { line-height: 1.7; }
+.md-body.markdown-view pre { overflow-x: auto; padding: 10px; background: rgba(0,0,0,.3); border-radius: 8px; }
+.md-body.markdown-view code { background: rgba(255,255,255,.08); padding: 1px 5px; border-radius: 4px; }
+.md-body.markdown-view pre code { background: transparent; padding: 0; }
+.dr-foot {
+  display: flex; gap: 10px; justify-content: flex-end; align-items: center;
+  padding: 14px 24px; border-top: 1px solid var(--border, #2b3242);
+  background: rgba(255,255,255,.02); flex: 0 0 auto;
+}
+.dr-foot .dr-act { padding: 10px 20px; font-size: 15px; }
+@media (max-width: 700px) {
+  .dr-head, .dr-body, .dr-foot { padding-left: 14px; padding-right: 14px; }
+  .decision-review { height: 100vh; height: 100dvh; max-width: none; border-radius: 0; border: none; }
+  .dr-foot { flex-wrap: wrap; }
+}

@@ -313,19 +313,25 @@ async function registryDeployments(url) {
   return { deployments: rows.filter((d) => !archived.has(d.task_id)) };
 }
 
-async function registryDecisions(url) {
-  const db = registry();
-  const archived = await archivedTaskIds();
-  const taskId = url.searchParams.get("taskId");
-  let rows = [];
-  try {
-    const res = taskId
-      ? await db.query("SELECT * FROM decisions WHERE task_id = $1 ORDER BY id DESC", [taskId])
-      : await db.query("SELECT * FROM decisions ORDER BY id DESC LIMIT 200");
-    rows = res.rows;
-  } catch { rows = []; }
-  return { decisions: rows.filter((d) => !archived.has(d.task_id)) };
-}
+ async function registryDecisions(url) {
+   const db = registry();
+   const archived = await archivedTaskIds();
+   const taskId = url.searchParams.get("taskId");
+   let rows = [];
+   try {
+     const res = taskId
+       ? await db.query(
+           `SELECT d.*, t.title AS task_title, t.project AS task_project, t.request AS task_request
+            FROM decisions d LEFT JOIN tasks t ON t.id = d.task_id
+            WHERE d.task_id = $1 ORDER BY d.id DESC`, [taskId])
+       : await db.query(
+           `SELECT d.*, t.title AS task_title, t.project AS task_project, t.request AS task_request
+            FROM decisions d LEFT JOIN tasks t ON t.id = d.task_id
+            ORDER BY d.id DESC LIMIT 200`);
+     rows = res.rows;
+   } catch { rows = []; }
+   return { decisions: rows.filter((d) => !archived.has(d.task_id)) };
+ }
 
 async function registryArtifacts(url) {
   const db = registry();
@@ -1047,6 +1053,12 @@ const server = createServer(async (req, res) => {
     }
 
     if (path === "/api/me") return sendJson(res, 200, { user });
+    // Rendu markdown à la volée (GET, lecture) — utilisé par la vue d'approbation.
+    if (path === "/api/render-md" && req.method === "GET") {
+      const text = url.searchParams.get("text") || "";
+      const html = text ? marked.parse(text) : "";
+      return sendJson(res, 200, { html });
+    }
     if (path === "/api/ecosystem") return sendJson(res, 200, scanEcosystem());
     if (path === "/api/models" && req.method === "GET") return sendJson(res, 200, { models: listModels() });
     const agentModelMatch = path.match(/^\/api\/agents\/([^/]+)\/model$/);

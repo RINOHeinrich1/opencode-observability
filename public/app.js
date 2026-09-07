@@ -372,19 +372,20 @@ async function renderDecisions() {
   document.getElementById('pane-decisions').innerHTML = `
     <h2>Décisions humaines</h2>
     ${filterBar()}
-    <table><thead><tr><th>Tâche</th><th>Type</th><th>Statut</th><th>Détail</th><th>Échéance</th><th>Résolution</th><th></th></tr></thead>
+    <table><thead><tr><th>Tâche</th><th>Type</th><th>Statut</th><th>Détail</th><th>Échéance</th><th></th></tr></thead>
     <tbody>${dec.map((d) => `<tr class="decision-row">
       <td class="code">${esc(d.task_id)}</td><td>${esc(d.kind)}</td><td>${badge(d.status)}</td>
-      <td class="decision-detail">${esc(d.detail || '—')}</td>
+      <td class="decision-detail">${esc((d.detail || '—').slice(0, 120))}${(d.detail || '').length > 120 ? '…' : ''}</td>
       <td class="code">${esc((d.expires_at || '—').replace('T', ' ').slice(0, 19))}</td>
-      <td>${esc(d.resolution || '—')}</td>
       <td>${actionable(d) ? `<div class="dec-act">
-        <input class="decision-remarks" placeholder="remarques (optionnel)">
+        <button class="ghost" data-review="${esc(d.decision_id)}" title="Examiner la décision en grand (markdown, plein écran)">Examiner</button>
         <button class="approve" data-approve="${esc(d.decision_id)}">Approuver</button>
         <button class="danger" data-reject="${esc(d.decision_id)}">Rejeter</button>
-      </div>` : '<span class="muted-sm">—</span>'}</td>
-    </tr>`).join('') || '<tr><td colspan="7" class="muted">Aucune décision</td></tr>'}</tbody></table>`;
+      </div>` : (d.resolution ? `<span class="muted-sm">${esc((d.resolution || '').slice(0, 60))}</span>` : '<span class="muted-sm">—</span>')}</td>
+    </tr>`).join('') || '<tr><td colspan="6" class="muted">Aucune décision</td></tr>'}</tbody></table>`;
   bindTaskFilter();
+  const findDecision = (id) => dec.find((x) => x.decision_id === id);
+  document.querySelectorAll('#pane-decisions [data-review]').forEach((b) => b.addEventListener('click', () => decisionReviewModal(findDecision(b.dataset.review), () => refreshActive())));
   document.querySelectorAll('#pane-decisions [data-approve], #pane-decisions [data-reject]').forEach((b) => {
     b.addEventListener('click', async () => {
       const decisionId = b.dataset.approve || b.dataset.reject;
@@ -392,13 +393,102 @@ async function renderDecisions() {
       const input = b.closest('.decision-row').querySelector('.decision-remarks');
       const resolution = input ? input.value.trim() : '';
       try {
-        await api(`/api/decisions/${encodeURIComponent(decisionId)}/resolve`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: st, resolution }),
-        });
+        await resolveDecision(decisionId, st, resolution);
         refreshActive();
       } catch (err) { alert('Échec : ' + (err.message || err)); }
     });
+  });
+}
+
+// Résolution d'une décision humaine (approuver / rejeter) — centralisée.
+async function resolveDecision(decisionId, status, resolution) {
+  await api(`/api/decisions/${encodeURIComponent(decisionId)}/resolve`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status, resolution }),
+  });
+}
+
+// Rendu markdown côté serveur (GET, lecture) → HTML.
+async function renderMarkdownInline(text) {
+  if (!text || !text.trim()) return '';
+  try { const r = await api('/api/render-md?text=' + encodeURIComponent(text.slice(0, 60000))); return (r && r.html) || ''; }
+  catch { return ''; }
+}
+
+// Vue DÉDIÉE d'approbation (plein écran, lisible) : décision à prendre avec son
+// contexte. Détail/request en markdown interprété, espacement large, scrollable,
+// actions (Approuver / Rejeter) collantes en bas. Approuver n'est proposé que si
+// l'utilisateur a les droits (admin) et si la décision est actionnable.
+async function decisionReviewModal(decision, back) {
+  const actionable = decision && decision.status === 'awaiting' && decision.kind !== 'recette' && !decision.permission_id;
+  const canAct = IS_ADMIN && actionable;
+  const [detailHtml, taskHtml] = await Promise.all([
+    renderMarkdownInline(decision.detail),
+    renderMarkdownInline(decision.task_request || ''),
+  ]);
+  const kindLabel = { validation: 'Validation', review: 'Review', permission: 'Permission', recette: 'Recette' }[decision.kind] || decision.kind;
+  const statusLabel = { awaiting: 'En attente', approved: 'Approuvée', rejected: 'Rejetée', expired: 'Expirée' }[decision.status] || decision.status;
+  showModal(`
+    <div class="decision-review">
+      <header class="dr-head">
+        <div>
+          <h2>Décision à prendre</h2>
+          <p class="muted-sm"><span class="code">${esc(decision.decision_id)}</span> · <span class="badge ${decision.status === 'approved' ? 'approved' : decision.status === 'rejected' ? 'rejected' : 'awaiting'}">${esc(statusLabel)}</span>
+            · <span class="badge queued">${esc(kindLabel)}</span>
+            ${decision.task_id ? `· Tâche <span class="code">${esc(decision.task_id)}</span>` : ''}
+            ${decision.plan_id ? `· Plan <span class="code">${esc(decision.plan_id)}</span>` : ''}
+            ${decision.requested_by ? `· demandée par <span class="code">${esc(decision.requested_by)}</span>` : ''}
+            ${decision.expires_at ? `· échéance ${esc((decision.expires_at || '').replace('T', ' ').slice(0, 19))}` : ''}
+          </p>
+        </div>
+        <button type="button" class="ghost" data-dr-close title="Fermer">✕</button>
+      </header>
+
+      <div class="dr-body">
+        ${decision.task_id ? `
+        <section class="dr-section">
+          <h3>Tâche</h3>
+          <div class="project-kv"><span class="lbl">Id</span><code>${esc(decision.task_id)}</code></div>
+          ${decision.task_title ? `<div class="project-kv"><span class="lbl">Titre</span><span>${esc(decision.task_title)}</span></div>` : ''}
+          ${decision.task_project ? `<div class="project-kv"><span class="lbl">Projet</span><code>${esc(decision.task_project)}</code></div>` : ''}
+          ${taskHtml ? `<div class="md-body markdown-view">${taskHtml}</div>` : (decision.task_request ? `<pre class="dr-pre">${esc(decision.task_request)}</pre>` : '')}
+        </section>` : ''}
+
+        <section class="dr-section">
+          <h3>Détail de la demande d'approbation</h3>
+          ${detailHtml ? `<div class="md-body markdown-view">${detailHtml}</div>` : (decision.detail ? `<pre class="dr-pre">${esc(decision.detail)}</pre>` : '<p class="muted-sm">(aucun détail)</p>')}
+        </section>
+
+        ${decision.session_id ? `<section class="dr-section"><h3>Session</h3><p class="muted-sm"><code>${esc(decision.session_id)}</code></p></section>` : ''}
+        ${decision.resolution ? `<section class="dr-section"><h3>Résolution</h3><div class="md-body markdown-view">${esc(decision.resolution)}</div></section>` : ''}
+
+        ${canAct ? `
+        <section class="dr-section">
+          <h3>Votre décision</h3>
+          <textarea id="dr-remarks" class="dr-remarks" rows="3" placeholder="Remarques (optionnel — explicitez un rejet)"></textarea>
+          <p class="muted-sm">La décision est transmise et la tâche/le plan évolue en conséquence (approbation → suite du cycle ; rejet → rework avec vos remarques).</p>
+        </section>` : ''}
+      </div>
+
+      <footer class="dr-foot">
+        ${canAct ? `
+        <button type="button" class="ghost" data-dr-close>Fermer</button>
+        <button type="button" class="approve dr-act" data-dr-resolve="approved">✔ Approuver</button>
+        <button type="button" class="danger dr-act" data-dr-resolve="rejected">✖ Rejeter</button>
+        ` : `<button type="button" class="ghost" data-dr-close>Fermer</button>`}
+      </footer>
+    </div>`);
+  document.querySelectorAll('[data-dr-close]').forEach((b) => b.addEventListener('click', closeModal));
+  const resolveBtn = document.querySelector('[data-dr-resolve]');
+  if (resolveBtn) resolveBtn.addEventListener('click', async () => {
+    const status = resolveBtn.dataset.drResolve;
+    const resolution = document.getElementById('dr-remarks') ? document.getElementById('dr-remarks').value.trim() : '';
+    if (status === 'rejected' && !resolution) { alert('Pour rejeter, merci d\'indiquer une remarque (sera transmise en rework).'); return; }
+    try {
+      await resolveDecision(decision.decision_id, status, resolution);
+      closeModal();
+      if (back) back(); else refreshActive();
+    } catch (err) { alert('Échec : ' + (err.message || err)); }
   });
 }
 
@@ -2977,8 +3067,8 @@ async function taskActionsModal(taskId) {
         ${awaiting.map((d) => `
           <div class="decision-row">
             <code class="muted-sm">${esc(d.decision_id)}</code>
-            <span class="muted-sm">${esc(d.kind)} — ${esc(d.detail || '')}</span>
-            <input class="decision-remarks" placeholder="remarques">
+            <span class="muted-sm">${esc(d.kind)} — ${esc((d.detail || '').slice(0, 140))}${(d.detail || '').length > 140 ? '…' : ''}</span>
+            <button type="button" class="ghost" data-review-dec="${esc(d.decision_id)}" title="Examiner la décision en grand (plein écran, markdown)">Examiner</button>
             <button class="approve" data-approve="${esc(d.decision_id)}">Approuver</button>
             <button class="danger" data-reject="${esc(d.decision_id)}">Rejeter</button>
           </div>`).join('')}
@@ -3055,17 +3145,18 @@ async function taskActionsModal(taskId) {
       .catch((e) => alert('Échec : ' + (e.message || e)));
   };
   document.querySelectorAll('[data-goto]').forEach((b) => b.addEventListener('click', () => { closeModal(); goToTab(b.dataset.goto, taskId); }));
+  const decById = {}; awaiting.forEach((d) => { decById[d.decision_id] = d; });
+  // enrichit la décision avec le contexte tâche (titre/projet/request) pour la vue.
+  const enrich = (d) => ({ ...d, task_title: d.task_title || task.title || null, task_project: d.task_project || task.project || null, task_request: d.task_request || task.request || null });
+  document.querySelectorAll('[data-review-dec]').forEach((b) => b.addEventListener('click', () => decisionReviewModal(enrich(decById[b.dataset.reviewDec]), () => { closeModal(); refreshActive(); })));
   document.querySelectorAll('[data-approve], [data-reject]').forEach((b) => {
     b.addEventListener('click', async () => {
       const decisionId = b.dataset.approve || b.dataset.reject;
       const st = b.dataset.approve ? 'approved' : 'rejected';
-      const input = b.closest('.decision-row').querySelector('.decision-remarks');
-      const resolution = input ? input.value.trim() : '';
+      const resolution = '';
+      if (st === 'rejected' && !confirm('Rejeter sans remarque ? (recommandé d\'expliquer via « Examiner »)')) return;
       try {
-        await api(`/api/decisions/${encodeURIComponent(decisionId)}/resolve`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: st, resolution }),
-        });
+        await resolveDecision(decisionId, st, resolution);
         closeModal();
         refreshActive();
       } catch (err) { alert('Échec : ' + (err.message || err)); }

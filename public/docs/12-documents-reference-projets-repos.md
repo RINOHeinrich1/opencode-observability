@@ -36,8 +36,22 @@ l'agent — jamais stocké/copié en base.
 - `specs-fonctionnelles` — User stories + règles métier.
 - `scenarios-gherkin` — scénarios Gherkin (parcours couverts / à couvrir).
 
+> **Multi-fichiers par kind (décision conservée)** : le modèle est **générique**
+> (`doc_projects`/`doc_repos` en N:N) et permet **1..N documents par kind** pour un
+> projet/repo. Aujourd'hui madatalk a 1 fichier par kind, mais un kind pourra
+> accueillir plusieurs fichiers (ex. plusieurs ADR, specs par périmètre, plusieurs
+> fichiers `.feature`) sans changement de schéma. C'est pourquoi l'UI regroupe
+> toujours par **catégorie** avec chaque document cochable individuellement.
+
 Un projet peut être associé à un ou plusieurs ADR (le sien + ceux de ses repos) ;
 un repo peut être associé à son ADR.
+
+### Couverture E2E vs scénarios
+Le Gherkin d'un projet porte une **matrice de couverture E2E** (§0 des scénarios
+Gherkin madatalk) reliant chaque test E2E **actif** du registre (`e2e_tests`) à un
+scénario marqué `[E2E couvert]` ; les autres scénarios sont `[E2E — à implémenter]`.
+La **vérité opérationnelle** (statut ACTIVE/FAIL/date) reste dans le registre E2E —
+le document ne porte que des liens stables scénario ↔ test, pas d'état volatile.
 
 ## 3. Où ces chemins sont-ils fournis en contexte ?
 
@@ -109,5 +123,14 @@ présent dans le workspace/checkout.
 - **Un « ADR » ≠ ADR du framework** : `adr-tech` désigne l'architecture technique
   du produit (madatalk, oniria…), distinct des ADR 08-11 du framework
   d'orchestration.
+- **Couverture : document ≠ registre** : la matrice de couverture du Gherkin est
+  **contractuelle** (quels scénarios doivent être couverts / le sont par quel
+  test) ; l'**état réel** (ACTIVE/OBSOLETE, PASS/FAIL, exécutions, date) se lit
+  **uniquement dans le registre E2E** — ne pas dupliquer de statuts volatiles
+  dans les documents.
+- **Affichage « doublon »** : chaque document apparaît une fois en base, mais
+  rattaché au projet ET au repo ; l'UI groupe par catégorie (en-tête) puis liste
+  le(s) document(s) — le libellé de catégorie peut visuellement ressembler au
+  titre du document (ce n'est pas un doublon).
 - Le chemin est un **contexte**, pas une exigence de build : l'agent lit ce qui
   existe, signale un chemin mort (fichier absent) comme écart.

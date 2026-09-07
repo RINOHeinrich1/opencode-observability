@@ -5,6 +5,65 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## 2026-09-06 · Synthèse — référentiel documentaire des PROJETS (ADR-12) + couverture E2E
+
+Cette session a fait émerger un **référentiel documentaire par projet** (ADR-12),
+alimenté par la documentation du produit **Madatalk** (backend ONIRIA
+`madatalk-requests`/`chatbot-management` + SPA client `mada-talk`). Contexte :
+les tests E2E et la recette avaient besoin de l'**architecture**, des **règles
+métier** et des **scénarios** du produit en contexte — pas seulement des specs de
+test.
+
+### Référentiel documentaire (ADR-12) — mécanique
+- Registre générique **`docs` N:N** ⇄ projets ET/OU repos ; un document =
+  `path` (fichier lu par l'agent), **jamais de contenu en base**.
+- 3 kinds : `adr-tech` (architecture technique) · `specs-fonctionnelles`
+  (User stories + règles métier) · `scenarios-gherkin` (scénarios BDD).
+- **Import depuis le PC** (fichiers `.md/.txt/.feature…`, max 2 Mo) stockés dans
+  `storage/ref-docs`, ou référence d'un chemin existant ; aperçu intégré.
+- Docs exposés sur `project_list/project_get`, `repo_list/repo_get`,
+  `e2e_test_get` (`test.docs`) ; outils MCP `doc_*`.
+- **Contexte agents** (cases à cocher, tout coché par défaut, 3 catégories
+  toujours visibles) : sessions **test-agent** (création/MAJ + libre) et
+  **recette** → chemins injectés dans le prompt (`buildTestPrompt`,
+  `buildFreeTestPrompt`, `buildRecettePrompt`) ; docs des projets couverts
+  rattachés à la recette (`recette_documents`, nature `[kind]`).
+
+### Documentation produit Madatalk produite et rattachée au projet
+Trois documents (`mada-talk/docs/*`, mergés sur main, enregistrés ADR-12 sur le
+projet + repo `mada-talk`) :
+
+1. **`adr-architecture-madatalk.md`** (`adr-tech`) — architecture **réelle** du
+   code : packages ONIRIA (`chatbot-management`, `madatalk-requests` v0.2.33),
+   frontières inter-package (intentions/transactions, provisionnement auto du bot
+   à `A traiter`), machines à états, endpoints `.client.*`, back-office
+   (clients/opérateurs-havet/chatbots/livrables), SPA React/Vite. + **12bis
+   « architecture cible »** : interactions → **Conversations**.
+2. **`specification-fonctionnelle-madatalk.md`** (`specs-fonctionnelles`) —
+   catalogue **règles métier RM-xxxx** + **user stories** par rôle (O/A/C-US)
+   référencées + index croisé + arbitrages actés (« A traiter » canonique,
+   opérateur ne voit pas `Nouveau`, pause/résiliation client = approbation admin,
+   résilié = supprimé, annuaire clients/opérateurs CRUD+invitation).
+3. **`scenarios-gherkin-madatalk.md`** (`scenarios-gherkin`) — scénarios BDD dont
+   **parcours transverses multi-rôles** (SPA client → console ONIRIA) + règles
+   par rôle ; **matrice de couverture E2E** (§0) liant les tests actifs
+   (`E2E-MADA-TALK-15gjc53`=S1, `E2E-MADA-TALK-vjja3p`=S2) aux scénarios
+   `[E2E couvert]` vs `[E2E — à implémenter]`.
+
+### Évolutions E2E connexes
+- Rapport texte **transcript horodaté** par étape (StepReporter + runner/import) ;
+  `skip_reason` persisté ; correction de bugs de spec S2 (race sur la liste
+  clients, description contenant le botName).
+- Repos de code associés au test (`repoIds`) définis à la création = couverture
+  lisible par la recette (ADR 11 complété).
+- Session **test-agent libre** + page Tests E2E (filtre « actif » par défaut).
+
+Dépôts/tags : `opencode-mcp-task-orchestrator` v0.8.22→v0.8.24 ·
+`opencode-observability` v0.9.20→v0.9.27 · `opencode-agents` v0.6.9→v0.6.11 ·
+`opencode-scripts` v0.2.3 · repo applicatif `mada-talk` (documents de référence).
+
+---
+
 ## v0.9.27 — 2026-09-06 · Session test-agent libre : docs du projet + confirmation vars/secrets
 
 La modale « Session test-agent » (page Tests E2E) proposait seulement projet +

@@ -64,6 +64,20 @@ Dépôts/tags : `opencode-mcp-task-orchestrator` v0.8.22→v0.8.24 ·
 
 ---
 
+## v0.9.33 — 2026-09-06 · Vidéo narrée : respiration allongée + sous-titres gravés
+
+Amélioration de la vidéo narrée (prototype v0.9.32) :
+- **Respiration allongée** entre étapes : padding après la voix passé à ~1,1 s
+  (freeze prolongé) → la vidéo est plus étendue (S1 ~50 s au lieu de ~44 s),
+  expérience de lecture plus agréable.
+- **Sous-titres gravés dans la version narrée** : après montage de la narration,
+  toutes les lignes horodatées du rapport sont **remappées sur la timeline
+  finale** (en tenant compte des extensions par freeze) puis gravées en passe
+  finale (`ass=`) — on garde donc le sous-titrage (couleurs) tout en écoutant la
+  voix.
+
+Dépôt : `opencode-observability` (v0.9.33).
+
 ## v0.9.32 — 2026-09-06 · Vidéo E2E narrée (voix TTS + extension par freeze) — prototype
 
 Prototype à la demande : à côté de la vidéo sous-titrée, bouton « 🔊 Vidéo narrée

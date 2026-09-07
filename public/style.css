@@ -719,3 +719,38 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 .repo-mini-actions { display: flex; gap: 6px; margin-top: 4px; }
 .repo-mini-actions .tiny { font-size: 11px; padding: 1px 6px; }
 .danger-text { color: #ff6b6b; }
+
+/* Rôle SUPERVISOR / lecture seule (v0.9.29) : masque les actions d'écriture.
+   Les liens/lecture (a.ghost, boutons ghost de consultation) restent visibles. */
+body.readonly button.launch-btn,
+body.readonly button.approve,
+body.readonly button.danger,
+body.readonly button.icon-btn,
+body.readonly .icon-actions,
+body.readonly button[data-actions],
+body.readonly .repo-mini-actions {
+  display: none !important;
+}
+body.readonly .readonly-banner { display: block !important; }
+.readonly-banner { display: none; }
+
+/* Rôle lecture seule — complément : masque les contrôles d'édition par data-*. */
+body.readonly [data-edit-repo],
+body.readonly [data-edit-project],
+body.readonly [data-del-project],
+body.readonly [data-add-repo-to],
+body.readonly [data-unlink-repo],
+body.readonly [data-del-doc],
+body.readonly [data-edit-model],
+body.readonly [data-e2e-obsolete],
+body.readonly [data-e2e-session],
+body.readonly [data-e2e-session-force],
+body.readonly [data-rec-session] {
+  display: none !important;
+}
+
+/* Rôle lecture seule — actions d'écriture restantes (ghost de création/session). */
+body.readonly [data-e2e-create-task],
+body.readonly #agent-session-btn {
+  display: none !important;
+}

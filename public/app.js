@@ -407,28 +407,36 @@ async function renderUsers() {
   if (r.status === 403) { document.getElementById('pane-users').innerHTML = '<p class="muted">Réservé aux administrateurs.</p>'; return; }
   const data = await r.json();
   const users = data.users || [];
+  const roleOpts = (sel) => `<select class="role-sel" data-user="${esc(sel.id)}">${['admin', 'supervisor', 'user'].map((rl) => `<option value="${rl}" ${sel.role === rl ? 'selected' : ''}>${rl === 'admin' ? 'admin' : rl === 'supervisor' ? 'superviseur' : 'utilisateur'}</option>`).join('')}</select>`;
   document.getElementById('pane-users').innerHTML = `
     <h2>Utilisateurs</h2>
+    <p class="muted-sm">Rôles : <strong>admin</strong> (tout) · <strong>superviseur</strong> (lecture seule, observabilité omise) · <strong>utilisateur</strong> (lecture seule).</p>
     <div class="user-form">
       <input id="new-username" placeholder="nom d'utilisateur">
       <input id="new-password" type="password" placeholder="mot de passe">
-      <label><input type="checkbox" id="new-admin"> admin</label>
+      <select id="new-role"><option value="user">utilisateur</option><option value="supervisor">superviseur</option><option value="admin">admin</option></select>
       <button id="add-user">Ajouter</button>
     </div>
     <table><thead><tr><th>Utilisateur</th><th>Rôle</th><th>Créé le</th><th></th></tr></thead>
-    <tbody>${users.map((u) => `<tr><td>${esc(u.username)}</td><td>${u.is_admin ? 'admin' : 'utilisateur'}</td><td class="code">${esc((u.created_at || '').replace('T', ' ').slice(0, 19))}</td><td><button class="danger" data-del="${u.id}">Supprimer</button></td></tr>`).join('')}</tbody></table>
+    <tbody>${users.map((u) => `<tr><td>${esc(u.username)}</td><td>${roleOpts(u)}</td><td class="code">${esc((u.created_at || '').replace('T', ' ').slice(0, 19))}</td><td><button class="danger" data-del="${u.id}">Supprimer</button></td></tr>`).join('')}</tbody></table>
     <div id="users-msg" class="error"></div>`;
   document.getElementById('add-user').addEventListener('click', async () => {
     const username = document.getElementById('new-username').value;
     const password = document.getElementById('new-password').value;
-    const isAdmin = document.getElementById('new-admin').checked;
-    const rr = await fetch('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password, isAdmin }) });
+    const role = document.getElementById('new-role').value;
+    const rr = await fetch('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password, role }) });
     const msg = document.getElementById('users-msg');
     if (rr.ok) { msg.textContent = ''; renderUsers(); }
     else msg.textContent = (await rr.json()).error || 'Erreur';
   });
-  document.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
+  document.querySelectorAll('#pane-users [data-del]').forEach((b) => b.addEventListener('click', async () => {
     await fetch(`/api/users/${b.dataset.del}`, { method: 'DELETE' });
+    renderUsers();
+  }));
+  document.querySelectorAll('#pane-users .role-sel').forEach((sel) => sel.addEventListener('change', async () => {
+    const rr = await fetch(`/api/users/${sel.dataset.user}/role`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: sel.value }) });
+    const msg = document.getElementById('users-msg');
+    if (!rr.ok) msg.textContent = (await rr.json()).error || 'Erreur';
     renderUsers();
   }));
 }
@@ -3792,8 +3800,20 @@ async function init() {
   try {
     const me = await api('/api/me');
     ME = me.user;
-    document.getElementById('whoami').textContent = ME.username + (ME.is_admin ? ' (admin)' : '');
+    document.getElementById('whoami').textContent = ME.username + (ME.is_admin ? ' (admin)' : (ME.role === 'supervisor' ? ' (superviseur)' : ''));
     if (ME.is_admin) document.getElementById('tab-users').hidden = false;
+    // Rôle SUPERVISOR / lecture seule : classe body (masque les actions
+    // d'écriture via CSS) + onglets sans intérêt en lecture (archives=actions,
+    // observabilité omise en v1, users réservé admin).
+    if (ME.isReadOnly || ME.role === 'supervisor') {
+      document.body.classList.add('readonly');
+      // Onglets sans intérêt / non prévus pour le rôle lecture seule :
+      // observabilité (omise en v1), archives (actions), users (réservé admin).
+      for (const t of ['observability', 'archives', 'users']) {
+        const btn = document.querySelector(`#tabs [data-tab="${t}"]`);
+        if (btn) btn.hidden = true;
+      }
+    }
   } catch { return; }
 
   try {

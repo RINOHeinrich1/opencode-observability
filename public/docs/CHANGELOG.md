@@ -64,6 +64,29 @@ Dépôts/tags : `opencode-mcp-task-orchestrator` v0.8.22→v0.8.24 ·
 
 ---
 
+## v0.9.29 — 2026-09-06 · Rôle « superviseur » (lecture seule) sur le panneau
+
+Nouveau rôle d'accès au centre de pilotage : **superviseur** = **lecture seule**
+(vue d'ensemble, tâches, recettes, tests E2E, documents, décisions, projets,
+repos, Vars & Secrets en lecture). **Observabilité omise en v1.** Aucune action
+d'écriture ; aucune session IA (test-agent / recette) ; agents IA et écosystème
+non touchés.
+
+- **Base** : colonne `users.role` (`admin` | `supervisor` | `user`), migration
+  rétrocompat `is_admin=1 → role='admin'` ; `listUsers`/`createUser`/
+  `updateUserRole` exposent le rôle.
+- **Auth** : `currentUser` renvoie `role`/`isSupervisor`/`isReadOnly`.
+- **Garde serveur** : tout utilisateur non-admin n'a accès qu'aux **GET** — toute
+  méthode d'écriture (POST/PUT/DELETE) refusée 403 (protection côté serveur,
+  jamais l'UI).
+- **Gestion utilisateurs (admin)** : création avec rôle + bascule de rôle par
+  ligne (admin/superviseur/utilisateur).
+- **UI** : bandeau « Superviseur (lecture seule) », onglets observabilité /
+  archives / users masqués, actions d'écriture masquées via CSS
+  (`body.readonly …`).
+
+Dépôt : `opencode-observability` (v0.9.29).
+
 ## v0.9.28 — 2026-09-06 · Documents de référence : bouton « Regarder » pour lire le contenu
 
 Les documents de référence (ADR/specs/Gherkin) rattachés à un projet/repo

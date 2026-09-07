@@ -7,7 +7,7 @@ import { join, dirname, extname, normalize, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawn } from "node:child_process";
 import pg from "pg";
-import { openDb, getUserByUsername, verifyPassword, createUser, listUsers, updatePassword, deleteUser, createSession, deleteSession, pruneSessions, listArchives, archivedTaskIds, archiveTask, restoreTask, getArchive, removeArchive } from "./panel-db.mjs";
+import { openDb, getUserByUsername, verifyPassword, createUser, updateUserRole, listUsers, updatePassword, deleteUser, createSession, deleteSession, pruneSessions, listArchives, archivedTaskIds, archiveTask, restoreTask, getArchive, removeArchive } from "./panel-db.mjs";
 import { currentUser, sessionToken, cookieHeader, clearCookieHeader } from "./auth.mjs";
 import { scanEcosystem, updateAgentModel } from "./ecosystem.mjs";
 import { loadEnv } from "./env.mjs";
@@ -506,8 +506,10 @@ async function handleLogin(req, res) {
     return sendJson(res, 401, { error: "identifiants invalides" });
   }
   const s = await createSession(u.id);
+  let role = u.role && ["admin", "supervisor", "user"].includes(u.role) ? u.role : "user";
+  if (u.is_admin) role = "admin";
   res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Set-Cookie": cookieHeader(s.token) });
-  res.end(JSON.stringify({ ok: true, user: { id: u.id, username: u.username, is_admin: !!u.is_admin } }));
+  res.end(JSON.stringify({ ok: true, user: { id: u.id, username: u.username, is_admin: role === "admin", role } }));
 }
 
 async function handleLogout(req, res) {
@@ -521,11 +523,12 @@ async function handleUsers(req, res, user) {
   if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
   if (req.method === "GET") return sendJson(res, 200, { users: await listUsers() });
   if (req.method === "POST") {
-    const { username, password, isAdmin } = await readBody(req);
+    const { username, password, role } = await readBody(req);
     if (!username || !password) return sendJson(res, 400, { error: "username et password requis" });
     try {
-      const u = await createUser(String(username), String(password), !!isAdmin);
-      return sendJson(res, 201, { ok: true, user: { id: u.id, username: u.username, is_admin: !!u.is_admin } });
+      // role : admin | supervisor | user (défaut user ; isAdmin rétrocompat).
+      const u = await createUser(String(username), String(password), false, role || "user");
+      return sendJson(res, 201, { ok: true, user: { id: u.id, username: u.username, is_admin: u.is_admin ? true : false, role: (u.role || "user") } });
     } catch (e) {
       return sendJson(res, 409, { error: "nom d'utilisateur déjà pris" });
     }
@@ -546,6 +549,14 @@ async function handleUserAction(req, res, user, path) {
     if (!password) return sendJson(res, 400, { error: "password requis" });
     await updatePassword(id, String(password));
     return sendJson(res, 200, { ok: true });
+  }
+  if (req.method === "POST" && parts[3] === "role") {
+    const { role } = await readBody(req);
+    if (!["admin", "supervisor", "user"].includes(role)) return sendJson(res, 400, { error: "role invalide (admin|supervisor|user)" });
+    if (id === user.id) return sendJson(res, 400, { error: "impossible de changer son propre rôle" });
+    const u = await updateUserRole(id, role);
+    if (!u) return sendJson(res, 404, { error: "utilisateur inconnu" });
+    return sendJson(res, 200, { ok: true, user: { id: u.id, username: u.username, is_admin: u.is_admin ? true : false, role: u.role || "user" } });
   }
   return sendJson(res, 405, { error: "méthode non autorisée" });
 }
@@ -1026,6 +1037,13 @@ const server = createServer(async (req, res) => {
     if (!user) {
       if (path.startsWith("/api/")) return sendJson(res, 401, { error: "non authentifié" });
       return redirect(res, "/login");
+    }
+
+    // Rôle SUPERVISEUR / lecture seule (v0.9.29) : accès en LECTURE (GET)
+    // uniquement. Toute méthode d'écriture (POST/PUT/DELETE/PATCH) est refusée
+    // sauf pour un administrateur. La protection est côté serveur (jamais l'UI).
+    if (user.isReadOnly && req.method !== "GET") {
+      if (path.startsWith("/api/")) return sendJson(res, 403, { error: "lecture seule (rôle superviseur) — opération non autorisée" });
     }
 
     if (path === "/api/me") return sendJson(res, 200, { user });

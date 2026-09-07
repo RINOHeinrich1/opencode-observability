@@ -26,8 +26,15 @@ export async function currentUser(req) {
   if (new Date(s.expires_at).getTime() < Date.now()) return null;
   const u = await getUserById(s.user_id);
   if (!u) return null;
-  return { id: u.id, username: u.username, is_admin: !!u.is_admin };
+  // Rôle effectif : admin (is_admin rétrocompat) > supervisor > user.
+  let role = u.role && ["admin", "supervisor", "user"].includes(u.role) ? u.role : "user";
+  if (u.is_admin) role = "admin";
+  return { id: u.id, username: u.username, is_admin: role === "admin", role, isSupervisor: role === "supervisor", isReadOnly: role === "supervisor" || role === "user" };
 }
+
+// Helpers ACL (admin = tout ; supervisor/user = lecture seule).
+export const canWrite = (user) => !!(user && user.is_admin);
+export const isReadOnly = (user) => !!(user && !user.is_admin);
 
 export function cookieHeader(token) {
   return `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${process.env.PANEL_SESSION_TTL_H || 24 * 3600}`;

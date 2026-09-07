@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   salt          TEXT NOT NULL,
   is_admin      INTEGER NOT NULL DEFAULT 0,
+  role          TEXT NOT NULL DEFAULT 'user',
   created_at    TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sessions (
@@ -43,6 +44,10 @@ async function ensureReady() {
   if (!_readyPromise) {
     _readyPromise = (async () => {
       await pool().query(SCHEMA);
+      // Migration rétrocompat (rôle superviseur v0.9.29) : ajoute la colonne role
+      // aux tables existantes puis porte is_admin=1 → role='admin'.
+      await pool().query("ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user'");
+      await pool().query("UPDATE users SET role = 'admin' WHERE is_admin = 1 AND role = 'user'");
       await bootstrapAdmin();
       _ready = true;
     })();
@@ -74,7 +79,7 @@ export async function bootstrapAdmin() {
   if (res.rows[0]) return;
   const defaultPwd = process.env.PANEL_ADMIN_PASSWORD || "changeme";
   const { salt, hash } = hashPassword(defaultPwd);
-  await pool().query("INSERT INTO users (username, password_hash, salt, is_admin, created_at) VALUES ($1,$2,$3,1,$4)", ["admin", hash, salt, new Date().toISOString()]);
+  await pool().query("INSERT INTO users (username, password_hash, salt, is_admin, role, created_at) VALUES ($1,$2,$3,1,'admin',$4)", ["admin", hash, salt, new Date().toISOString()]);
 }
 
 export async function getUserByUsername(username) {
@@ -88,14 +93,31 @@ export async function getUserById(id) {
 }
 
 export async function listUsers() {
-  const res = await pool().query("SELECT id, username, is_admin, created_at FROM users ORDER BY id");
-  return res.rows;
+  const res = await pool().query("SELECT id, username, role, is_admin, created_at FROM users ORDER BY id");
+  return res.rows.map((r) => ({ ...r, role: normalizeRole(r) }));
 }
 
-export async function createUser(username, password, isAdmin) {
+// Rôle effectif : 'admin' > 'supervisor' > 'user' (is_admin rétrocompat supercede).
+function normalizeRole(r) {
+  if (r.is_admin) return "admin";
+  return ["admin", "supervisor", "user"].includes(r.role) ? r.role : "user";
+}
+
+// Crée un utilisateur avec un rôle explicite ('admin' | 'supervisor' | 'user').
+export async function createUser(username, password, isAdmin, role) {
+  const targetRole = isAdmin ? "admin" : (["admin", "supervisor", "user"].includes(role) ? role : "user");
   const { salt, hash } = hashPassword(password);
-  await pool().query("INSERT INTO users (username, password_hash, salt, is_admin, created_at) VALUES ($1,$2,$3,$4,$5)", [username, hash, salt, isAdmin ? 1 : 0, new Date().toISOString()]);
+  await pool().query(
+    "INSERT INTO users (username, password_hash, salt, is_admin, role, created_at) VALUES ($1,$2,$3,$4,$5,$6)",
+    [username, hash, salt, targetRole === "admin" ? 1 : 0, targetRole, new Date().toISOString()],
+  );
   return getUserByUsername(username);
+}
+
+export async function updateUserRole(userId, role) {
+  const targetRole = ["admin", "supervisor", "user"].includes(role) ? role : "user";
+  await pool().query("UPDATE users SET role = $1, is_admin = $2 WHERE id = $3", [targetRole, targetRole === "admin" ? 1 : 0, userId]);
+  return getUserById(userId);
 }
 
 export async function updatePassword(userId, password) {

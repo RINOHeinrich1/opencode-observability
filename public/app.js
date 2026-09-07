@@ -1,5 +1,6 @@
 // app.js — Logique du panneau de supervision.
 let ME = null;
+let IS_ADMIN = false;    // vrai si l'utilisateur courant est admin (écritures)
 let REFRESH_S = 10;      // intervalle (s), surchargé par /api/config (min 10)
 let refreshTimer = null;
 let activeTab = 'overview';
@@ -636,11 +637,14 @@ function e2eTableRow(t) {
     <td class="muted-sm">${esc(t.scenario || '—')}</td>
     <td>${e2eTestStatusBadge(t.status)}</td>
     <td>${lastRun}</td>
-    <td><div class="icon-actions">
-      <button class="icon-btn" data-e2e-detail="${esc(t.e2eTestId)}" title="Voir le détail du test">Détail</button>
-      <button class="icon-btn" data-e2e-run="${esc(t.e2eTestId)}" title="Lancer une exécution">▶ Lancer</button>
-      ${t.status === 'ACTIVE' ? `<button class="icon-btn danger-btn" data-e2e-obsolete="${esc(t.e2eTestId)}" title="Marquer obsolète (spec disparu)">⚠ Obsolète</button>` : ''}
-    </div></td>
+    <td>${IS_ADMIN
+      ? `<div class="icon-actions">
+          <button class="icon-btn" data-e2e-detail="${esc(t.e2eTestId)}" title="Voir le détail du test (exécutions, vidéo, rapport)">Détail</button>
+          <button class="icon-btn" data-e2e-run="${esc(t.e2eTestId)}" title="Lancer une exécution">▶ Lancer</button>
+          ${t.status === 'ACTIVE' ? `<button class="icon-btn danger-btn" data-e2e-obsolete="${esc(t.e2eTestId)}" title="Marquer obsolète (spec disparu)">⚠ Obsolète</button>` : ''}
+        </div>`
+      : `<div class="e2e-actions"><button class="ghost tiny" data-e2e-detail="${esc(t.e2eTestId)}" title="Voir le détail du test (exécutions, vidéo, rapport)">Détail</button></div>`}
+    </td>
   </tr>`;
 }
 
@@ -3800,6 +3804,7 @@ async function init() {
   try {
     const me = await api('/api/me');
     ME = me.user;
+    IS_ADMIN = !!(ME && ME.is_admin);
     document.getElementById('whoami').textContent = ME.username + (ME.is_admin ? ' (admin)' : (ME.role === 'supervisor' ? ' (superviseur)' : ''));
     if (ME.is_admin) document.getElementById('tab-users').hidden = false;
     // Rôle SUPERVISOR / lecture seule : classe body (masque les actions

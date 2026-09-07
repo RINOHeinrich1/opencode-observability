@@ -149,3 +149,154 @@ export function generateSubtitledVideo({ reportText, status, videoPath, outPath 
     return null;
   }
 }
+
+// === Vidéo NARRÉE (prototype TTS) =========================================
+// Principe : narrer à voix haute les étapes ([STEP]) + le résultat, en étendant
+// la vidéo par freeze-frame quand la lecture vocale dépasse la durée de l'étape.
+// Montage par tranches contiguës (concat demuxer de segments MPEG-TS H.264+AAC,
+// même fps pour garantir la concaténation).
+
+const NARRATED_KINDS = new Set(["STEP", "RESULT"]);
+const TTS_VOICE = "fr-fr";
+const TTS_SPEED = 150; // mots/min — voix FR raisonnable
+
+function seconds(ms) { return (ms / 1000).toFixed(3); }
+
+// Génère l'audio TTS (wav) d'un texte → { file, durationMs }.
+function ttsAudio(text, workDir, index) {
+  const wav = path.join(workDir, `_narr-${index}.wav`);
+  try {
+    execFileSync("espeak-ng", [
+      "-v", TTS_VOICE, "-s", String(TTS_SPEED), "-w", wav, String(text).slice(0, 400),
+    ], { encoding: "utf8", timeout: 60000 });
+    if (!existsSync(wav)) return null;
+    const dur = probeDurationMs(wav);
+    return { file: wav, durationMs: dur || 0 };
+  } catch {
+    return null;
+  }
+}
+
+// Découpe la vidéo d'origine en tranches aux bornes des étapes. Retourne
+// [{ startMs, endMs, text|null }].
+function sliceTimeline(reportText, videoDurationMs) {
+  const lines = parseTimedLines(reportText).filter((l) => NARRATED_KINDS.has(l.kind));
+  const bounds = [0];
+  for (const l of lines) if (l.atMs > 0 && l.atMs < videoDurationMs) bounds.push(l.atMs);
+  bounds.push(videoDurationMs);
+  const slices = [];
+  for (let i = 0; i < bounds.length - 1; i++) {
+    const start = bounds[i];
+    const end = bounds[i + 1];
+    // Le texte narré = la ligne (STEP/RESULT) qui COMMENCE exactement à `start`.
+    const line = lines.find((l) => Math.abs(l.atMs - start) < 50);
+    slices.push({ startMs: start, endMs: end, text: line ? line.text : null, kind: line ? line.kind : null });
+  }
+  return slices;
+}
+
+// Construit une tranche .ts : coupe [startMs→endMs] de la vidéo, freeze-étend la
+// fin si la narration dépasse, ajoute la piste audio (voix si texte, silence sinon).
+function renderSlice(videoPath, slice, workDir, index, audio) {
+  const outTs = path.join(workDir, `_seg-${index}.ts`);
+  const realDurSec = Math.max(0.2, (slice.endMs - slice.startMs) / 1000);
+  let finalDurSec = realDurSec;
+  // Durée audio de la tranche (voix si présente, sinon silence de la durée réelle).
+  let audioDurSec = realDurSec;
+  if (slice.text && audio) audioDurSec = (audio.durationMs || realDurSec * 1000) / 1000;
+  // Padding confortable après la voix (respiration) + si la voix dépasse, freeze.
+  let needExtend = false;
+  if (slice.text && audio) {
+    finalDurSec = Math.max(realDurSec, audioDurSec + 0.35);
+    needExtend = finalDurSec > realDurSec + 0.05;
+  }
+  const args = ["-y", "-i", videoPath];
+  // Découpe temporelle de la tranche.
+  const vf = [
+    `trim=start=${seconds(slice.startMs)}:end=${seconds(slice.endMs)}`,
+    "setpts=PTS-STARTPTS",
+    "fps=25",
+  ];
+  if (needExtend) {
+    const freezeSec = finalDurSec - realDurSec;
+    vf.push(`tpad=stop_mode=clone:stop_duration=${freezeSec.toFixed(3)}`);
+  }
+  args.push("-vf", vf.join(","), "-an");
+  args.push("-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-r", "25");
+  args.push("-f", "mpegts", outTs);
+  try {
+    execFileSync("ffmpeg", args, { encoding: "utf8", timeout: 120000, stdio: "pipe" });
+  } catch {
+    // Échec de la tranche vidéo : on abandonne ce segment (tranche vide tolérée ? non → null).
+    try { execFileSync("rm", ["-f", outTs], { stdio: "ignore" }); } catch {}
+    return null;
+  }
+  // Construit la piste audio alignée sur la durée finale de la tranche.
+  const aac = path.join(workDir, `_aud-${index}.m4a`);
+  const audioSrc = (slice.text && audio) ? audio.file : null;
+  const audioArgs = ["-y"];
+  if (audioSrc) audioArgs.push("-i", audioSrc);
+  audioArgs.push("-f", "lavfi", "-i", `anullsrc=r=44100:cl=mono`, "-t", finalDurSec.toFixed(3));
+  audioArgs.push("-c:a", "aac", "-b:a", "96k", "-ar", "44100");
+  audioArgs.push("-ac", "1", aac);
+  try {
+    execFileSync("ffmpeg", audioArgs, { encoding: "utf8", timeout: 60000, stdio: "pipe" });
+  } catch {
+    try { execFileSync("rm", ["-f", outTs, aac], { stdio: "ignore" }); } catch {}
+    return null;
+  }
+  // Mux vidéo + audio de la tranche → .ts (concat prêt).
+  const finalTs = path.join(workDir, `_mux-${index}.ts`);
+  try {
+    execFileSync("ffmpeg", [
+      "-y", "-i", outTs, "-i", aac,
+      "-map", "0:v", "-map", "1:a",
+      "-c:v", "copy", "-c:a", "aac",
+      "-f", "mpegts", finalTs,
+    ], { encoding: "utf8", timeout: 60000, stdio: "pipe" });
+    try { execFileSync("rm", ["-f", outTs, aac, audioSrc], { stdio: "ignore" }); } catch {}
+    return finalTs;
+  } catch {
+    try { execFileSync("rm", ["-f", outTs, aac], { stdio: "ignore" }); } catch {}
+    return null;
+  }
+}
+
+// Génère la vidéo NARRÉE (prototype) : retourne le chemin .mp4, ou null.
+export function generateNarratedVideo({ reportText, videoPath, outPath }) {
+  if (!existsSync(videoPath)) return null;
+  const durationMs = probeDurationMs(videoPath);
+  if (durationMs < 1000) return null;
+  const slices = sliceTimeline(reportText, durationMs);
+  if (!slices.length) return null;
+  mkdirSync(path.dirname(outPath), { recursive: true });
+  const workDir = path.dirname(outPath);
+  const base = path.basename(outPath, path.extname(outPath));
+  const segFiles = [];
+  let audioIdx = 0;
+  try {
+    for (let i = 0; i < slices.length; i++) {
+      const slice = slices[i];
+      let audio = null;
+      if (slice.text) { audio = ttsAudio(slice.text, workDir, audioIdx++); }
+      const seg = renderSlice(videoPath, slice, workDir, i, audio);
+      if (!seg) throw new Error("échec rendu d'une tranche");
+      segFiles.push(seg);
+    }
+    // Concatène les segments.
+    const listFile = path.join(workDir, `_concat-${base}.txt`);
+    writeFileSync(listFile, segFiles.map((f) => `file '${path.basename(f)}'`).join("\n"), "utf8");
+    execFileSync("ffmpeg", [
+      "-y", "-f", "concat", "-safe", "0", "-i", listFile,
+      "-c", "copy", "-movflags", "+faststart", path.basename(outPath),
+    ], { cwd: workDir, encoding: "utf8", timeout: 240000, stdio: "pipe" });
+    // Nettoyage segments + audio.
+    for (const f of segFiles) { try { execFileSync("rm", ["-f", f], { stdio: "ignore" }); } catch {} }
+    try { execFileSync("rm", ["-f", listFile], { stdio: "ignore" }); } catch {}
+    return existsSync(outPath) ? outPath : null;
+  } catch (e) {
+    for (const f of segFiles) { try { execFileSync("rm", ["-f", f], { stdio: "ignore" }); } catch {} }
+    try { execFileSync("rm", ["-f", outPath], { stdio: "ignore" }); } catch {}
+    return null;
+  }
+}

@@ -64,6 +64,25 @@ Dépôts/tags : `opencode-mcp-task-orchestrator` v0.8.22→v0.8.24 ·
 
 ---
 
+## v0.9.32 — 2026-09-06 · Vidéo E2E narrée (voix TTS + extension par freeze) — prototype
+
+Prototype à la demande : à côté de la vidéo sous-titrée, bouton « 🔊 Vidéo narrée
+(voix) » dans le lecteur vidéo d'une exécution. Une voix **synthétise** les étapes
+(`[STEP]`) + le résultat, et la vidéo est **étendue (freeze-frame de la fin d'une
+étape)** quand la lecture vocale dépasse sa durée réelle — pour que la voix soit
+entièrement audible.
+
+- **TTS léger** : `espeak-ng` (voix `fr-fr`, ~150 mots/min), installé côté serveur.
+- **Montage** : découpage en tranches aux bornes des `[STEP]/[RESULT]` ; pour
+  chaque tranche narrée, génération de l'audio + extension vidéo si besoin
+  (`trim` + `fps=25` + `tpad stop_mode=clone`) ; concaténation MPEG-TS → `.mp4`
+  (H.264 + AAC). Les tranches entre étapes restent muettes à durée réelle.
+- **Endpoint** `POST /api/e2e/narrated { executionId }` (admin, cache) ; la modale
+  vidéo propose les deux enrichissements (sous-titres / narration), bascule le
+  lecteur et adapte le téléchargement.
+
+Dépôt : `opencode-observability` (v0.9.32). Dépendance : `espeak-ng`.
+
 ## v0.9.31 — 2026-09-06 · Vidéo E2E avec sous-titres (génération à la demande, hors pipeline)
 
 À partir du **détail d'une exécution** (lecteur vidéo), bouton « Générer la vidéo

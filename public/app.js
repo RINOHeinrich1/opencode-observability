@@ -584,63 +584,73 @@ async function renderTaskE2EBlock(taskId, box) {
 
 // Lecteur vidéo E2E (preuve HUMAINE) : lecture + vitesses + téléchargement.
 // Lecteur vidéo E2E (preuve HUMAINE) : lecture + vitesses + téléchargement.
-// `execId` (optionnel) permet de générer la vidéo SOUS-TITRÉE (gravée depuis le
-// rapport texte horodaté) — bouton « Générer vidéo sous-titrée ».
+// `execId` (optionnel) permet de générer à la demande :
+//   - vidéo SOUS-TITRÉE (sous-titres gravés depuis le rapport horodaté) ;
+//   - vidéo NARRÉE (voix TTS lisant les étapes ; la vidéo est étendue par
+//     freeze-frame pour laisser le temps de lecture).
 async function openE2EVideoModal(url, title, execId) {
+  const canGen = execId && IS_ADMIN;
   showModal(`
     <div class="modal modal-wide">
       <h3>${esc(title || 'Vidéo E2E')}</h3>
       <video id="e2e-video" controls preload="metadata" style="width:100%; max-height:70vh; border-radius:8px" src="${esc(url)}"></video>
       <div class="e2e-speedrow"><span class="muted-sm">Vitesse :</span>${[0.25, 0.5, 1, 1.5, 2].map((s) => `<button type="button" class="ghost e2e-speed" data-speed="${s}">${s}x</button>`).join('')}</div>
-      ${execId && IS_ADMIN ? `<div class="subtitled-gen">
-        <button type="button" class="launch-btn" id="gen-subtitled">🎬 Générer la vidéo avec sous-titres</button>
-        <span class="muted-sm" id="gen-subtitled-msg">Sous-titres gravés depuis le rapport texte horodaté (étapes colorées : vert = réussi, rouge = échec, gris = ignoré).</span>
-      </div>` : ''}
+      ${canGen ? `
+      <div class="subtitled-gen">
+        <button type="button" class="launch-btn" data-gen-video="subtitled">🎬 Vidéo avec sous-titres</button>
+        <button type="button" class="launch-btn" data-gen-video="narrated">🔊 Vidéo narrée (voix)</button>
+      </div>
+      <p class="muted-sm" id="gen-video-msg" style="margin:6px 0 0">Sous-titres gravés depuis le rapport horodaté (vert = réussi, rouge = échec, gris = ignoré). Narration : voix lisant les étapes — la vidéo est étendue (freeze) si la lecture dépasse l'étape. Prototype, hors pipeline.</p>
+      ` : ''}
       <div class="modal-actions">
-        <a class="launch-btn" download href="${esc(url)}">Télécharger la vidéo</a>
+        <a class="launch-btn" id="dl-original" download href="${esc(url)}">Télécharger la vidéo</a>
         <button class="ghost" id="modal-cancel">Fermer</button>
       </div>
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
   const video = document.getElementById('e2e-video');
+  const msg = document.getElementById('gen-video-msg');
+  const dlOriginal = document.getElementById('dl-original');
   document.querySelectorAll('.e2e-speed').forEach((b) => b.addEventListener('click', () => {
     video.playbackRate = Number(b.dataset.speed);
     [...document.querySelectorAll('.e2e-speed')].forEach((x) => x.classList.toggle('active', x === b));
   }));
-  const genBtn = document.getElementById('gen-subtitled');
-  if (genBtn) genBtn.addEventListener('click', async () => {
-    const msg = document.getElementById('gen-subtitled-msg');
-    genBtn.disabled = true;
-    msg.textContent = 'Génération en cours… (ré-encodage vidéo, quelques secondes)';
-    msg.className = 'muted-sm';
-    try {
-      const r = await api('/api/e2e/subtitled', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ executionId: execId }) });
-      if (!r || !r.url) { throw new Error((r && r.error) || 'échec de génération'); }
-      const subUrl = r.url;
-      msg.textContent = (r.cached ? 'Vidéo sous-titrée (déjà générée) prête. ' : 'Vidéo sous-titrée générée. ') + 'Lecture ci-dessous ou téléchargement.';
-      msg.className = 'msg';
-      // Bascule le lecteur sur la vidéo sous-titrée + offre le téléchargement.
-      video.src = subUrl;
-      video.load();
-      video.play().catch(() => {});
-      const dl = document.querySelector('#modal-backdrop .subtitled-gen .subtitled-dl, #modal-backdrop a[data-subtitle-dl]');
-      const dlWrap = document.querySelector('.subtitled-gen');
-      if (dlWrap && !dlWrap.querySelector('.subtitled-dl')) {
-        const a = document.createElement('a');
-        a.className = 'approve subtitled-dl';
-        a.href = subUrl;
-        a.download = '';
-        a.textContent = '⬇ Télécharger la vidéo sous-titrée';
-        a.style.marginLeft = '8px';
-        dlWrap.appendChild(a);
+  if (canGen) {
+    const genBtn = (kind) => document.querySelector(`#modal-backdrop [data-gen-video="${kind}"]`);
+    const labels = { subtitled: 'Vidéo sous-titrée', narrated: 'Vidéo narrée' };
+    document.querySelectorAll('#modal-backdrop [data-gen-video]').forEach((btn) => btn.addEventListener('click', async () => {
+      const kind = btn.dataset.genVideo;
+      const otherKind = kind === 'subtitled' ? 'narrated' : 'subtitled';
+      const otherBtn = genBtn(otherKind);
+      const busyMsg = kind === 'subtitled'
+        ? 'Génération des sous-titres en cours… (ré-encodage vidéo)'
+        : 'Génération de la narration en cours… (voix + extension de la vidéo, peut prendre un moment)';
+      msg.textContent = busyMsg;
+      msg.className = 'muted-sm';
+      btn.disabled = true;
+      if (otherBtn) otherBtn.disabled = true;
+      try {
+        const r = await api(`/api/e2e/${kind}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ executionId: execId }) });
+        if (!r || !r.url) throw new Error((r && r.error) || 'échec de génération');
+        const outUrl = r.url;
+        msg.textContent = (r.cached ? labels[kind] + ' (déjà générée) prête. ' : labels[kind] + ' générée. ') + 'Lecture ci-dessous ou téléchargement.';
+        msg.className = 'msg';
+        video.src = outUrl;
+        video.load();
+        video.play().catch(() => {});
+        if (dlOriginal) {
+          dlOriginal.href = outUrl;
+          dlOriginal.textContent = '⬇ Télécharger ' + (kind === 'subtitled' ? 'la vidéo sous-titrée' : 'la vidéo narrée');
+        }
+      } catch (e) {
+        msg.textContent = 'Erreur : ' + (e.message || e);
+        msg.className = 'msg error';
+      } finally {
+        btn.disabled = false;
+        if (otherBtn) otherBtn.disabled = false;
       }
-    } catch (e) {
-      msg.textContent = 'Erreur : ' + (e.message || e);
-      msg.className = 'msg error';
-    } finally {
-      genBtn.disabled = false;
-    }
-  });
+    }));
+  }
 }
 // Badge E2E compact pour la table des tâches (état agrégé côté serveur : t.e2e).
 // Cliquable quand des tests sont associés → onglet Tests E2E pré-filtré sur la tâche.

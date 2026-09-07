@@ -1111,6 +1111,25 @@ const server = createServer(async (req, res) => {
       try { return sendJson(res, 200, await pilot.deleteDoc(docDelMatch[1])); }
       catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
     }
+    // Lecture du CONTENU d'un document de référence (ADR-12) par docId : lit le
+    // fichier au chemin enregistré (workspace/checkout ou storage/ref-docs) et le
+    // rend (markdown / feature / texte brut). Restreint aux paths enregistrés.
+    const docContentMatch = path.match(/^\/api\/docs\/([^/]+)\/content$/);
+    if (docContentMatch && req.method === "GET") {
+      try {
+        const doc = await pilot.docGet(docContentMatch[1]);
+        if (!doc) return sendJson(res, 404, { error: "document inconnu" });
+        const abs = doc.path;
+        if (!abs || !existsSync(abs)) return sendJson(res, 404, { error: "fichier introuvable au chemin : " + (abs || "—") });
+        const raw = readFileSync(abs, "utf8");
+        const isMd = /\.(md|markdown)$/i.test(abs);
+        const isFeature = /\.(feature)$/i.test(abs);
+        let html = null;
+        if (isMd) html = marked.parse(raw);
+        else if (isFeature) html = `<pre style="white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:12px">${String(raw).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre>`;
+        return sendJson(res, 200, { title: doc.title || doc.docId, kind: doc.kind, path: abs, html, raw: html ? null : raw.slice(0, 300000) });
+      } catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
+    }
     if (path === "/api/projects" && req.method === "POST") {
       const b = await readBody(req);
       return sendJson(res, 200, await pilot.createProject({ ...b, createdBy: user.username }));

@@ -2446,7 +2446,7 @@ async function renderProjects() {
               </div>`).join('')}
             </div></div>` : '<p class="muted-sm">Aucun repo associé.</p>'}
             ${pDocs.length ? `<div class="project-kv" style="align-items:flex-start"><span class="lbl">Docs de référence</span><div style="display:flex;flex-direction:column;gap:4px;flex:1">
-              ${pDocs.map((d) => `<div class="muted-sm" style="font-size:11px"><code class="chip">${esc(docKindLabel(d.kind))}</code> <code>${esc(d.docId)}</code> ${d.title ? '— ' + esc(d.title) : ''}<div>${esc(d.path)}</div></div>`).join('')}
+              ${pDocs.map((d) => `<div class="muted-sm" style="font-size:11px"><code class="chip">${esc(docKindLabel(d.kind))}</code> <code>${esc(d.docId)}</code> ${d.title ? '— ' + esc(d.title) : ''}<div>${esc(d.path)} <button type="button" class="ghost tiny" data-view-project-doc="${esc(d.docId)}" title="Lire ce document">Regarder</button></div></div>`).join('')}
             </div></div>` : ''}
           </div>
           <div class="project-card-actions">
@@ -2463,6 +2463,7 @@ async function renderProjects() {
   document.querySelectorAll('[data-del-project]').forEach((b) => b.addEventListener('click', () => projectDeleteModal(b.dataset.delProject)));
   document.querySelectorAll('[data-edit-repo]').forEach((b) => b.addEventListener('click', () => repoFormModal(repoMap.get(b.dataset.editRepo) || null)));
   document.querySelectorAll('[data-project-docs]').forEach((b) => b.addEventListener('click', () => projectDocsModal(b.dataset.projectDocs, repoMap)));
+  document.querySelectorAll('[data-view-project-doc]').forEach((b) => b.addEventListener('click', () => viewRefDoc(b.dataset.viewProjectDoc)));
   document.querySelectorAll('[data-repo-docs]').forEach((b) => b.addEventListener('click', () => projectDocsModal(null, repoMap, b.dataset.repoDocs)));
   document.querySelectorAll('[data-add-repo-to]').forEach((b) => b.addEventListener('click', () => repoLinkModal(b.dataset.addRepoTo, repoMap)));
   document.querySelectorAll('[data-unlink-repo]').forEach((b) => b.addEventListener('click', () => repoUnlinkModal(...b.dataset.unlinkRepo.split('|'))));
@@ -2477,16 +2478,19 @@ function docKindLabelLong(kind) {
 }
 const DOC_KIND_ORDER = ['adr-tech', 'specs-fonctionnelles', 'scenarios-gherkin'];
 
-// Aperçu d'un document de référence importé (ADR-12) : rendu md / feature / texte.
-async function viewRefDoc(url) {
+// Lecture du contenu d'un document de référence (ADR-12) par docId : rendu
+// markdown / feature / texte brut. Fonctionne pour tout doc (importé OU référencé
+// par chemin dans le workspace).
+async function viewRefDoc(docId) {
   try {
-    const d = await api(url);
+    const d = await api(`/api/docs/${encodeURIComponent(docId)}/content`);
     const html = d.html
       ? `<div style="background:rgba(255,255,255,.04);padding:14px;border-radius:8px;max-height:70vh;overflow:auto">${d.html}</div>`
       : `<pre style="background:rgba(255,255,255,.04);padding:14px;border-radius:8px;max-height:70vh;overflow:auto;white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:12px">${esc(d.raw || '')}</pre>`;
-    showModal(`<div class="modal modal-wide"><h3>${esc(d.title || 'Document')}</h3>${html}<div class="modal-actions"><a class="ghost" download href="${esc(url)}">Télécharger</a><button class="ghost" id="modal-cancel">Fermer</button></div></div>`);
+    const kindTag = d.kind ? `<code class="chip">${esc(docKindLabel(d.kind))}</code> ` : '';
+    showModal(`<div class="modal modal-wide"><h3>${kindTag}${esc(d.title || 'Document')}</h3><p class="muted-sm">${esc(d.path || '')}</p>${html}<div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div></div>`);
     document.getElementById('modal-cancel').onclick = closeModal;
-  } catch (e) { alert('Aperçu impossible : ' + (e.message || e)); }
+  } catch (e) { alert('Lecture impossible : ' + (e.message || e)); }
 }
 
 // Modale documents de référence (ADR-12) d'un projet ou d'un repo : liste les
@@ -2515,18 +2519,14 @@ async function projectDocsModal(projectId, repoMap, repoOnly) {
   const renderList = () => {
     const list = document.getElementById('pd-list');
     if (!allDocs.length) { list.innerHTML = '<p class="muted-sm">Aucun document de référence. Ajoutez-en (ADR technique, specs, Gherkin).</p>'; return; }
-    list.innerHTML = allDocs.map((d) => {
-      const rel = String(d.path || '').replace('/root/orchestrator-panel/storage/', '');
-      const viewUrl = (d.path && String(d.path).includes('storage/ref-docs')) ? `/api/docs/file?p=${encodeURIComponent(rel)}` : null;
-      return `
+    list.innerHTML = allDocs.map((d) => `
       <div class="recette-item">
         <div><code class="chip">${esc(docKindLabel(d.kind))}</code> <strong>${esc(d.title || d.docId)}</strong>
           <span class="muted-sm">${d.projects && d.projects.length ? '· projets ' + esc(d.projects.join(', ')) : ''}${d.repos && d.repos.length ? '· repos ' + esc(d.repos.join(', ')) : ''}</span>
         </div>
         <div class="muted-sm">${esc(d.path)}</div>
-        <div class="e2e-actions">${viewUrl ? `<button type="button" class="ghost tiny" data-view-doc="${esc(viewUrl)}">Voir</button>` : ''}<button type="button" class="ghost tiny danger-text" data-del-doc="${esc(d.docId)}">Supprimer</button></div>
-      </div>`;
-    }).join('');
+        <div class="e2e-actions"><button type="button" class="ghost tiny" data-view-doc="${esc(d.docId)}">Regarder</button><button type="button" class="ghost tiny danger-text" data-del-doc="${esc(d.docId)}">Supprimer</button></div>
+      </div>`).join('');
     document.querySelectorAll('#pd-list [data-view-doc]').forEach((b) => b.addEventListener('click', () => viewRefDoc(b.dataset.viewDoc)));
     document.querySelectorAll('#pd-list [data-del-doc]').forEach((b) => b.addEventListener('click', async () => {
       await api(`/api/docs/${encodeURIComponent(b.dataset.delDoc)}`, { method: 'DELETE' }).catch(() => {});

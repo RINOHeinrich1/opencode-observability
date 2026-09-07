@@ -64,6 +64,22 @@ Dépôts/tags : `opencode-mcp-task-orchestrator` v0.8.22→v0.8.24 ·
 
 ---
 
+## v0.9.28 — 2026-09-06 · Documents de référence : bouton « Regarder » pour lire le contenu
+
+Les documents de référence (ADR/specs/Gherkin) rattachés à un projet/repo
+étaient lisibles seulement pour les fichiers **importés** ; les documents
+**référencés par chemin** (workspace/checkout) n'avaient aucun bouton de lecture.
+
+- **Endpoint `GET /api/docs/:id/content`** : lit le fichier au chemin enregistré
+  (workspace/checkout OU storage/ref-docs) et le rend (markdown / feature /
+  texte brut) — restreint aux paths enregistrés.
+- **Bouton « Regarder »** disponible pour **tous** les documents de référence :
+  sur la **carte projet** (chaque doc listé) et dans la modale « 📄 Docs de
+  référence » (remplace l'ancien « Voir » limité aux imports).
+- Pilot : `docGet` (wrapper `doc_get`).
+
+Dépôt : `opencode-observability` (v0.9.28).
+
 ## v0.9.27 — 2026-09-06 · Session test-agent libre : docs du projet + confirmation vars/secrets
 
 La modale « Session test-agent » (page Tests E2E) proposait seulement projet +

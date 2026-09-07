@@ -352,6 +352,13 @@ export async function deleteDoc(docId) {
   return taskOrchestrator("doc_delete", { docId });
 }
 
+// Détail d'un document de référence (doc_get MCP) — pour la lecture de contenu.
+export async function docGet(docId) {
+  if (!docId) throw new Error("docId requis");
+  const r = await taskOrchestrator("doc_get", { docId });
+  return (r && r.doc) || null;
+}
+
 const DOC_KINDS = ["adr-tech", "specs-fonctionnelles", "scenarios-gherkin"];
 
 // Import d'un fichier DOCUMENT depuis le PC de l'utilisateur : le fichier est

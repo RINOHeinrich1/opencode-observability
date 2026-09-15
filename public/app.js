@@ -14,6 +14,15 @@ let tasksStatusFilter = (() => { try { const v = JSON.parse(localStorage.getItem
 const persistTasksStatus = () => localStorage.setItem('panel_task_status', JSON.stringify(tasksStatusFilter));
 let tasksNeedRecette = localStorage.getItem('panel_task_recette') === '1'; // pré-filtre « À recetter » (recette_status != done)
 let tasksActifOnly = localStorage.getItem('panel_task_actif') === '1';      // pré-filtre « Actif » (statut != done)
+let tasksDateFrom = localStorage.getItem('panel_task_date_from') || '';      // filtre date de création — borne basse (YYYY-MM-DD)
+let tasksDateTo = localStorage.getItem('panel_task_date_to') || '';          // filtre date de création — borne haute (YYYY-MM-DD)
+// Navigation CENTRÉE PROJET : quand un projet est ouvert, toutes les vues sont
+// scopées à ce projet (bandeau + sous-onglets). Vide = accueil (liste projets).
+let currentProject = localStorage.getItem('panel_current_project') || '';
+const setCurrentProject = (id) => { currentProject = id || ''; if (currentProject) localStorage.setItem('panel_current_project', currentProject); else localStorage.removeItem('panel_current_project'); };
+// Organisation active (tenant) : filtre global du panneau.
+let currentOrg = localStorage.getItem('panel_current_org') || '';
+let ORGANIZATIONS = [];
 
 // Agents mobilisés par type de tâche (affichage read-only au lancement).
 const AGENTS_BY_TYPE = {
@@ -67,6 +76,233 @@ function switchTab(tab) {
   activeTab = tab;
 }
 
+// --- Navigation CENTRÉE PROJET ---------------------------------------------
+// Onglets GLOBAUX (aucun projet ouvert) : accueil = liste des projets.
+const GLOBAL_TABS = [
+  ['projects', 'Projets'],
+  ['overview', "Vue d'ensemble"],
+  ['ecosystem', 'Écosystème'],
+  ['workspaces', 'Workspaces'], // admin uniquement
+  ['users', 'Utilisateurs'], // admin uniquement
+];
+// Sous-onglets d'un PROJET ouvert : toutes les données du projet.
+const PROJECT_TABS = [
+  ['overview', "Vue d'ensemble"],
+  ['tasks', 'Tâches'],
+  ['recettes', 'Recettes'],
+  ['e2etests', 'Tests E2E'],
+  ['deployments', 'Déploiements'],
+  ['decisions', 'Décisions'],
+  ['plans', 'Plans'],
+  ['events', 'Événements'],
+  ['artifacts', 'Documents'],
+  ['e2esecrets', 'Vars & Secrets E2E'],
+  ['archives', 'Archives'],
+];
+
+// Construit la barre d'onglets selon l'état (projet ouvert ou non).
+function renderNav() {
+  const nav = document.getElementById('tabs');
+  if (!nav) return;
+  const tabs = currentProject ? PROJECT_TABS : GLOBAL_TABS;
+  const activeIsDefault = (ORGANIZATIONS.find((o) => o.id === currentOrg) || {}).isDefault === true;
+  const buttons = tabs
+    .filter(([t]) => t !== 'users' || IS_ADMIN)
+    .filter(([t]) => t !== 'workspaces' || IS_ADMIN)
+    .filter(([t]) => t !== 'ecosystem' || activeIsDefault)
+    .map(([t, label]) => `<button data-tab="${t}">${esc(label)}</button>`)
+    .join('');
+  const back = currentProject
+    ? `<button data-nav="back" class="nav-back" title="Revenir à la liste des projets">← Projets</button>`
+    : '';
+  nav.innerHTML = back + buttons;
+  nav.querySelectorAll('button[data-tab]').forEach((b) => b.addEventListener('click', () => {
+    taskFilter = '';
+    switchTab(b.dataset.tab);
+    refreshActive();
+  }));
+  const backBtn = nav.querySelector('button[data-nav="back"]');
+  if (backBtn) backBtn.addEventListener('click', () => closeProject());
+  // Bandeau projet.
+  const banner = document.getElementById('project-banner');
+  if (banner) {
+    if (currentProject) {
+      banner.hidden = false;
+      banner.innerHTML = `<span class="pb-label">Projet</span> <strong>${esc(currentProject)}</strong>`;
+    } else {
+      banner.hidden = true;
+      banner.innerHTML = '';
+    }
+  }
+}
+
+// Ouvre un projet : toutes les vues deviennent scopées à ce projet.
+function openProject(id) {
+  if (!id) return;
+  setCurrentProject(id);
+  renderNav();
+  switchTab('overview');
+  refreshActive();
+}
+
+// Ferme le projet courant : retour à l'accueil (liste des projets).
+function closeProject() {
+  setCurrentProject('');
+  renderNav();
+  switchTab('projects');
+  refreshActive();
+}
+
+// --- Organisations (tenant) : sélecteur global + gestion --------------------
+async function loadOrganizations() {
+  let all = [];
+  try { all = ((await api('/api/orgs')).organizations || []); } catch { all = []; }
+  // Un utilisateur ne voit que les organisations auxquelles il appartient.
+  const mine = (ME && Array.isArray(ME.organizations) && ME.organizations.length) ? ME.organizations : all.map((o) => o.id);
+  ORGANIZATIONS = all.filter((o) => mine.includes(o.id));
+  if (ME && ME.activeOrganizationId) currentOrg = ME.activeOrganizationId;
+  if (!currentOrg || !ORGANIZATIONS.some((o) => o.id === currentOrg)) {
+    currentOrg = (ORGANIZATIONS[0] && ORGANIZATIONS[0].id) || '';
+  }
+  renderOrgSelector();
+  renderNav();
+}
+function renderOrgSelector() {
+  const sel = document.getElementById('org-select');
+  if (!sel) return;
+  sel.innerHTML = ORGANIZATIONS.map((o) => `<option value="${esc(o.id)}" ${o.id === currentOrg ? 'selected' : ''}>${esc(o.name || o.id)}${o.isDefault ? ' ★' : ''}</option>`).join('') || '<option value="">—</option>';
+  sel.value = currentOrg;
+}
+// Écran de choix d'organisation après connexion (si l'utilisateur en a plusieurs).
+function orgPickerModal() {
+  showModal(`
+    <div class="modal">
+      <h2>Choisir une organisation</h2>
+      <p class="muted-sm">Vous appartenez à plusieurs organisations. Sélectionnez celle dans laquelle entrer — vous ne verrez que ses données.</p>
+      <div class="recette-list">${ORGANIZATIONS.map((o) => `<button class="launch-btn" style="display:block;width:100%;text-align:left;margin-bottom:6px" data-org-pick="${esc(o.id)}">${esc(o.name || o.id)}${o.isDefault ? ' ★' : ''} <span class="muted-sm">${esc(o.description || '')}</span></button>`).join('')}</div>
+    </div>`);
+  document.querySelectorAll('#modal-backdrop [data-org-pick]').forEach((b) => b.addEventListener('click', async () => {
+    await switchOrganization(b.dataset.orgPick);
+    closeModal();
+  }));
+}
+async function switchOrganization(orgId) {
+  try {
+    await api('/api/session/organization', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ organizationId: orgId }) });
+    currentOrg = orgId;
+    localStorage.setItem('panel_current_org', currentOrg);
+    await loadOrganizations();
+    closeProject();
+  } catch (e) { alert('Échec : ' + (e.message || e)); }
+}
+async function orgManageModal() {
+  const orgs = ORGANIZATIONS;
+  const isAdmin = !!IS_ADMIN;
+  const rows = orgs.map((o) => `<div class="recette-item">
+    <code class="chip">${esc(o.id)}</code>
+    <strong>${esc(o.name)}</strong>
+    <span class="muted-sm" style="flex:1">${esc(o.description || '')}${o.coderUrl ? ` · Coder <code>${esc(o.coderUrl)}</code>` : ''}${o.coderTemplate ? ` (${esc(o.coderTemplate)})` : ''} ${o.hasCoderToken ? '· 🔒 Coder token' : '· Coder token ∅'} ${o.gitTokens && o.gitTokens.length ? '· 🔒 ' + o.gitTokens.length + ' git token' + (o.gitTokens.length > 1 ? 's' : '') : (o.hasGitToken ? '· 🔒 git token (défaut)' : '· git token ∅')}</span>
+    ${isAdmin ? `<button class="ghost tiny" data-org-edit="${esc(o.id)}" data-org-name="${esc(o.name)}" data-org-desc="${esc(o.description || '')}" data-org-url="${esc(o.coderUrl || '')}" data-org-tpl="${esc(o.coderTemplate || '')}">Configurer</button><button class="ghost tiny danger-text" data-org-del="${esc(o.id)}">Supprimer</button>` : ''}
+  </div>`).join('') || '<p class="muted-sm">Aucune organisation.</p>';
+  // Tokens git de l'org sélectionnée (éditée).
+  const selectedOrgId = (orgs.find((o) => o.id === document.getElementById('org-id') && document.getElementById('org-id').value) || orgs[0] || {}).id || '';
+  const selectedOrg = orgs.find((o) => o.id === selectedOrgId) || orgs[0] || {};
+  const tokens = (selectedOrg && selectedOrg.gitTokens) || [];
+  showModal(`
+    <div class="modal modal-wide">
+      <h2>Organisations</h2>
+      <p class="muted-sm">Tenant de premier niveau. Toutes les données sont rattachées à une organisation. La <strong>config Coder</strong> (URL + template + token) et les <strong>tokens git</strong> sont propres à chaque organisation — les tokens sont stockés <strong>chiffrés</strong> et jamais réaffichés. <span class="muted-sm">Un token git par défaut est le token 'classique' de l'organisation (champ token git du formulaire ci-dessous). Les tokens additionnels (PAT multiples) sont gérés dans la section dédiée.</span></p>
+      <div class="recette-list">${rows}</div>
+      ${isAdmin ? `<form id="org-form" class="pilot-form" style="border-top:1px solid var(--border);padding-top:10px;margin-top:10px">
+        <div class="pd-inline">
+          <input id="org-id" placeholder="identifiant (ex. onirtech)" required value="${esc(selectedOrgId)}">
+          <input id="org-name" placeholder="nom lisible (ex. ONIRTECH)" required value="${esc(selectedOrg.name || '')}">
+        </div>
+        <input id="org-desc" placeholder="description" value="${esc(selectedOrg.description || '')}">
+        <input id="org-coder-url" placeholder="URL du serveur Coder (ex. https://ide.madatalk.fr)" value="${esc(selectedOrg.coderUrl || '')}">
+        <input id="org-coder-template" placeholder="template Coder (ex. docker-ubuntu)" value="${esc(selectedOrg.coderTemplate || '')}">
+        <input id="org-coder-token" type="password" placeholder="token Coder (vide = inchangé ; stocké chiffré)">
+        <input id="org-git-token" type="password" placeholder="token git par défaut / PAT (vide = inchangé ; stocké chiffré)">
+        <div class="actions-buttons"><button type="submit" class="launch-btn">+ Créer / mettre à jour</button></div>
+      </form>` : ''}
+      ${isAdmin && selectedOrgId ? `<div style="border-top:1px solid var(--border);padding-top:10px;margin-top:10px" class="org-git-tokens-section">
+        <h3>Tokens git additionnels — <code>${esc(selectedOrgId)}</code></h3>
+        <p class="muted-sm">PAT multiples rattachés à cette organisation. Le token utilisé pour chaque repo est choisi lors de l'association repo → projet (onglet Repos du détail projet). Absent = fallback sur le token par défaut de l'organisation (champ ci-dessus).</p>
+        <div class="recette-list" id="org-git-tokens-list">${tokens.length ? tokens.map((t) => `<div class="recette-item">
+          <strong>${esc(t.name)}</strong> <code class="muted-sm" style="font-size:0.75rem">${esc(t.id)}</code>
+          <span class="muted-sm" style="flex:1">· ${t.hasToken ? '🔒 stocké' : '∅'}</span>
+          <button class="ghost tiny danger-text" data-org-git-del="${esc(t.id)}" data-org-git-del-name="${esc(t.name)}">Supprimer</button>
+        </div>`).join('') : '<p class="muted-sm">Aucun token additionnel. Le token par défaut (formulaire ci-dessus) est utilisé pour tous les repos.</p>'}</div>
+        <form id="org-git-token-form" class="pilot-form" style="margin-top:8px">
+          <div class="pd-inline">
+            <input id="org-git-token-name" placeholder="libellé (ex. PAT GitHub Rino)" required>
+            <input id="org-git-token-value" type="password" placeholder="PAT / token git (stocké chiffré)" required>
+            <button type="submit" class="launch-btn">+ Ajouter</button>
+          </div>
+        </form>
+        <div id="org-git-msg" class="msg"></div>
+      </div>` : ''}
+      <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
+      <div id="org-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  // Pré-remplit le formulaire pour configurer une organisation existante.
+  document.querySelectorAll('#modal-backdrop [data-org-edit]').forEach((b) => b.addEventListener('click', () => {
+    document.getElementById('org-id').value = b.dataset.orgEdit;
+    document.getElementById('org-name').value = b.dataset.orgName || '';
+    document.getElementById('org-desc').value = b.dataset.orgDesc || '';
+    document.getElementById('org-coder-url').value = b.dataset.orgUrl || '';
+    document.getElementById('org-coder-template').value = b.dataset.orgTpl || '';
+    document.getElementById('org-coder-token').value = '';
+    document.getElementById('org-git-token').value = '';
+    document.getElementById('org-coder-token').focus();
+    // Re-render pour afficher les tokens de l'org sélectionnée.
+    orgManageModal();
+  }));
+  document.querySelectorAll('#modal-backdrop [data-org-del]').forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm(`Supprimer l'organisation ${b.dataset.orgDel} ?`)) return;
+    try { await api(`/api/orgs/${encodeURIComponent(b.dataset.orgDel)}`, { method: 'DELETE' }); await loadOrganizations(); closeModal(); orgManageModal(); refreshActive(); }
+    catch (e) { const m = document.getElementById('org-msg'); if (m) { m.textContent = e.message || String(e); m.className = 'msg error'; } }
+  }));
+  const form = document.getElementById('org-form');
+  if (form) form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const m = document.getElementById('org-msg');
+    try {
+      await api('/api/orgs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        id: document.getElementById('org-id').value.trim(),
+        name: document.getElementById('org-name').value.trim(),
+        description: document.getElementById('org-desc').value.trim() || undefined,
+        coderUrl: document.getElementById('org-coder-url').value.trim() || undefined,
+        coderTemplate: document.getElementById('org-coder-template').value.trim() || undefined,
+        coderToken: document.getElementById('org-coder-token').value.trim() || undefined,
+        gitToken: document.getElementById('org-git-token').value.trim() || undefined,
+      }) });
+      await loadOrganizations(); closeModal(); orgManageModal(); refreshActive();
+    } catch (err) { if (m) { m.textContent = err.message || String(err); m.className = 'msg error'; } }
+  });
+  // --- Tokens git additionnels (v0.10) : add / delete ---
+  document.querySelectorAll('#modal-backdrop [data-org-git-del]').forEach((b) => b.addEventListener('click', async () => {
+    const tokenId = b.dataset.orgGitDel;
+    const tokenName = b.dataset.orgGitDelName || tokenId;
+    if (!confirm(`Supprimer le token git « ${tokenName} » ? Les liaisons repo↔projet qui le référençaient repassent au token par défaut.`)) return;
+    try { await api(`/api/orgs/${encodeURIComponent(selectedOrgId)}/git-tokens/${encodeURIComponent(tokenId)}`, { method: 'DELETE' }); await loadOrganizations(); closeModal(); orgManageModal(); }
+    catch (e) { const m = document.getElementById('org-git-msg'); if (m) { m.textContent = e.message || String(e); m.className = 'msg error'; } }
+  }));
+  const gitTokenForm = document.getElementById('org-git-token-form');
+  if (gitTokenForm) gitTokenForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const m = document.getElementById('org-git-msg');
+    const nameVal = document.getElementById('org-git-token-name').value.trim();
+    const tokenVal = document.getElementById('org-git-token-value').value.trim();
+    if (!nameVal || !tokenVal) { if (m) { m.textContent = 'Libellé et token requis.'; m.className = 'msg error'; } return; }
+    try {
+      await api(`/api/orgs/${encodeURIComponent(selectedOrgId)}/git-tokens`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: nameVal, token: tokenVal }) });
+      await loadOrganizations(); closeModal(); orgManageModal();
+    } catch (err) { if (m) { m.textContent = err.message || String(err); m.className = 'msg error'; } }
+  });
+}
+
 function goToTab(tab, taskId) {
   taskFilter = taskId || '';
   switchTab(tab);
@@ -90,7 +326,11 @@ function bindTaskFilter() {
 }
 
 function taskQuery() {
-  return taskFilter ? `?taskId=${encodeURIComponent(taskFilter)}` : '';
+  const q = new URLSearchParams();
+  if (taskFilter) q.set('taskId', taskFilter);
+  if (currentProject) q.set('project', currentProject);
+  const s = q.toString();
+  return s ? '?' + s : '';
 }
 
 function detailsButtons(t) {
@@ -112,17 +352,23 @@ function sessionHref(sid) {
 
 // --- Vue d'ensemble --------------------------------------------------------
 async function renderOverview() {
-  const s = await api('/api/stats');
+  const params = [];
+  if (currentProject) params.push('project=' + encodeURIComponent(currentProject));
+  if (currentOrg) params.push('org=' + encodeURIComponent(currentOrg));
+  const s = await api('/api/stats' + (params.length ? '?' + params.join('&') : ''));
   const cards = [['Tâches', s.tasks]];
   for (const [st, n] of Object.entries(s.byStatus || {})) cards.push([st, n]);
   cards.push(['Décisions ouvertes', s.openDecisions], ['Archivées', s.archived || 0]);
   document.getElementById('pane-overview').innerHTML =
+    `${currentProject ? `<h2>Vue d'ensemble — ${esc(currentProject)}</h2>` : ''}` +
     `<div class="cards">${cards.map(([l, n]) => `<div class="card"><div class="num">${n}</div><div class="lbl">${esc(l)}</div></div>`).join('')}</div>` +
     `<div class="muted-sm">Registre : ${s.byStatus && Object.keys(s.byStatus).length ? 'connecté' : 'vide / non initialisé'}</div>`;
 }
 
 // --- Tâches ----------------------------------------------------------------
 async function renderTasks() {
+  // Projet ouvert → le filtre projet est verrouillé sur ce projet.
+  if (currentProject) tasksProjectFilter = currentProject;
   const [data, plansData] = await Promise.all([api('/api/tasks'), api('/api/plans')]);
   const tasks = data.tasks || [];
   const plans = plansData.plans || [];
@@ -132,7 +378,7 @@ async function renderTasks() {
   document.getElementById('pane-tasks').innerHTML = `
     <h2>Tâches</h2>
     <div class="filters">
-      <select id="f-project"><option value="">Tous les projets</option>${projects.map((p) => `<option>${esc(p)}</option>`).join('')}</select>
+      ${currentProject ? '' : `<select id="f-project"><option value="">Tous les projets</option>${projects.map((p) => `<option>${esc(p)}</option>`).join('')}</select>`}
       <div class="status-tagfilter" id="status-tagfilter" title="Afficher les tâches dont le statut est sélectionné (multi)">
         <span class="tagfilter-label">Statuts :</span>
         <span class="tagfilter-tags" id="f-status-tags"></span>
@@ -143,16 +389,25 @@ async function renderTasks() {
       <label class="muted filter-check" id="f-group-parallel-wrap" hidden><input type="checkbox" id="f-group-parallel" ${groupParallelEnabled ? 'checked' : ''}> Grouper par tâches parallèles</label>
       <label class="muted filter-check" title="Tâches dont la recette n'est pas faite"><input type="checkbox" id="f-filter-recette" ${tasksNeedRecette ? 'checked' : ''}> À recetter</label>
       <label class="muted filter-check" title="Tâches dont le statut n'est pas « done »"><input type="checkbox" id="f-filter-actif" ${tasksActifOnly ? 'checked' : ''}> Actif</label>
+      <span class="date-filter" title="Filtrer par date de création">
+        <span class="tagfilter-label">Créée du</span>
+        <input type="date" id="f-date-from" value="${esc(tasksDateFrom)}">
+        <span class="tagfilter-label">au</span>
+        <input type="date" id="f-date-to" value="${esc(tasksDateTo)}">
+        <button type="button" class="ghost" id="f-date-clear" title="Effacer le filtre date" ${(tasksDateFrom || tasksDateTo) ? '' : 'hidden'}>✕</button>
+      </span>
       <button id="new-task-btn" class="launch-btn">+ Nouvelle tâche</button>
     </div>
     <table><thead><tr><th></th><th>ID</th><th>Projet</th><th>Type</th><th>Priorité</th><th>Statut</th><th>Recette</th><th>E2E</th><th>Demande</th><th>Session</th><th>Actions</th></tr></thead>
     <tbody id="tasks-body"></tbody></table>`;
   const statuses = [...new Set(tasks.map((t) => t.status || 'queued'))];
   const projectSel = document.getElementById('f-project');
-  // Restaure le filtre projet (perdu lors d'un re-rendu : polling, retour d'onglet…).
-  if (tasksProjectFilter && !projects.includes(tasksProjectFilter)) projects.push(tasksProjectFilter);
-  projectSel.innerHTML = `<option value="">Tous les projets</option>` + projects.map((p) => `<option>${esc(p)}</option>`).join('');
-  projectSel.value = [...projectSel.options].some((o) => o.value === tasksProjectFilter) ? tasksProjectFilter : '';
+  if (projectSel) {
+    // Restaure le filtre projet (perdu lors d'un re-rendu : polling, retour d'onglet…).
+    if (tasksProjectFilter && !projects.includes(tasksProjectFilter)) projects.push(tasksProjectFilter);
+    projectSel.innerHTML = `<option value="">Tous les projets</option>` + projects.map((p) => `<option>${esc(p)}</option>`).join('');
+    projectSel.value = [...projectSel.options].some((o) => o.value === tasksProjectFilter) ? tasksProjectFilter : '';
+  }
   // Filtre statut MULTI-VALEURS : puces + sélecteur d'ajout (pas un combo à valeur unique).
   const tagsBox = document.getElementById('f-status-tags');
   const statusSelAdd = document.getElementById('f-status-add');
@@ -174,7 +429,7 @@ async function renderTasks() {
   };
   document.getElementById('new-task-btn').addEventListener('click', () => taskCreateModal());
   const apply = () => {
-    const p = document.getElementById('f-project').value;
+    const p = currentProject || (document.getElementById('f-project')?.value || '');
     const st = tasksStatusFilter;
     const groupRecette = document.getElementById('f-group-recette').checked;
     const groupParallel = document.getElementById('f-group-parallel').checked;
@@ -182,11 +437,17 @@ async function renderTasks() {
     if (parallelWrap) parallelWrap.hidden = !groupRecette;
     const needRecette = document.getElementById('f-filter-recette').checked;
     const actifOnly = document.getElementById('f-filter-actif').checked;
+    const dateFrom = document.getElementById('f-date-from').value; // YYYY-MM-DD
+    const dateTo = document.getElementById('f-date-to').value;
+    const dayOf = (t) => (t.created_at || '').slice(0, 10); // partie date ISO
     const rows = tasks.filter((t) =>
       (!p || t.project === p)
+      && (!currentOrg || (t.organization_id || 'onirtech') === currentOrg)
       && (!st.length || st.includes(t.status || 'queued'))
       && (!needRecette || (t.recette_status || 'pending') !== 'done')
-      && (!actifOnly || (t.status || 'queued') !== 'done'));
+      && (!actifOnly || (t.status || 'queued') !== 'done')
+      && (!dateFrom || dayOf(t) >= dateFrom)
+      && (!dateTo || dayOf(t) <= dateTo));
 
     // Une ligne de tâche (avec ses plans en sous-lignes).
     const rowHtml = (t, recetteParent) => {
@@ -297,8 +558,9 @@ async function renderTasks() {
       b.textContent = expanded ? '▸' : '▾';
     }));
   };
-  document.getElementById('f-project').addEventListener('change', () => {
-    tasksProjectFilter = document.getElementById('f-project').value;
+  const fProjEl = document.getElementById('f-project');
+  if (fProjEl) fProjEl.addEventListener('change', () => {
+    tasksProjectFilter = fProjEl.value;
     localStorage.setItem('panel_task_project', tasksProjectFilter);
     apply();
   });
@@ -322,6 +584,30 @@ async function renderTasks() {
   if (actifBox) actifBox.addEventListener('change', () => {
     tasksActifOnly = actifBox.checked;
     localStorage.setItem('panel_task_actif', tasksActifOnly ? '1' : '0');
+    apply();
+  });
+  const dateFromEl = document.getElementById('f-date-from');
+  const dateToEl = document.getElementById('f-date-to');
+  const dateClearEl = document.getElementById('f-date-clear');
+  const syncDateClear = () => { if (dateClearEl) dateClearEl.hidden = !(dateFromEl.value || dateToEl.value); };
+  if (dateFromEl) dateFromEl.addEventListener('change', () => {
+    tasksDateFrom = dateFromEl.value;
+    localStorage.setItem('panel_task_date_from', tasksDateFrom);
+    syncDateClear();
+    apply();
+  });
+  if (dateToEl) dateToEl.addEventListener('change', () => {
+    tasksDateTo = dateToEl.value;
+    localStorage.setItem('panel_task_date_to', tasksDateTo);
+    syncDateClear();
+    apply();
+  });
+  if (dateClearEl) dateClearEl.addEventListener('click', () => {
+    tasksDateFrom = ''; tasksDateTo = '';
+    localStorage.removeItem('panel_task_date_from');
+    localStorage.removeItem('panel_task_date_to');
+    dateFromEl.value = ''; dateToEl.value = '';
+    syncDateClear();
     apply();
   });
   document.getElementById('f-group-recette').addEventListener('change', () => {
@@ -498,24 +784,31 @@ async function renderUsers() {
   if (r.status === 403) { document.getElementById('pane-users').innerHTML = '<p class="muted">Réservé aux administrateurs.</p>'; return; }
   const data = await r.json();
   const users = data.users || [];
+  let projects = [];
+  try { projects = ((await api('/api/projects')).projects || []); } catch {}
   const roleOpts = (sel) => `<select class="role-sel" data-user="${esc(sel.id)}">${['admin', 'supervisor', 'user'].map((rl) => `<option value="${rl}" ${sel.role === rl ? 'selected' : ''}>${rl === 'admin' ? 'admin' : rl === 'supervisor' ? 'superviseur' : 'utilisateur'}</option>`).join('')}</select>`;
+  const projOpts = projects.map((p) => `<option value="${esc(p.id)}">${esc(p.name || p.id)}</option>`).join('');
   document.getElementById('pane-users').innerHTML = `
-    <h2>Utilisateurs</h2>
-    <p class="muted-sm">Rôles : <strong>admin</strong> (tout) · <strong>superviseur</strong> (lecture seule, observabilité omise) · <strong>utilisateur</strong> (lecture seule).</p>
+    <h2>Utilisateurs <span class="muted-sm">— organisation ${esc(currentOrg)}</span></h2>
+    <p class="muted-sm">Rôles : <strong>admin</strong> (écriture, tous les projets de l'organisation) · <strong>superviseur</strong> (lecture seule, tous les projets) · <strong>utilisateur</strong> (peut créer/agir, ne voit que <em>ses propres créations</em>). L'accès aux <strong>projets</strong> est explicite (aucun par défaut ; l'admin a tous les projets).</p>
     <div class="user-form">
       <input id="new-username" placeholder="nom d'utilisateur">
       <input id="new-password" type="password" placeholder="mot de passe">
       <select id="new-role"><option value="user">utilisateur</option><option value="supervisor">superviseur</option><option value="admin">admin</option></select>
+      <select id="new-org">${ORGANIZATIONS.map((o) => `<option value="${esc(o.id)}" ${o.id === currentOrg ? 'selected' : ''}>${esc(o.name || o.id)}</option>`).join('')}</select>
+      <select id="new-projects" multiple title="Projets accessibles (Ctrl/Cmd pour multi)" style="min-width:160px">${projOpts}</select>
       <button id="add-user">Ajouter</button>
     </div>
-    <table><thead><tr><th>Utilisateur</th><th>Rôle</th><th>Créé le</th><th></th></tr></thead>
-    <tbody>${users.map((u) => `<tr><td>${esc(u.username)}</td><td>${roleOpts(u)}</td><td class="code">${esc((u.created_at || '').replace('T', ' ').slice(0, 19))}</td><td><button class="danger" data-del="${u.id}">Supprimer</button></td></tr>`).join('')}</tbody></table>
+    <table><thead><tr><th>Utilisateur</th><th>Rôle</th><th>Organisations</th><th>Projets</th><th>opencode</th><th>Créé le</th><th></th></tr></thead>
+    <tbody>${users.map((u) => `<tr><td>${esc(u.username)}</td><td>${roleOpts(u)}</td><td><button class="ghost tiny" data-user-orgs="${u.id}" data-user-name="${esc(u.username)}">Gérer</button></td><td><button class="ghost tiny" data-user-projects="${u.id}" data-user-name="${esc(u.username)}">Gérer</button></td><td><button class="ghost tiny" data-user-oc="${u.id}" data-user-name="${esc(u.username)}">Accès</button></td><td class="code">${esc((u.created_at || '').replace('T', ' ').slice(0, 19))}</td>    <td><div class="icon-actions"><button class="ghost tiny" data-oc-restart="${esc(u.username)}" title="Redémarrer l'instance opencode@${esc(u.username)}.service">Redémarrer</button><button class="danger" data-del="${u.id}">Supprimer</button></div></td></tr>`).join('')}</tbody></table>
     <div id="users-msg" class="error"></div>`;
   document.getElementById('add-user').addEventListener('click', async () => {
     const username = document.getElementById('new-username').value;
     const password = document.getElementById('new-password').value;
     const role = document.getElementById('new-role').value;
-    const rr = await fetch('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password, role }) });
+    const organizationId = document.getElementById('new-org').value;
+    const projectIds = [...document.getElementById('new-projects').selectedOptions].map((o) => o.value);
+    const rr = await fetch('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password, role, organizationId, projectIds }) });
     const msg = document.getElementById('users-msg');
     if (rr.ok) { msg.textContent = ''; renderUsers(); }
     else msg.textContent = (await rr.json()).error || 'Erreur';
@@ -530,6 +823,120 @@ async function renderUsers() {
     if (!rr.ok) msg.textContent = (await rr.json()).error || 'Erreur';
     renderUsers();
   }));
+  document.querySelectorAll('#pane-users [data-user-orgs]').forEach((b) => b.addEventListener('click', () => userOrgsModal(Number(b.dataset.userOrgs), b.dataset.userName)));
+  document.querySelectorAll('#pane-users [data-user-projects]').forEach((b) => b.addEventListener('click', () => userProjectsModal(Number(b.dataset.userProjects), b.dataset.userName)));
+  document.querySelectorAll('#pane-users [data-user-oc]').forEach((b) => b.addEventListener('click', () => userOpencodeModal(Number(b.dataset.userOc), b.dataset.userName)));
+  document.querySelectorAll('#pane-users [data-oc-restart]').forEach((b) => b.addEventListener('click', () => restartOpencodeSession(b.dataset.ocRestart)));
+}
+
+// Redémarrage de l'instance systemd opencode@<user>.service d'un utilisateur (admin).
+async function restartOpencodeSession(username) {
+  if (!confirm(`Redémarrer la session opencode de « ${username} » ?\nL'instance systemd opencode@${username}.service sera relancée (recharge la config des agents : modèles, permissions, skills, MCP).`)) return;
+  const msg = document.getElementById('users-msg');
+  const btn = [...document.querySelectorAll('#pane-users [data-oc-restart]')].find((x) => x.dataset.ocRestart === username);
+  const prevLabel = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'redémarrage…'; }
+  try {
+    const r = await fetch(`/api/opencode/restart-user/${encodeURIComponent(username)}`, { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error((d && d.error) || `HTTP ${r.status}`);
+    if (msg) { msg.textContent = `Session opencode « ${username} » redémarrée.`; msg.className = 'msg'; }
+  } catch (e) {
+    if (msg) { msg.textContent = e.message || String(e); msg.className = 'msg error'; }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = prevLabel; }
+  }
+}
+
+// Modale accès opencode dédié d'un utilisateur (identité par utilisateur).
+async function userOpencodeModal(userId, username) {
+  let d = {};
+  try { d = await api(`/api/users/${userId}/opencode`); } catch {}
+  showModal(`
+    <div class="modal">
+      <h2>Accès opencode — ${esc(username || userId)}</h2>
+      <p class="muted-sm">Chaque utilisateur dispose d'une instance opencode <strong>dédiée</strong> (sessions isolées, config partagée) exposée sur <code>&lt;user&gt;.dev.madatalk.fr</code>. Son identité est ainsi garantie, même hors panneau. L'instance partagée <code>dev.madatalk.fr</code> reste disponible en secours.</p>
+      ${d.provisioned ? `<div class="recette-list">
+        <div class="recette-item"><span class="lbl">URL</span><code>${esc(d.url || ('https://' + (username || '') + '.dev.madatalk.fr'))}</code></div>
+        <div class="recette-item"><span class="lbl">Mot de passe</span><code>${esc(d.password || '')}</code> <button class="ghost tiny" data-copy-oc="${esc(d.password || '')}">copier</button></div>
+        <div class="recette-item"><span class="lbl">Port interne</span><code>${esc(String(d.port || ''))}</code></div>
+      </div>` : '<p class="muted-sm">Aucune instance provisionnée.</p>'}
+      <div class="modal-actions">
+        ${d.provisioned ? '<button class="danger" id="oc-deprov">Déprovisionner</button>' : ''}
+        <button class="ghost" id="modal-cancel">Fermer</button>
+        <button class="launch-btn" id="oc-prov">${d.provisioned ? 'Régénérer / redémarrer' : 'Provisionner'}</button>
+      </div>
+      <div id="oc-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.querySelectorAll('#modal-backdrop [data-copy-oc]').forEach((b) => b.addEventListener('click', () => { navigator.clipboard && navigator.clipboard.writeText(b.dataset.copyOc); }));
+  document.getElementById('oc-prov').onclick = async () => {
+    const m = document.getElementById('oc-msg');
+    try { m.textContent = 'Provisionnement…'; m.className = 'msg'; await api(`/api/users/${userId}/opencode`, { method: 'POST' }); closeModal(); userOpencodeModal(userId, username); }
+    catch (e) { if (m) { m.textContent = e.message || String(e); m.className = 'msg error'; } }
+  };
+  const dep = document.getElementById('oc-deprov');
+  if (dep) dep.onclick = async () => {
+    if (!confirm('Déprovisionner l\'instance opencode de cet utilisateur ?')) return;
+    try { await api(`/api/users/${userId}/opencode`, { method: 'DELETE' }); closeModal(); userOpencodeModal(userId, username); }
+    catch (e) { const m = document.getElementById('oc-msg'); if (m) { m.textContent = e.message || String(e); m.className = 'msg error'; } }
+  };
+}
+
+// Modale d'accès par PROJET d'un utilisateur (admin). Aucun par défaut.
+async function userProjectsModal(userId, username) {
+  let all = [];
+  try { all = ((await api('/api/projects')).projects || []); } catch {}
+  let mine = [];
+  try { const r = await api(`/api/users/${userId}/projects`); mine = (r && r.projects) || []; } catch {}
+  showModal(`
+    <div class="modal">
+      <h2>Projets accessibles à ${esc(username || userId)}</h2>
+      <p class="muted-sm">Par défaut, un utilisateur n'a accès à <strong>aucun</strong> projet. Les administrateurs ont accès à tous les projets de l'organisation.</p>
+      <div class="recette-list">${all.map((p) => `<label class="filter-check"><input type="checkbox" class="up-proj" value="${esc(p.id)}" ${mine.includes(p.id) ? 'checked' : ''}> ${esc(p.name || p.id)} <code class="muted-sm">${esc(p.id)}</code></label>`).join('') || '<p class="muted-sm">Aucun projet dans cette organisation.</p>'}</div>
+      <div class="modal-actions">
+        <button class="ghost" id="modal-cancel">Annuler</button>
+        <button class="launch-btn" id="up-save">Enregistrer</button>
+      </div>
+      <div id="up-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('up-save').onclick = async () => {
+    const ids = [...document.querySelectorAll('#modal-backdrop .up-proj:checked')].map((c) => c.value);
+    const m = document.getElementById('up-msg');
+    try {
+      await api(`/api/users/${userId}/projects`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectIds: ids }) });
+      closeModal(); renderUsers();
+    } catch (e) { if (m) { m.textContent = e.message || String(e); m.className = 'msg error'; } }
+  };
+}
+
+// Modale d'appartenance d'un utilisateur aux organisations (admin).
+async function userOrgsModal(userId, username) {
+  let all = [];
+  try { all = ((await api('/api/orgs')).organizations || []); } catch {}
+  let mine = [];
+  try { const r = await api(`/api/users/${userId}/organizations`); mine = (r && r.organizations) || []; } catch {}
+  showModal(`
+    <div class="modal">
+      <h2>Organisations de ${esc(username || userId)}</h2>
+      <p class="muted-sm">Un utilisateur peut appartenir à plusieurs organisations. Au moins une requise.</p>
+      <div class="recette-list">${all.map((o) => `<label class="filter-check"><input type="checkbox" class="uo-org" value="${esc(o.id)}" ${mine.includes(o.id) ? 'checked' : ''}> ${esc(o.name || o.id)}${o.isDefault ? ' ★' : ''}</label>`).join('')}</div>
+      <div class="modal-actions">
+        <button class="ghost" id="modal-cancel">Annuler</button>
+        <button class="launch-btn" id="uo-save">Enregistrer</button>
+      </div>
+      <div id="uo-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('uo-save').onclick = async () => {
+    const ids = [...document.querySelectorAll('#modal-backdrop .uo-org:checked')].map((c) => c.value);
+    const m = document.getElementById('uo-msg');
+    try {
+      await api(`/api/users/${userId}/organizations`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ organizationIds: ids }) });
+      closeModal(); renderUsers();
+    } catch (e) { if (m) { m.textContent = e.message || String(e); m.className = 'msg error'; } }
+  };
 }
 
 // --- Documents (artifacts liés aux demandes) ------------------------------
@@ -663,10 +1070,15 @@ function e2eBadgeCell(t) {
   return `<button type="button" class="badge ${cls} e2e-badge-goto" data-goto-e2e="${esc(t.id)}" title="E2E : ${e.done}/${e.count} test(s) exécuté(s) — ${label}. Cliquer pour ouvrir les tests">E2E ${icon}</button>`;
 }
 
-// Rendu des projets d'une recette (1..N) en puces.
-function recProjChips(projs) {
-  const list = (projs && projs.length ? projs : []).filter(Boolean);
-  return list.length ? list.map((p) => `<code class="chip-project" title="Projet rattaché">${esc(p)}</code>`).join(' ') : '<span class="muted-sm">—</span>';
+// Projet unique d'une recette + ses repos transverses (portée réelle, ADR 11).
+function recetteScopeChips(rec) {
+  const project = (rec && rec.project) ? rec.project : '';
+  const repos = (rec && Array.isArray(rec.repos)) ? rec.repos : [];
+  const projChip = project ? `<code class="chip-project" title="Projet (produit) de la recette">${esc(project)}</code>` : '';
+  const repoChips = repos.length
+    ? repos.map((rp) => `<code class="chip-repo" title="Repo transverse du projet (portée)">${esc(rp.repoId || rp.id || rp)}</code>`).join(' ')
+    : '';
+  return [projChip, repoChips ? `<span class="muted-sm" style="font-size:11px">repos : ${repoChips}</span>` : ''].filter(Boolean).join(' ') || '<span class="muted-sm">—</span>';
 }
 
 // ===========================================================================
@@ -729,6 +1141,8 @@ async function renderTaskE2ELink(taskId) {
 }
 
 async function renderE2ETests() {
+  // Projet ouvert → filtre projet verrouillé sur ce projet.
+  if (currentProject) e2eFilterProject = currentProject;
   const [data, projsRes] = await Promise.all([
     api('/api/e2e-tests' + e2eQuery()),
     api('/api/projects').catch(() => ({ projects: [] })),
@@ -744,7 +1158,7 @@ async function renderE2ETests() {
     <p class="muted-sm">Un test Playwright est enregistré indépendamment des tâches ; les exécutions lui appartiennent (origine tâche / recette / CI / manuelle).</p>
     ${filterBar()}
     <div class="filters">
-      <select id="e2e-f-project" title="Filtrer par projet couvert"><option value="">Tous les projets</option>${projects.map((p) => `<option value="${esc(p)}" ${e2eFilterProject === p ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>
+      ${currentProject ? '' : `<select id="e2e-f-project" title="Filtrer par projet couvert"><option value="">Tous les projets</option>${projects.map((p) => `<option value="${esc(p)}" ${e2eFilterProject === p ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>`}
       <select id="e2e-f-status" title="Filtrer par statut du test"><option value="">Tous les statuts</option>${E2E_STATUS_OPTIONS}</select>
       <input id="e2e-f-search" placeholder="recherche (titre / scénario / spec)…" value="${esc(e2eFilterSearch)}">
       <button id="agent-session-btn" class="ghost" title="Ouvrir l'agent de test — reprendre une session existante ou en ouvrir une nouvelle (sans forcément créer un test)">Session test-agent</button>
@@ -753,7 +1167,8 @@ async function renderE2ETests() {
     <table><thead><tr><th>Titre / Comportement</th><th>Projet</th><th>Repos traversés</th><th>Scénario</th><th>Statut</th><th>Dernier run</th><th>Actions</th></tr></thead>
     <tbody>${tests.map(e2eTableRow).join('') || `<tr><td colspan="7" class="muted">${taskFilter ? 'Aucun test E2E associé à la tâche <code>' + esc(taskFilter) + '</code>.' : (e2eFilterStatus ? 'Aucun test E2E ' + esc((E2E_TEST_STATUS_LABEL[e2eFilterStatus] || e2eFilterStatus)) + ' (changez le filtre de statut).' : 'Aucun test E2E enregistré.')}</td></tr>`}</tbody></table>`;
   bindTaskFilter();
-  document.getElementById('e2e-f-project').addEventListener('change', (ev) => { e2eFilterProject = ev.target.value; refreshActive(); });
+  const e2eProjSel = document.getElementById('e2e-f-project');
+  if (e2eProjSel) e2eProjSel.addEventListener('change', (ev) => { e2eFilterProject = ev.target.value; refreshActive(); });
   const statusSel = document.getElementById('e2e-f-status');
   statusSel.value = e2eFilterStatus;
   statusSel.addEventListener('change', (ev) => { e2eFilterStatus = ev.target.value; refreshActive(); });
@@ -1459,6 +1874,7 @@ async function e2eRegisterModal(projects, projOpts) {
         description: document.getElementById('er-description').value.trim() || undefined,
         params,
         repoIds: projRepoIds[pid] && projRepoIds[pid].length ? projRepoIds[pid] : undefined,
+        organizationId: currentOrg || undefined,
       }) });
       closeModal();
       refreshActive();
@@ -1576,6 +1992,7 @@ async function e2eCreateViaAgentModal(projects, projOpts) {
         viaAgent: true,
         repoIds: projRepoIds[pid] && projRepoIds[pid].length ? projRepoIds[pid] : undefined,
         docIds: selectedDocIds(), // toujours un tableau (vide = aucun doc en contexte)
+        organizationId: currentOrg || undefined,
       }) });
       closeModal();
       if (r && r.session && r.session.sessionId && /^ses_/.test(r.session.sessionId)) {
@@ -1657,7 +2074,7 @@ function recetteCard(r) {
   const canSession = r.status === 'pending' || r.status === 'in_progress';
   const canFinish = r.status === 'in_progress';
   return `<article class="project-card">
-    <div class="project-card-head"><strong class="recette-title" data-rec-detail="${esc(r.recette_id)}" title="Voir le détail">${esc(r.title || r.recette_id)}</strong> <span class="rec-card-projs">${recProjChips(r.projects || (r.project ? [r.project] : []))}</span> ${badge(r.status)}</div>
+    <div class="project-card-head"><strong class="recette-title" data-rec-detail="${esc(r.recette_id)}" title="Voir le détail">${esc(r.title || r.recette_id)}</strong> <span class="rec-card-projs">${recetteScopeChips(r)}</span> ${badge(r.status)}</div>
     <div class="project-card-body">
       ${r.description ? `<div class="project-kv"><span class="lbl">Description</span><span class="muted-sm">${esc(r.description.slice(0, 100))}${r.description.length > 100 ? '…' : ''}</span></div>` : ''}
       <div class="project-kv"><span class="lbl">Tâches couvertes</span><span>${r.tasks_count || 0}</span></div>
@@ -1674,11 +2091,16 @@ function recetteCard(r) {
 }
 
 async function renderRecettes() {
-  const data = await api('/api/recettes');
+  const [data, bdata] = await Promise.all([
+    api('/api/recettes' + (currentProject ? `?project=${encodeURIComponent(currentProject)}` : '')),
+    api('/api/batches' + (currentProject ? `?project=${encodeURIComponent(currentProject)}` : '')).catch(() => ({ batches: [] })),
+  ]);
   const recs = data.recettes || [];
+  const batches = (bdata.batches || []).filter((b) => b.status === 'active');
   document.getElementById('pane-recettes').innerHTML = `
     <h2>Recettes</h2>
-    <p class="muted-sm">Opérations de vérification — chaque recette couvre 1..N projets et 0..N tâches, avec titre et session dédiée.</p>
+    <p class="muted-sm">Opérations de vérification — chaque recette couvre UN projet (produit) et 0..N tâches de ce projet ; les repos transverses du projet sont sa portée réelle. Titre et session dédiée.</p>
+    ${batches.length ? `<div class="actions-section"><h3>Batches d'orchestration actifs <span class="muted-sm">(${batches.length})</span></h3><div class="project-cards">${batches.map(batchCard).join('')}</div></div>` : ''}
     <div class="filters"><button id="new-recette-btn" class="launch-btn">+ Nouvelle recette</button></div>
     <div class="project-cards">${recs.map(recetteCard).join('') || '<p class="muted">Aucune recette.</p>'}</div>`;
   document.getElementById('new-recette-btn').addEventListener('click', () => recetteCreateModal());
@@ -1687,6 +2109,66 @@ async function renderRecettes() {
   document.querySelectorAll('#pane-recettes [data-rec-items]').forEach((b) => b.addEventListener('click', () => recetteDetailItemsModal(b.dataset.recItems)));
   document.querySelectorAll('#pane-recettes [data-rec-docs]').forEach((b) => b.addEventListener('click', () => recetteDocsModal(b.dataset.recDocs)));
   document.querySelectorAll('#pane-recettes [data-rec-detail]').forEach((b) => b.addEventListener('click', () => recetteDetailModal(b.dataset.recDetail)));
+  document.querySelectorAll('#pane-recettes [data-batch-session]').forEach((b) => b.addEventListener('click', () => openBatchSession(b.dataset.batchSession)));
+  document.querySelectorAll('#pane-recettes [data-batch-detail]').forEach((b) => b.addEventListener('click', () => batchDetailModal(b.dataset.batchDetail)));
+}
+
+// --- Batches d'orchestration (v0.9.41) : mode session unique / manuel ---------
+function batchCard(b) {
+  const modeLabel = b.launchMode === 'session' ? 'Session unique' : b.launchMode === 'manual' ? 'Manuel' : 'Batch';
+  const modeBadge = `<span class="badge ${b.launchMode === 'session' ? 'awaiting' : b.launchMode === 'manual' ? 'queued' : 'in_progress'}">${modeLabel}</span>`;
+  const canSession = b.launchMode === 'session' || b.launchMode === 'batch';
+  return `<article class="project-card">
+    <div class="project-card-head"><strong data-batch-detail="${esc(b.batchId)}" style="cursor:pointer" title="Voir le batch">${esc(b.title || b.batchId)}</strong> ${modeBadge} <code class="muted-sm">${esc(b.batchId)}</code></div>
+    <div class="project-card-body">
+      <div class="project-kv"><span class="lbl">Projet</span><span>${esc(b.project)}</span></div>
+      <div class="project-kv"><span class="lbl">Tâches</span><span>${b.tasksCount || 0} · parallélisme max ${b.maxParallel || 2}</span></div>
+      ${b.sessionId ? `<div class="project-kv"><span class="lbl">Session</span><span class="muted-sm">${esc(b.sessionId)}</span></div>` : ''}
+    </div>
+    <div class="project-card-actions">
+      ${canSession ? `<button class="launch-btn" data-batch-session="${esc(b.batchId)}" title="${b.sessionId ? 'Reprendre la session d\'orchestration du batch' : 'Lancer la session d\'orchestration unique (pilote toutes les tâches)'}">${b.sessionId ? 'Reprendre la session' : 'Lancer la session d\'orchestration'}</button>` : ''}
+      <button class="ghost" data-batch-detail="${esc(b.batchId)}">Détail</button>
+    </div>
+  </article>`;
+}
+
+async function openBatchSession(batchId) {
+  try {
+    const r = await api(`/api/batches/${encodeURIComponent(batchId)}/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: false }) });
+    if (r.sessionId && /^ses_/.test(r.sessionId)) window.open(sessionHref(r.sessionId), '_blank');
+    else alert(r.error || 'Impossible de lancer la session d\'orchestration du batch.');
+    refreshActive();
+  } catch (e) { alert('Échec : ' + (e.message || e)); }
+}
+
+async function batchDetailModal(batchId) {
+  let d;
+  try { d = await api(`/api/batches/${encodeURIComponent(batchId)}`); } catch (e) { alert('Erreur : ' + (e.message || e)); return; }
+  const b = d.batch || {};
+  const modeLabel = { session: 'Session unique', manual: 'Manuel', batch: 'Batch' }[b.launchMode] || b.launchMode;
+  const rd = b.readiness || [];
+  const row = (r) => {
+    const deps = (r.unsatisfiedDeps || []).length ? ` · ⛔ attend : ${r.unsatisfiedDeps.join(', ')}` : '';
+    const blocked = (r.blockedSteps || []).length ? ` · 🔒 étapes bloquées : ${r.blockedSteps.length}` : '';
+    return `<div class="recette-item"><code class="chip-project">${esc(r.done ? 'done' : r.active ? 'en cours' : '—')}</code><code class="muted-sm">${esc(r.taskId)}</code>${deps}${blocked}${r.ready && !r.active ? ' · ✅ prête' : ''}</div>`;
+  };
+  showModal(`
+    <div class="modal modal-wide">
+      <h2>Batch ${esc(b.title || batchId)}</h2>
+      <p class="muted">${badge(b.status)} · ${modeLabel} · projet ${esc(b.project)} · parallélisme max ${b.maxParallel || 2}${b.sessionId ? ` · session ${esc(b.sessionId)}` : ''}</p>
+      <div class="actions-section"><h3>Readiness (${rd.length})</h3><div class="recette-list">${rd.map(row).join('') || '<p class="muted-sm">Aucune tâche.</p>'}</div></div>
+      ${b.conflictMatrix && b.conflictMatrix.length ? `<div class="actions-section"><h3>Conflits fichiers (${b.conflictMatrix.length})</h3><div class="recette-list">${b.conflictMatrix.map((c) => `<div class="recette-item"><code class="muted-sm">${esc(c.taskA)}</code> ↔ <code class="muted-sm">${esc(c.taskB)}</code><span class="muted-sm">${(c.stepConflicts || []).length} étape(s) en conflit</span></div>`).join('')}</div></div>` : ''}
+      <div class="modal-actions">
+        ${b.launchMode !== 'manual' && b.status === 'active' ? `<button class="launch-btn" id="batch-modal-session">${b.sessionId ? 'Reprendre la session' : 'Lancer la session d\'orchestration'}</button>` : ''}
+        <button class="ghost" id="modal-cancel">Fermer</button>
+      </div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  const btn = document.getElementById('batch-modal-session');
+  if (btn) btn.onclick = async () => {
+    closeModal();
+    await openBatchSession(batchId);
+  };
 }
 
 // Détail d'une recette en modale (titre court + description longue + périmètre).
@@ -1696,17 +2178,12 @@ async function recetteDetailModal(recetteId) {
   const rec = d.recette || {};
   const tasks = rec.tasks || [];
   const items = rec.items || [];
-  const recProjList = (rec.projects && rec.projects.length) ? rec.projects : (rec.project ? [rec.project] : []);
+  const project = rec.project || '';
   showModal(`
     <div class="modal modal-wide">
       <h2>${esc(rec.title || recetteId)}</h2>
-      <p class="muted">${badge(rec.status)} · Projets ${recProjChips(recProjList)}${rec.confirmed_at ? ` · confirmée ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}</p>
+      <p class="muted">${badge(rec.status)} · ${recetteScopeChips(rec)}${rec.confirmed_at ? ` · confirmée ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}</p>
       ${rec.description ? `<p class="modal-request">${esc(rec.description)}</p>` : ''}
-      ${rec.status !== 'done' ? `<div class="actions-section"><h3>Projets rattachés <span class="muted-sm">(1..N)</span></h3>
-        <div class="rec-proj-manage">
-          <div class="rec-proj-chips">${recProjList.map((p) => `<span class="chip-project rec-proj-chip">${esc(p)}${recProjList.length > 1 ? `<button type="button" class="chip-x" data-rec-proj-del="${esc(p)}" title="Retirer ce projet">×</button>` : ''}</span>`).join('')}</div>
-          <div class="rec-proj-addrow"><select id="rec-proj-add"><option value="">+ Ajouter un projet…</option></select></div>
-        </div></div>` : ''}
       ${tasks.length ? `<div class="actions-section"><h3>Tâches couvertes (${tasks.length})</h3><div class="recette-list">${tasks.map((t) => {
         const tid = (t && typeof t === 'object') ? (t.taskId || t.task_id || '') : (t || '');
         const ttl = (t && typeof t === 'object') ? (t.title || '') : '';
@@ -1714,41 +2191,18 @@ async function recetteDetailModal(recetteId) {
         const tproj = (t && typeof t === 'object') ? (t.project || '') : '';
         return `<div class="recette-item"><code class="muted-sm">${esc(tid)}</code><div class="recette-task">${tproj ? `<code class="chip-project">${esc(tproj)}</code>` : ''}<strong>${esc(ttl)}</strong>${req ? `<p class="muted-sm">${esc(req)}</p>` : ''}</div>${rec.status !== 'done' ? `<button type="button" class="ghost rec-task-del" data-rec-task-del="${esc(tid)}" title="Détacher cette tâche (elle reste intacte)">✕ retirer</button>` : ''}</div>`;
       }).join('')}</div>${rec.status !== 'done' ? `<div class="rec-tasks-add"><select id="rec-task-add"><option value="">+ Ajouter une tâche couverte…</option></select></div>` : ''}</div></div>` : '<p class="muted-sm">Aucune tâche couverte (recette exploratoire).</p>'}
-      ${items.length ? `<div class="actions-section"><h3>Éléments (${items.length})</h3><div class="recette-list">${items.map((it) => `<div class="recette-item"><span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span>${it.project ? `<code class="chip-project">${esc(it.project)}</code>` : ''}${it.execOrder != null ? `<span class="badge order-badge" title="Ordre d'exécution">ordre ${esc(it.execOrder)}</span>` : ''}${it.vigilance ? `<span class="badge danger" title="${esc(it.vigilance)}">⚠ vigilance</span>` : ''}<span>${esc(it.title || it.content.slice(0, 80))}</span>${rec.status !== 'done' && it.status !== 'task_created' ? `<button type="button" class="ghost rec-item-del" data-rec-item-del="${it.id}" title="Retirer cet élément (fusion/consolidation)">✕</button>` : ''}</div>`).join('')}</div></div>` : ''}
+      ${items.length ? `<div class="actions-section"><h3>Éléments (${items.length})</h3><div class="recette-list">${items.map((it) => `<div class="recette-item"><span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span>${it.project ? `<code class="chip-project">${esc(it.project)}</code>` : ''}${it.execOrder != null ? `<span class="badge order-badge" title="Ordre d'exécution">ordre ${esc(it.execOrder)}</span>` : ''}${testIntentBadge(it)}${docIntentBadge(it)}${it.vigilance ? `<span class="badge danger" title="${esc(it.vigilance)}">⚠ vigilance</span>` : ''}<span>${esc(it.title || it.content.slice(0, 80))}</span>${rec.status !== 'done' && it.status !== 'task_created' ? `<button type="button" class="ghost rec-item-del" data-rec-item-del="${it.id}" title="Retirer cet élément (fusion/consolidation)">✕</button>` : ''}</div>`).join('')}</div></div>` : ''}
       <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
   if (rec.status !== 'done') {
-    // Gestion des projets rattachés (add/remove) via les endpoints HTTP.
-    const attached = recProjList;
-    (async () => {
-      let all = [];
-      try { all = ((await api('/api/projects')).projects || []).map((p) => p.id); } catch {}
-      const addSel = document.getElementById('rec-proj-add');
-      addSel.innerHTML = `<option value="">+ Ajouter un projet…</option>` + all.filter((p) => !attached.includes(p)).map((p) => `<option>${esc(p)}</option>`).join('');
-      addSel.addEventListener('change', async () => {
-        const p = addSel.value;
-        if (!p) return;
-        try {
-          await api(`/api/recettes/${encodeURIComponent(recetteId)}/projects`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: p }) });
-          closeModal(); recetteDetailModal(recetteId);
-        } catch (e) { alert('Échec : ' + (e.message || e)); addSel.value = ''; }
-      });
-    })();
-    document.querySelectorAll('#modal-backdrop [data-rec-proj-del]').forEach((b) => b.addEventListener('click', async () => {
-      try {
-        await api(`/api/recettes/${encodeURIComponent(recetteId)}/projects/${encodeURIComponent(b.dataset.recProjDel)}`, { method: 'DELETE' });
-        closeModal(); recetteDetailModal(recetteId);
-      } catch (e) { alert('Échec : ' + (e.message || e)); }
-    }));
-    // Gestion des tâches couvertes : ajout (candidates des projets rattachés) + retrait.
+    // Gestion des tâches couvertes : ajout (candidates du projet) + retrait.
     const coveredIds = new Set((tasks || []).map((t) => (t && (t.taskId || t.task_id)) || t));
     const taskAddSel = document.getElementById('rec-task-add');
     if (taskAddSel) {
       (async () => {
         try {
-          const q = recProjList.map((p) => `project=${encodeURIComponent(p)}`).join('&');
-          const d = await api(`/api/recettes/candidates?${q}`);
+          const d = await api(`/api/recettes/candidates?project=${encodeURIComponent(project)}`);
           const cands = (d.candidates || []).filter((c) => !coveredIds.has(c.id));
           taskAddSel.innerHTML = `<option value="">+ Ajouter une tâche couverte…</option>` + cands.map((c) => `<option value="${esc(c.id)}">[${esc(c.project)}] ${esc((c.title || c.request || c.id).slice(0, 70))}</option>`).join('');
         } catch {}
@@ -1875,23 +2329,25 @@ async function recetteDocAddModal(recetteId) {
 async function recetteCreateModal() {
   let projects = [];
   try { projects = ((await api('/api/projects')).projects || []); } catch {}
+  const projOptions = projects.map((p) => `<option value="${esc(p.id)}">${esc(p.name || p.id)}</option>`).join('') || '<option value="">— aucun projet enregistré —</option>';
   showModal(`
     <div class="modal modal-wide">
       <h2>Nouvelle recette</h2>
       <form id="recette-modal-form" class="pilot-form">
         <fieldset class="pilot-fieldset">
-          <legend>Projets rattachés <span class="muted-sm">(1..N — une recette peut couvrir plusieurs projets)</span></legend>
-          <div class="rm-projects">${projects.map((p) => `<label class="filter-check"><input type="checkbox" class="rm-project" value="${esc(p.id)}"> ${esc(p.name || p.id)}</label>`).join('') || '<p class="muted-sm">Aucun projet enregistré.</p>'}</div>
+          <legend>Projet <span class="muted-sm">(1 recette = 1 projet produit — ses repos transverses sont la portée réelle, ADR 11)</span></legend>
+          <select id="rm-project">${projOptions}</select>
+          <div id="rm-repos-hint" class="muted-sm" style="margin-top:6px"></div>
           <button type="button" class="ghost" id="rm-load-cands">Charger les tâches disponibles</button>
         </fieldset>
         <fieldset id="rm-docs-ref-fieldset" class="pilot-fieldset">
           <legend>Documents de référence — contexte de l'agent de recette <span class="muted-sm">(ADR technique, User stories + règles métier, scénarios Gherkin — ADR-12). Tous cochés par défaut.</span></legend>
-          <div id="rm-docs-ref-list"><p class="muted-sm">Cochez ≥ 1 projet pour afficher ses documents de référence.</p></div>
+          <div id="rm-docs-ref-list"><p class="muted-sm">Choisissez un projet pour afficher ses documents de référence.</p></div>
         </fieldset>
         <input id="rm-title" placeholder="titre court (ex: Recette du module chatbot)" required>
         <textarea id="rm-description" class="modal-textarea" placeholder="description longue (détail du périmètre vérifié) — optionnel"></textarea>
-        <label class="modal-field">Tâches couvertes <span class="muted-sm">(0..N — tâches non encore recettées, tous projets sélectionnés)</span></label>
-        <div id="rm-candidates" class="recette-candidates"><p class="muted-sm">Cochez ≥ 1 projet puis « Charger les tâches disponibles ».</p></div>
+        <label class="modal-field">Tâches couvertes <span class="muted-sm">(0..N — tâches non encore recettées du projet)</span></label>
+        <div id="rm-candidates" class="recette-candidates"><p class="muted-sm">Choisissez un projet puis « Charger les tâches disponibles ».</p></div>
         <div class="links-editor">
           <div class="links-head"><label class="modal-field" style="margin:0">Documents <span class="muted-sm">(importés ou liés, avec nature)</span></label>
           <button type="button" class="ghost" id="rm-add-doc">+ Ajouter</button></div>
@@ -1906,15 +2362,16 @@ async function recetteCreateModal() {
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
   const candBox = document.getElementById('rm-candidates');
-  const selectedProjects = () => [...candBox.closest('#modal-backdrop').querySelectorAll('.rm-project:checked')].map((x) => x.value);
+  const projectSel = document.getElementById('rm-project');
+  const reposHint = document.getElementById('rm-repos-hint');
+  const currentProject = () => projectSel.value;
   const kept = new Set(); // tâches déjà cochées, conservées entre rechargements
   const loadCandidates = async () => {
-    const projs = selectedProjects();
+    const proj = currentProject();
     candBox.innerHTML = '<p class="muted-sm">Chargement…</p>';
-    if (!projs.length) { candBox.innerHTML = '<p class="muted-sm">Cochez au moins un projet.</p>'; return; }
+    if (!proj) { candBox.innerHTML = '<p class="muted-sm">Choisissez un projet.</p>'; return; }
     try {
-      const q = projs.map((p) => `project=${encodeURIComponent(p)}`).join('&');
-      const d = await api(`/api/recettes/candidates?${q}`);
+      const d = await api(`/api/recettes/candidates?project=${encodeURIComponent(proj)}`);
       const c = d.candidates || [];
       candBox.innerHTML = c.length
         ? `<div class="recette-cand-list">${c.map((t) => `
@@ -1922,7 +2379,7 @@ async function recetteCreateModal() {
               <input type="checkbox" class="rm-cand" value="${esc(t.id)}" ${kept.has(t.id) ? 'checked' : ''}>
               <span><code class="muted-sm">${esc(t.project)}</code> <strong>${esc(t.title || (t.request || '').slice(0, 60))}</strong> <code class="muted-sm">${esc(t.id)}</code> ${badge(t.status || 'queued')}</span>
             </label>`).join('')}</div>`
-        : '<p class="muted-sm">Aucune tâche non recettée dans les projets sélectionnés.</p>';
+        : '<p class="muted-sm">Aucune tâche non recettée dans ce projet.</p>';
       candBox.querySelectorAll('.rm-cand').forEach((x) => x.addEventListener('change', () => {
         if (x.checked) kept.add(x.value); else kept.delete(x.value);
       }));
@@ -1930,7 +2387,6 @@ async function recetteCreateModal() {
   };
   document.getElementById('rm-load-cands').addEventListener('click', loadCandidates);
   const refDocsBox = document.getElementById('rm-docs-ref-list');
-  const refDocsFieldset = document.getElementById('rm-docs-ref-fieldset');
   const selectedRefDocIds = () => [...document.querySelectorAll('#modal-backdrop .rm-refdoc:checked')].map((c) => c.value);
   const renderRefDocs = (docs) => {
     const KINDS = DOC_KIND_ORDER;
@@ -1940,7 +2396,7 @@ async function recetteCreateModal() {
       const items = byKind[k] || [];
       const inner = items.length
         ? `<div style="padding-left:22px">${items.map((d) => `<label class="filter-check"><input type="checkbox" class="rm-refdoc" data-kind="${esc(k)}" value="${esc(d.docId)}" checked title="${esc(d.path)}"> ${esc(d.title || d.docId)} <span class="muted-sm" style="font-size:11px">${esc(d.path)}</span></label>`).join('')}</div>`
-        : `<p class="muted-sm" style="font-size:11px;padding-left:22px">Aucun document enregistré de ce type pour ces projets — ajoutez-le via <em>Projets → 📄 Docs de référence</em>.</p>`;
+        : `<p class="muted-sm" style="font-size:11px;padding-left:22px">Aucun document enregistré de ce type pour ce projet — ajoutez-le via <em>Projets → 📄 Docs de référence</em>.</p>`;
       return `<div><label class="filter-check"><input type="checkbox" class="rm-refkind" data-kind="${esc(k)}" checked> <code class="chip">${esc(docKindLabel(k))}</code> ${esc(docKindLabelLong(k))}</label>${inner}</div>`;
     }).join('');
     document.querySelectorAll('#modal-backdrop .rm-refkind').forEach((cb) => cb.addEventListener('change', () => {
@@ -1948,22 +2404,29 @@ async function recetteCreateModal() {
     }));
   };
   const loadRefDocs = async () => {
-    const projs = selectedProjects();
-    if (!projs.length) { refDocsBox.innerHTML = '<p class="muted-sm">Cochez ≥ 1 projet pour afficher ses documents de référence.</p>'; return; }
+    const proj = currentProject();
+    if (!proj) { refDocsBox.innerHTML = '<p class="muted-sm">Choisissez un projet pour afficher ses documents de référence.</p>'; return; }
     refDocsBox.innerHTML = '<p class="muted-sm">Chargement des documents de référence…</p>';
     const seen = new Map();
-    for (const pid of projs) {
-      try {
-        const d = await api(`/api/docs?projectId=${encodeURIComponent(pid)}&includeRepoDocs=1`);
-        for (const doc of (d.docs || [])) if (!seen.has(doc.docId)) seen.set(doc.docId, doc);
-      } catch {}
-    }
+    try {
+      const d = await api(`/api/docs?projectId=${encodeURIComponent(proj)}&includeRepoDocs=1`);
+      for (const doc of (d.docs || [])) if (!seen.has(doc.docId)) seen.set(doc.docId, doc);
+    } catch {}
     renderRefDocs([...seen.values()]);
   };
-  document.querySelectorAll('.rm-project').forEach((cb) => cb.addEventListener('change', () => {
-    if (!selectedProjects().length) candBox.innerHTML = '<p class="muted-sm">Cochez ≥ 1 projet puis « Charger les tâches disponibles ».</p>';
+  const renderReposHint = () => {
+    const proj = projects.find((p) => p.id === currentProject());
+    const repos = (proj && proj.repos) || [];
+    reposHint.innerHTML = repos.length
+      ? `Repos transverses du projet (portée réelle) : ${repos.map((r) => `<code class="chip-repo">${esc(r.repoId || r)}</code>`).join(' ')}`
+      : 'Aucun repo rattaché à ce projet.';
+  };
+  projectSel.addEventListener('change', () => {
+    candBox.innerHTML = '<p class="muted-sm">Choisissez un projet puis « Charger les tâches disponibles ».</p>';
+    renderReposHint();
     loadRefDocs();
-  }));
+  });
+  renderReposHint();
 
   // Éditeur de documents (import / artefact + nature).
   let allArtifacts = [];
@@ -2004,8 +2467,8 @@ async function recetteCreateModal() {
     e.preventDefault();
     const msg = document.getElementById('recette-modal-msg');
     try {
-      const projs = selectedProjects();
-      if (!projs.length) throw new Error('Sélectionnez au moins un projet.');
+      const proj = currentProject();
+      if (!proj) throw new Error('Choisissez un projet.');
       const taskIds = [...candBox.querySelectorAll('.rm-cand:checked')].map((x) => x.value);
       const documents = [];
       for (const row of docsList.querySelectorAll('.link-row')) {
@@ -2024,13 +2487,13 @@ async function recetteCreateModal() {
         }
       }
       await api('/api/recettes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-        project: projs[0],
-        projects: projs,
+        project: proj,
         title: document.getElementById('rm-title').value.trim(),
         description: document.getElementById('rm-description').value.trim() || undefined,
         taskIds,
         documents,
         docIds: selectedRefDocIds(), // toujours un tableau (vide = aucun doc en contexte)
+        organizationId: currentOrg || undefined,
       }) });
       closeModal();
       refreshActive();
@@ -2056,6 +2519,8 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
       <div class="recette-task">
         <strong>${esc(it.title || it.content.slice(0, 60))}</strong>
         ${it.execOrder != null ? `<span class="badge order-badge" title="Ordre d'exécution">ordre ${esc(it.execOrder)}</span>` : ''}
+        ${testIntentBadge(it)}
+        ${docIntentBadge(it)}
         ${it.vigilance ? `<span class="badge danger" title="Point de vigilance">⚠ vigilance</span>` : ''}
         ${it.status === 'task_created' && it.createdTaskId ? `<code class="muted-sm">→ ${esc(it.createdTaskId)}</code>` : ''}
         <p class="muted-sm finish-desc" data-full="${esc(full)}">${esc(show)}</p>
@@ -2073,13 +2538,21 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
     : (items.length
       ? '<p>Éléments relevés — ils seront transformés en <strong>nouvelles tâches</strong> (titre + demande + critère d\'acceptation) :</p>'
       : '<p class="muted-sm">Aucun élément relevé : la recette sera clôturée sans créer de tâche.</p>');
+  const launchModeBlock = readOnly ? '' : `
+    <fieldset class="pilot-fieldset" style="margin-top:12px">
+      <legend>Lancement des tâches créées</legend>
+      <label class="filter-check" style="display:flex;gap:6px;align-items:flex-start;margin-bottom:4px"><input type="radio" name="rec-launch-mode" value="batch" checked style="margin-top:2px"><span><strong>Batch</strong> — le worker lance automatiquement les tâches prêtes (≤ maxParallel), chacune avec sa session.</span></label>
+      <label class="filter-check" style="display:flex;gap:6px;align-items:flex-start;margin-bottom:4px"><input type="radio" name="rec-launch-mode" value="session" style="margin-top:2px"><span><strong>Session unique</strong> — une session d'orchestration pilote tout le batch (ordonnancement + préparation croisée).</span></label>
+      <label class="filter-check" style="display:flex;gap:6px;align-items:flex-start"><input type="radio" name="rec-launch-mode" value="manual" style="margin-top:2px"><span><strong>Manuel</strong> — aucun auto-lancement : tu pilotes chaque tâche toi-même, comme avant.</span></label>
+    </fieldset>`;
   showModal(`
     <div class="modal modal-wide modal-finish" id="finish-modal">
       <div class="finish-head"><h2 style="margin:0">${readOnly ? 'Détail de la recette' : 'Terminer la recette'}</h2>
         <button class="ghost" id="finish-fullscreen" title="Plein écran">⛶</button></div>
-      <p class="muted">${esc(rec.title || recetteId)} — Projets ${recProjChips(rec.projects || (rec.project ? [rec.project] : []))}${readOnly && rec.confirmed_at ? ` · clôturée le ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}</p>
+      <p class="muted">${esc(rec.title || recetteId)} — ${recetteScopeChips(rec)}${readOnly && rec.confirmed_at ? ` · clôturée le ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}</p>
       ${intro}
       ${items.length ? `<div class="recette-list">${items.map(itemCard).join('')}</div>` : ''}
+      ${launchModeBlock}
       <div class="modal-actions">
         ${readOnly
           ? '<button class="ghost" id="modal-cancel">Fermer</button>'
@@ -2105,13 +2578,15 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
     const msg = document.getElementById('recette-finish-msg');
     try {
       const payload = items.map((it) => ({ itemId: it.id, content: it.content, classification: it.classification, title: it.title, acceptance: it.acceptance, scope: it.scope }));
-      const r = await api(`/api/recettes/${encodeURIComponent(recetteId)}/finish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: payload }) });
+      const launchMode = (document.querySelector('input[name="rec-launch-mode"]:checked') || {}).value || 'batch';
+      const r = await api(`/api/recettes/${encodeURIComponent(recetteId)}/finish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: payload, launchMode }) });
       msg.textContent = r.created && r.created.length
         ? 'Tâches créées : ' + r.created.map((c) => `${c.taskId} (${RECETTE_CLS_LABEL[c.classification]})`).join(', ')
         : 'Recette terminée (aucune tâche créée).';
       msg.className = 'msg ok';
       closeModal();
-      alert(msg.textContent);
+      const modeLabel = { batch: 'Batch', session: 'Session unique', manual: 'Manuel' }[launchMode] || launchMode;
+      alert(`${msg.textContent}\nMode de lancement : ${modeLabel}`);
       refreshActive();
     } catch (e) { msg.textContent = e.message || e; msg.className = 'msg error'; }
   };
@@ -2381,7 +2856,8 @@ function openDeleteConfirm(taskId, archive) {
 
 async function renderArchives() {
   const data = await api('/api/archives');
-  const archives = data.archives || [];
+  const all = data.archives || [];
+  const archives = currentProject ? all.filter((a) => (a.task && a.task.project) === currentProject) : all;
   document.getElementById('pane-archives').innerHTML = `
     <h2>Archives</h2>
     <p class="muted-sm">Une tâche archivée masque aussi tous les éléments qui lui sont rattachés (événements, documents, déploiements, décisions).</p>
@@ -2518,12 +2994,225 @@ async function renderEcosystem() {
     `<section class="eco-section"><h2>${esc(title)} <span class="muted-sm">${count}</span></h2><div class="eco-grid">${cards}</div></section>`;
   document.getElementById('pane-ecosystem').innerHTML = `
     <div class="eco-summary muted-sm">Écosystème découvert dynamiquement depuis <code>${esc(e.dir || '~/.config/opencode')}</code></div>
+    ${ME && ME.is_admin ? `<div class="eco-restart-bar"><button class="launch-btn" id="eco-restart-all" title="Redémarre chaque instance systemd opencode@&lt;user&gt;.service (+ opencode.service) pour recharger la config des agents">Redémarrer toutes les sessions opencode</button><span id="eco-restart-msg"></span></div>` : ''}
     ${section('Agents', e.agents.length, e.agents.map(agentCard).join('') || '<p class="muted">Aucun agent</p>')}
     ${section('Serveurs MCP', e.mcp.length, e.mcp.map(mcpCard).join('') || '<p class="muted">Aucun serveur MCP</p>')}
     ${section('Skills', e.skills.length, e.skills.map(skillCard).join('') || '<p class="muted">Aucun skill</p>')}
     ${section('Plugins', e.plugins.length, e.plugins.map(pluginCard).join('') || '<p class="muted">Aucun plugin</p>')}`;
   document.querySelectorAll('#pane-ecosystem [data-eco]').forEach((b) => b.addEventListener('click', () => openEcoModal(b.dataset.eco)));
   document.querySelectorAll('#pane-ecosystem [data-edit-model]').forEach((b) => b.addEventListener('click', () => editAgentModelModal(b.dataset.editModel, b.dataset.model)));
+  const ecoRestartBtn = document.getElementById('eco-restart-all');
+  if (ecoRestartBtn) ecoRestartBtn.onclick = restartAllOpencodeSessions;
+}
+
+// --- Workspaces Coder (admin) ------------------------------------------------
+async function renderWorkspaces() {
+  const r = await fetch('/api/workspaces');
+  if (r.status === 403) { document.getElementById('pane-workspaces').innerHTML = '<p class="muted">Réservé aux administrateurs.</p>'; return; }
+  const data = await r.json();
+  const wsList = data.workspaces || data.discovered || [];
+  const stateLabel = (w) => {
+    if (w.transitioning && w.coderTransition) {
+      const map = { start: 'starting', stop: 'stopping', restart: 'restarting', delete: 'deleting' };
+      return map[w.coderTransition] || `${w.coderTransition}…`;
+    }
+    if (w.coderStatus) return w.coderStatus;
+    return w.running ? 'running' : (w.status || 'stopped');
+  };
+  const isRunning = (w) => {
+    if (w.coderStatus) return w.coderStatus === 'running';
+    return !!w.running;
+  };
+  const statusBadge = (w) => {
+    const s = stateLabel(w);
+    const cls = ['starting', 'stopping', 'restarting', 'deleting', 'pending', 'building'].includes(s) ? 'queued' : s;
+    return `<span class="badge ${cls}">${esc(s)}</span>`;
+  };
+  const projectsList = (w) => (w.projects || []).filter((p) => p.isDir).map((p) => `<code class="chip-repo">${esc(p.name)}</code>`).join(' ');
+  document.getElementById('pane-workspaces').innerHTML = `
+    <h2>Workspaces Coder <span class="muted-sm">— ${wsList.length} workspace(s)</span></h2>
+    <div class="eco-restart-bar"><button class="launch-btn" id="ws-create-btn">Créer un workspace</button><span id="ws-msg" class="muted-sm"></span></div>
+    <table><thead><tr><th>Workspace</th><th>Propriétaire</th><th>Statut</th><th>Conteneur</th><th>Volume</th><th>Projets</th><th>Actions</th></tr></thead>
+    <tbody>${wsList.map((w) => {
+      const busy = !!(w.transitioning);
+      const running = isRunning(w);
+      return `<tr>
+      <td><strong>${esc(w.name)}</strong></td>
+      <td>${esc(w.owner || '—')}</td>
+      <td>${statusBadge(w)}</td>
+      <td><code class="muted-sm">${esc(w.container || '—')}</code></td>
+      <td><code class="muted-sm">${esc((w.volume || '').slice(0, 30))}</code></td>
+      <td>${projectsList(w) || '<span class="muted-sm">—</span>'}</td>
+      <td class="icon-actions">
+        <button class="ghost tiny" data-ws-detail="${esc(w.name)}" title="Détails du workspace">Détail</button>
+        ${running
+          ? `<button class="ghost tiny" data-ws-stop="${esc(w.name)}" ${busy ? 'disabled' : ''} title="Arrêter le workspace">Stop</button>
+             <button class="ghost tiny" data-ws-restart="${esc(w.name)}" ${busy ? 'disabled' : ''} title="Redémarrer le workspace">Restart</button>`
+          : `<button class="ghost tiny" data-ws-start="${esc(w.name)}" ${busy ? 'disabled' : ''} title="Démarrer le workspace">Start</button>`}
+        <button class="danger tiny" data-ws-delete="${esc(w.name)}" ${busy ? 'disabled' : ''} title="Supprimer le workspace">Supprimer</button>
+      </td>
+    </tr>`;
+    }).join('')}</tbody></table>`;
+  // Événements
+  document.getElementById('ws-create-btn').addEventListener('click', () => workspaceCreateModal());
+  document.querySelectorAll('#pane-workspaces [data-ws-detail]').forEach((b) => b.addEventListener('click', () => workspaceDetailModal(b.dataset.wsDetail)));
+  document.querySelectorAll('#pane-workspaces [data-ws-start]').forEach((b) => b.addEventListener('click', (ev) => workspaceAction(b.dataset.wsStart, 'start', ev.currentTarget)));
+  document.querySelectorAll('#pane-workspaces [data-ws-stop]').forEach((b) => b.addEventListener('click', (ev) => workspaceAction(b.dataset.wsStop, 'stop', ev.currentTarget)));
+  document.querySelectorAll('#pane-workspaces [data-ws-restart]').forEach((b) => b.addEventListener('click', (ev) => workspaceAction(b.dataset.wsRestart, 'restart', ev.currentTarget)));
+  document.querySelectorAll('#pane-workspaces [data-ws-delete]').forEach((b) => b.addEventListener('click', (ev) => workspaceDelete(b.dataset.wsDelete, ev.currentTarget)));
+}
+
+async function workspaceAction(name, action, trigger) {
+  const labels = { start: 'Démarrer', stop: 'Arrêter', restart: 'Redémarrer' };
+  if (!confirm(`${labels[action] || action} le workspace « ${name} » ?`)) return;
+  setWSActionBusy(trigger, labels[action] || action);
+  const msg = document.getElementById('ws-msg');
+  if (msg) { msg.textContent = `${labels[action] || action} « ${name} »…`; msg.className = 'muted-sm'; }
+  try {
+    const r = await fetch(`/api/workspaces/${encodeURIComponent(name)}/${action}`, { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error((d && d.error) || `HTTP ${r.status}`);
+    if (msg) { msg.textContent = `${labels[action] || action} « ${name} » lancé.`; msg.className = 'msg'; }
+    followWorkspaces(name);
+  } catch (e) {
+    if (trigger) { trigger.disabled = false; trigger.innerHTML = labels[action] || action; }
+    if (msg) { msg.textContent = e.message || String(e); msg.className = 'msg error'; }
+  }
+}
+
+async function workspaceDelete(name, trigger) {
+  if (!confirm(`Supprimer le workspace « ${name} » ?\nCette action est irréversible (conteneur + volume supprimés).`)) return;
+  setWSActionBusy(trigger, 'Suppression');
+  const msg = document.getElementById('ws-msg');
+  if (msg) { msg.textContent = `Suppression de « ${name} »…`; msg.className = 'muted-sm'; }
+  try {
+    const r = await fetch(`/api/workspaces/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error((d && d.error) || `HTTP ${r.status}`);
+    if (msg) { msg.textContent = `Workspace « ${name} » supprimé (en cours).`; msg.className = 'msg'; }
+    followWorkspaces(name);
+  } catch (e) {
+    if (trigger) { trigger.disabled = false; trigger.innerHTML = 'Supprimer'; }
+    if (msg) { msg.textContent = e.message || String(e); msg.className = 'msg error'; }
+  }
+}
+
+// Indication visuelle sur le bouton cliqué : désactivé + spinner + libellé "…".
+function setWSActionBusy(btn, action) {
+  if (!btn) return;
+  btn.disabled = true;
+  btn.classList.add('ws-busy');
+  btn.innerHTML = `<span class="ws-spinner"></span> ${esc(action)}…`;
+}
+
+// Suit l'évolution du statut après une action : re-rendu périodique de la table
+// jusqu'à ce que le workspace disparaisse (delete) ou que sa transition se stabilise.
+function followWorkspaces(name) {
+  let polls = 0;
+  const timer = setInterval(async () => {
+    polls++;
+    try { await renderWorkspaces(); } catch { /* pane requête échouée */ }
+    const row = [ ...(document.querySelectorAll('#pane-workspaces [data-ws-detail]') || []) ].find((b) => b.dataset.wsDetail === name);
+    const gone = !row;
+    let stable = false;
+    if (row) {
+      const tr = row.closest('tr');
+      const cell = tr && tr.querySelector('.badge');
+      const label = cell ? cell.textContent.trim() : '';
+      stable = cell && !/starting|stopping|restarting|deleting|pending|building/.test(label);
+    }
+    if (gone || stable || polls >= 20) { clearInterval(timer); }
+  }, 3000);
+}
+
+async function workspaceDetailModal(name) {
+  let detail = null, error = null;
+  try { detail = await api(`/api/workspaces/${encodeURIComponent(name)}`); } catch (e) { error = e.message || String(e); }
+  const output = detail ? (detail.output || '') : error || 'Aucune donnée';
+  showModal(`
+    <div class="modal">
+      <h2>Workspace — ${esc(name)}</h2>
+      <pre class="modal-pre">${esc(output)}</pre>
+      <div class="modal-actions"><button class="ghost" onclick="closeModal()">Fermer</button></div>
+    </div>`);
+}
+
+function workspaceCreateModal() {
+  const orgOpts = ORGANIZATIONS.map((o) => `<option value="${esc(o.id)}" ${o.id === currentOrg ? 'selected' : ''}>${esc(o.name || o.id)}</option>`).join('');
+  showModal(`
+    <div class="modal">
+      <h2>Créer un workspace Coder</h2>
+      <p class="muted-sm">Crée un workspace via le template de l'organisation, clone le repo distant et masque le token git.</p>
+      <label class="modal-field">Organisation
+        <select id="ws-create-org">${orgOpts}</select>
+      </label>
+      <label class="modal-field">Nom du workspace
+        <input id="ws-create-name" placeholder="mon-workspace">
+      </label>
+      <label class="modal-field">Propriétaire (optionnel — laisser vide pour défaut)
+        <input id="ws-create-owner" placeholder="ex: rino">
+      </label>
+      <label class="modal-field">Template (optionnel — utilise le template par défaut de l'org si vide)
+        <input id="ws-create-template" placeholder="ex: debase">
+      </label>
+      <label class="modal-field">Remote git à cloner (optionnel)
+        <input id="ws-create-clone" placeholder="https://github.com/org/repo.git">
+      </label>
+      <label class="modal-field">Chemin du dépôt dans le workspace (optionnel)
+        <input id="ws-create-repo" placeholder="ex: /home/coder/mon-workspace/repo">
+      </label>
+      <div id="ws-create-msg" class="error"></div>
+      <div class="modal-actions">
+        <button class="ghost" onclick="closeModal()">Annuler</button>
+        <button class="launch-btn" id="ws-create-go">Créer</button>
+      </div>
+    </div>`);
+  document.getElementById('ws-create-go').addEventListener('click', async () => {
+    const msg = document.getElementById('ws-create-msg');
+    const org = document.getElementById('ws-create-org').value;
+    const name = document.getElementById('ws-create-name').value.trim();
+    if (!name) { msg.textContent = 'Nom requis'; return; }
+    const body = {
+      name,
+      org,
+      owner: document.getElementById('ws-create-owner').value.trim() || undefined,
+      template: document.getElementById('ws-create-template').value.trim() || undefined,
+      clone: document.getElementById('ws-create-clone').value.trim() || undefined,
+      repo: document.getElementById('ws-create-repo').value.trim() || undefined,
+    };
+    msg.textContent = 'Création en cours…'; msg.className = 'muted-sm';
+    try {
+      const r = await fetch('/api/workspaces', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error((d && d.error) || `HTTP ${r.status}`);
+      msg.textContent = ''; closeModal(); renderWorkspaces();
+    } catch (e) { msg.textContent = e.message || String(e); msg.className = 'msg error'; }
+  });
+}
+
+// Redémarrage de TOUTES les instances systemd opencode (admin) — recharge la
+// config des agents sur chaque instance opencode@<user>.service + opencode.service.
+async function restartAllOpencodeSessions() {
+  if (!confirm('Redémarrer toutes les sessions opencode ?\nChaque instance systemd opencode@<user>.service (et opencode.service) sera relancée. Les sessions en cours seront interrompues.')) return;
+  const btn = document.getElementById('eco-restart-all');
+  const msg = document.getElementById('eco-restart-msg');
+  if (btn) { btn.disabled = true; btn.textContent = 'redémarrage…'; }
+  if (msg) { msg.textContent = ''; msg.className = ''; }
+  try {
+    const r = await fetch('/api/opencode/restart-all', { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error((d && d.error) || `HTTP ${r.status}`);
+    const restarted = (d.restarted || []).join(', ') || 'aucune';
+    const failed = (d.failed || []);
+    let html = `Redémarrées : <code>${esc(restarted)}</code>`;
+    if (d.notice) html += `<br><span class="muted-sm">${esc(d.notice)}</span>`;
+    if (failed.length) html += `<br><span class="error">Échecs : ${failed.map((f) => `<code>${esc(f.unit)}</code> — ${esc(f.error)}`).join('<br>')}</span>`;
+    if (msg) { msg.innerHTML = html; msg.className = failed.length ? 'msg error' : 'msg'; }
+  } catch (e) {
+    if (msg) { msg.textContent = e.message || String(e); msg.className = 'msg error'; }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Redémarrer toutes les sessions opencode'; }
+  }
 }
 
 // --- Édition globale du modèle d'un agent (Écosystème) ----------------------
@@ -2560,66 +3249,353 @@ async function editAgentModelModal(name, currentModel) {
 // --- Projets (cartes + CRUD) ----------------------------------------------
 async function renderProjects() {
   const projs = await api('/api/projects');
-  const projects = projs.projects || [];
+  const projects = (projs.projects || []).filter((p) => !currentOrg || (p.organizationId || 'onirtech') === currentOrg);
   const repos = await api('/api/repos').catch(() => ({ repos: [] }));
   const repoMap = new Map((repos.repos || []).map((r) => [r.id, r]));
   document.getElementById('pane-projects').innerHTML = `
-    <h2>Projets</h2>
+    <h2>Projets <span class="muted-sm">${currentOrg ? '— ' + esc(currentOrg) : ''}</span></h2>
     <div class="projects-toolbar">
       <button id="new-project-btn" class="launch-btn">+ Nouveau projet</button>
     </div>
     <div class="project-cards">
       ${projects.map((p) => {
         const pRepos = (p.repos || []).map((rid) => repoMap.get(rid)).filter(Boolean);
-        const pDocs = p.docs || [];
+        const repoBadges = pRepos.length
+          ? pRepos.map((r) => `<code class="chip-repo" title="Repo associé">${esc(r.id)}</code>`).join(' ')
+          : '<span class="muted-sm">aucun repo</span>';
         return `
-        <article class="project-card">
+        <article class="project-card project-card-compact">
           <div class="project-card-head">
-            <strong>${esc(p.name || p.id)}</strong>
+            <strong class="project-title" data-project-detail="${esc(p.id)}" title="Voir le détail du projet">${esc(p.name || p.id)}</strong>
             <code class="muted-sm">${esc(p.id)}</code>
           </div>
           <div class="project-card-body">
-            <div class="project-kv"><span class="lbl">Créé le</span><span class="muted-sm">${esc((p.createdAt || '').replace('T', ' ').slice(0, 19))}</span></div>
-            ${pRepos.length ? `<div class="project-kv" style="align-items:flex-start"><span class="lbl">Repos associés</span><div style="display:flex;flex-direction:column;gap:8px;flex:1">
-              ${pRepos.map((r) => `<div class="repo-mini">
-                <div><strong>${esc(r.name || r.id)}</strong> <code class="chip">${esc(r.id)}</code>
-                  ${r.workspace ? `<span class="muted-sm">· ws <code>${esc(r.workspace)}</code></span>` : ''}
-                  ${r.mainBranch ? `<span class="muted-sm">· branche dépl. <code>${esc(r.mainBranch)}</code></span>` : ''}
-                </div>
-                ${r.description ? `<div class="muted-sm" style="font-size:11px">${esc(r.description)}</div>` : ''}
-                ${r.deploy ? `<div class="muted-sm" style="font-size:11px" title="${esc(r.deploy)}"><strong>déploiement :</strong> ${esc(String(r.deploy).replace(/\s+/g, ' ').slice(0, 90))}${r.deploy.length > 90 ? '…' : ''}</div>` : ''}
-                ${r.repoDir ? `<div class="muted-sm" style="font-size:11px">répertoire : <code>${esc(r.repoDir)}</code></div>` : ''}
-                ${r.e2eBaseUrl ? `<div class="muted-sm" style="font-size:11px">e2e : <code>${esc(r.e2eBaseUrl)}</code>${r.e2eRepoDir ? ' · ' + esc(r.e2eRepoDir) : ''}</div>` : ''}
-                ${(r.docs && r.docs.length) ? `<div class="muted-sm" style="font-size:11px">docs : ${r.docs.map((d) => `<code class="chip" title="${esc(d.path)}">${esc(docKindLabel(d.kind))}</code>`).join(' ')}</div>` : ''}
-                <div class="repo-mini-actions">
-                  <button class="ghost tiny" data-edit-repo="${esc(r.id)}">Modifier</button>
-                  <button class="ghost tiny" data-repo-docs="${esc(r.id)}" title="Documents de référence de ce repo (ADR-12)">📄 Docs</button>
-                  <button class="ghost tiny danger-text" data-unlink-repo="${esc(p.id)}|${esc(r.id)}">Retirer</button>
-                </div>
-              </div>`).join('')}
-            </div></div>` : '<p class="muted-sm">Aucun repo associé.</p>'}
-            ${pDocs.length ? `<div class="project-kv" style="align-items:flex-start"><span class="lbl">Docs de référence</span><div style="display:flex;flex-direction:column;gap:4px;flex:1">
-              ${pDocs.map((d) => `<div class="muted-sm" style="font-size:11px"><code class="chip">${esc(docKindLabel(d.kind))}</code> <code>${esc(d.docId)}</code> ${d.title ? '— ' + esc(d.title) : ''}<div>${esc(d.path)} <button type="button" class="ghost tiny" data-view-project-doc="${esc(d.docId)}" title="Lire ce document">Regarder</button></div></div>`).join('')}
-            </div></div>` : ''}
+            <div class="project-kv"><span class="lbl">Repos</span><div class="repo-badges">${repoBadges}</div></div>
           </div>
           <div class="project-card-actions">
-            <button class="ghost" data-add-repo-to="${esc(p.id)}">+ Associer un repo</button>
-            <button class="ghost" data-project-docs="${esc(p.id)}" title="Documents de référence : ADR technique, specs fonctionnelles, scénarios Gherkin">📄 Docs de référence</button>
-            <button class="ghost" data-edit-project="${esc(p.id)}">Modifier le projet</button>
-            <button class="danger" data-del-project="${esc(p.id)}">Supprimer</button>
+            <button class="ghost" data-open-project="${esc(p.id)}" title="Ouvrir le projet : tâches, recettes, tests E2E, déploiements, décisions, plans, archives…">Ouvrir</button>
+            <button class="ghost" data-project-detail="${esc(p.id)}" title="Détails du projet (modifier, repos, documents…)">Détail</button>
           </div>
         </article>`;
       }).join('') || '<p class="muted">Aucun projet enregistré.</p>'}
     </div>`;
   document.getElementById('new-project-btn').addEventListener('click', () => projectFormModal(null));
-  document.querySelectorAll('[data-edit-project]').forEach((b) => b.addEventListener('click', () => projectFormModal(projects.find((x) => x.id === b.dataset.editProject))));
-  document.querySelectorAll('[data-del-project]').forEach((b) => b.addEventListener('click', () => projectDeleteModal(b.dataset.delProject)));
-  document.querySelectorAll('[data-edit-repo]').forEach((b) => b.addEventListener('click', () => repoFormModal(repoMap.get(b.dataset.editRepo) || null)));
-  document.querySelectorAll('[data-project-docs]').forEach((b) => b.addEventListener('click', () => projectDocsModal(b.dataset.projectDocs, repoMap)));
-  document.querySelectorAll('[data-view-project-doc]').forEach((b) => b.addEventListener('click', () => viewRefDoc(b.dataset.viewProjectDoc)));
-  document.querySelectorAll('[data-repo-docs]').forEach((b) => b.addEventListener('click', () => projectDocsModal(null, repoMap, b.dataset.repoDocs)));
-  document.querySelectorAll('[data-add-repo-to]').forEach((b) => b.addEventListener('click', () => repoLinkModal(b.dataset.addRepoTo, repoMap)));
-  document.querySelectorAll('[data-unlink-repo]').forEach((b) => b.addEventListener('click', () => repoUnlinkModal(...b.dataset.unlinkRepo.split('|'))));
+  document.querySelectorAll('[data-open-project]').forEach((b) => b.addEventListener('click', () => openProject(b.dataset.openProject)));
+  document.querySelectorAll('[data-project-detail]').forEach((b) => b.addEventListener('click', () => projectDetailModal(b.dataset.projectDetail)));
+}
+
+// ===========================================================================
+// Modale DÉTAIL PROJET UNIQUE (responsive, bon UX) : regroupe TOUT en onglets
+// internes — Projet (modifier/supprimer), Repos (associer/éditer/retirer),
+// Documents de référence (ajouter/voir/supprimer). Aucune sous-modale.
+// ===========================================================================
+async function projectDetailModal(projectId, tab = 'projet') {
+  let projects = [], repos = [], allDocs = [];
+  try { projects = ((await api('/api/projects')).projects || []); } catch {}
+  try { repos = ((await api(`/api/repos?project=${encodeURIComponent(projectId)}`)).repos || []); } catch {}
+  const p0 = projects.find((x) => x.id === projectId);
+  if (!p0) { alert('Projet introuvable'); return; }
+
+  const loadDocs = async () => {
+    try { allDocs = ((await api(`/api/docs?projectId=${encodeURIComponent(projectId)}&includeRepoDocs=1`)).docs || []); }
+    catch { allDocs = []; }
+  };
+  await loadDocs();
+
+  const kindOpts = `<option value="adr-tech">ADR — Architecture technique</option><option value="specs-fonctionnelles">Specs fonctionnelles</option><option value="scenarios-gherkin">Scénarios (Gherkin)</option>`;
+  const repoMap = () => new Map(repos.map((r) => [r.id, r]));
+
+  const render = () => {
+    const p = projects.find((x) => x.id === projectId) || p0;
+    const rm = repoMap();
+    const pRepos = (p.repos || []).map((rid) => rm.get(rid)).filter(Boolean);
+    const pDocs = allDocs;
+    const tabs = [
+      ['projet', 'Projet'],
+      ['repos', `Repos (${pRepos.length})`],
+      ['docs', `Documents (${pDocs.length})`],
+    ];
+    showModal(`
+      <div class="modal modal-wide modal-project-detail">
+        <div class="finish-head"><h2 style="margin:0">${esc(p.name || p.id)}</h2>
+          <code class="chip">${esc(p.id)}</code></div>
+        <div class="pd-tabs">
+          ${tabs.map(([t, l]) => `<button type="button" class="pd-tab ${t === tab ? 'active' : ''}" data-pd-tab="${t}">${esc(l)}</button>`).join('')}
+        </div>
+        <div class="pd-panel" id="pd-panel"></div>
+        <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
+        <div id="pd-msg" class="msg"></div>
+      </div>`);
+    document.getElementById('modal-cancel').onclick = closeModal;
+    document.querySelectorAll('.pd-tab').forEach((b) => b.addEventListener('click', () => { tab = b.dataset.pdTab; render(); }));
+    const panel = document.getElementById('pd-panel');
+    if (tab === 'projet') panel.innerHTML = projetTabHtml(p);
+    else if (tab === 'repos') panel.innerHTML = reposTabHtml(p, pRepos);
+    else panel.innerHTML = docsTabHtml(p, pDocs);
+    wire();
+  };
+
+  const msg = (text, ok = true) => { const m = document.getElementById('pd-msg'); if (m) { m.textContent = text; m.className = 'msg ' + (ok ? 'ok' : 'error'); } };
+
+  // --- Onglet PROJET : identité (modifier) + suppression --------------------
+  const projetTabHtml = (p) => `
+    <form id="pd-projet-form" class="pilot-form">
+      <label class="modal-field">Identifiant <span class="muted-sm">— non modifiable</span>
+        <input id="pd-p-id" value="${esc(p.id)}" readonly>
+      </label>
+      <label class="modal-field">Nom lisible
+        <input id="pd-p-name" value="${esc(p.name || '')}" required>
+      </label>
+      <div class="muted-sm">Créé le ${esc((p.createdAt || '').replace('T', ' ').slice(0, 19))}</div>
+      <div class="actions-buttons">
+        <button type="submit" class="launch-btn">Enregistrer</button>
+        <button type="button" class="danger" id="pd-p-del">Supprimer le projet</button>
+      </div>
+    </form>`;
+
+  // --- Onglet REPOS : associer / éditer / retirer ---------------------------
+  const reposTabHtml = (p, pRepos) => {
+    const rm = repoMap();
+    const linked = new Set(pRepos.map((r) => r.id));
+    const available = [...rm.values()].filter((r) => !linked.has(r.id));
+    const orgId = p.organizationId || currentOrg || 'onirtech';
+    const orgInfo = ORGANIZATIONS.find((o) => o.id === orgId) || {};
+    const gitTokens = (orgInfo.gitTokens || []);
+    return `
+      <div class="actions-section"><h3>Repos associés (${pRepos.length})</h3>
+        ${pRepos.length ? `<div class="repo-detail-list">${pRepos.map((r) => {
+          const assocGitTokenId = r.gitTokenId || null;
+          const assocGitTokenName = assocGitTokenId ? (gitTokens.find((t) => t.id === assocGitTokenId) || {}).name || assocGitTokenId : null;
+          return `
+          <div class="repo-detail">
+            <div class="repo-detail-head"><strong>${esc(r.name || r.id)}</strong> <code class="chip-repo">${esc(r.id)}</code>
+              ${r.workspace ? `<span class="muted-sm">· ws <code>${esc(r.workspace)}</code></span>` : ''}
+              ${r.mainBranch ? `<span class="muted-sm">· branche <code>${esc(r.mainBranch)}</code></span>` : ''}
+              ${assocGitTokenName ? `<span class="muted-sm">· 🔑 <code>${esc(assocGitTokenName)}</code></span>` : ''}
+            </div>
+            ${r.description ? `<div class="muted-sm">${esc(r.description)}</div>` : ''}
+            ${r.deploy ? `<div class="muted-sm"><strong>Déploiement :</strong> ${esc(String(r.deploy).replace(/\s+/g, ' ').slice(0, 140))}</div>` : ''}
+            ${r.repoDir ? `<div class="muted-sm">Répertoire : <code>${esc(r.repoDir)}</code></div>` : ''}
+            ${r.e2eBaseUrl ? `<div class="muted-sm">E2E : <code>${esc(r.e2eBaseUrl)}</code>${r.e2eRepoDir ? ' · ' + esc(r.e2eRepoDir) : ''}</div>` : ''}
+            <div class="repo-mini-actions">
+              <button class="ghost tiny" data-pd-edit-repo="${esc(r.id)}">Modifier</button>
+              ${!r.workspace ? `<button class="ghost tiny" data-pd-provision-repo="${esc(r.id)}" data-pd-provision-git-token="${esc(r.gitTokenId || '')}" title="Aucun workspace Coder — créer le workspace associé (clone + tokens)">Provisionner</button>` : ''}
+              <button class="ghost tiny danger-text" data-pd-unlink-repo="${esc(r.id)}">Retirer</button>
+            </div>
+          </div>`;
+        }).join('')}</div>` : '<p class="muted-sm">Aucun repo associé.</p>'}
+      </div>
+      <div class="actions-section"><h3>Associer un repo existant</h3>
+        ${available.length ? `<div class="pd-inline">
+          <select id="pd-link-repo">${available.map((r) => `<option value="${esc(r.id)}">${esc(r.name || r.id)}</option>`).join('')}</select>
+          <input id="pd-link-role" placeholder="rôle (frontend, backend…)">
+          ${gitTokens.length ? `<select id="pd-link-git-token"><option value="">— token par défaut —</option>${gitTokens.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}</select>` : ''}
+          <button type="button" class="launch-btn" id="pd-link-go">Associer</button>
+        </div>` : '<p class="muted-sm">Tous les repos enregistrés sont déjà associés.</p>'}
+      </div>
+      <div class="actions-section"><h3>Nouveau repo</h3>
+        <form id="pd-repo-form" class="pilot-form">
+          <input id="pd-r-id" placeholder="identifiant (ex: mada-talk)" required>
+          <input id="pd-r-name" placeholder="nom lisible">
+          <input id="pd-r-repodir" placeholder="répertoire du dépôt (ex: /var/lib/docker/volumes/coder-…/_data/mada-talk)">
+          <input id="pd-r-giturl" placeholder="remote git (ex: https://github.com/org/repo.git)">
+          <input id="pd-r-ws" placeholder="workspace Coder (ex: madatalk)">
+          <input id="pd-r-branch" placeholder="branche de déploiement (ex: main)">
+          <input id="pd-r-e2e-url" placeholder="URL E2E (ex: https://preprod-client.madatalk.fr)">
+          <div class="actions-buttons"><button type="submit" class="ghost">+ Créer et associer</button></div>
+        </form>
+      </div>`;
+  };
+
+  // --- Onglet DOCUMENTS : ajouter / voir / supprimer ------------------------
+  const docsTabHtml = (p, pDocs) => {
+    const rm = repoMap();
+    const targets = [{ v: 'project:' + p.id, l: 'Projet ' + (p.name || p.id) }, ...(p.repos || []).map((rid) => { const r = rm.get(rid); return { v: 'repo:' + rid, l: 'Repo ' + (r ? (r.name || r.id) : rid) }; })];
+    return `
+      <p class="muted-sm">ADR-12 — documents (adr-tech / specs-fonctionnelles / scenarios-gherkin) fournis en contexte aux agents. Importez un fichier ou référencez un chemin existant.</p>
+      <div id="pd-list" class="recette-list" style="max-height:30vh;overflow:auto">
+        ${pDocs.length ? pDocs.map((d) => `<div class="recette-item">
+          <div><code class="chip">${esc(docKindLabel(d.kind))}</code> <strong>${esc(d.title || d.docId)}</strong>
+            <span class="muted-sm">${d.projects && d.projects.length ? '· projets ' + esc(d.projects.join(', ')) : ''}${d.repos && d.repos.length ? '· repos ' + esc(d.repos.join(', ')) : ''}</span></div>
+          <div class="muted-sm">${esc(d.path)}</div>
+          <div class="e2e-actions"><button type="button" class="ghost tiny" data-pd-view-doc="${esc(d.docId)}">Regarder</button><button type="button" class="ghost tiny danger-text" data-pd-del-doc="${esc(d.docId)}">Supprimer</button></div>
+        </div>`).join('') : '<p class="muted-sm">Aucun document de référence.</p>'}
+      </div>
+      <form id="pd-doc-form" class="pilot-form" style="border-top:1px solid var(--border);padding-top:10px">
+        <div class="pd-inline">
+          <select id="pd-d-kind">${kindOpts}</select>
+          <select id="pd-d-target">${targets.map((t) => `<option value="${esc(t.v)}">${esc(t.l)}</option>`).join('')}</select>
+        </div>
+        <input id="pd-d-title" placeholder="titre (ex. ADR — Architecture madatalk)">
+        <div class="pd-inline">
+          <select id="pd-d-mode"><option value="upload">Importer depuis mon PC</option><option value="path">Référencer un chemin</option></select>
+          <input id="pd-d-file" type="file" accept=".md,.markdown,.txt,.feature,.adoc">
+          <input id="pd-d-path" placeholder="chemin existant (ex. /home/coder/mada-talk/docs/adr.md)" hidden>
+        </div>
+        <div class="actions-buttons"><button type="submit" class="launch-btn">+ Ajouter le document</button></div>
+      </form>`;
+  };
+
+  // --- Wiring des actions (re-render après chaque mutation) -----------------
+  const wire = () => {
+    const panel = document.getElementById('pd-panel');
+    // PROJET : enregistrer / supprimer.
+    const pForm = document.getElementById('pd-projet-form');
+    if (pForm) pForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        await api('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: p0.id, name: document.getElementById('pd-p-name').value.trim() }) });
+        projects = ((await api('/api/projects')).projects || []);
+        msg('Projet enregistré.'); render();
+      } catch (err) { msg(err.message || String(err), false); }
+    });
+    const pDel = document.getElementById('pd-p-del');
+    if (pDel) pDel.addEventListener('click', async () => {
+      if (!confirm(`Supprimer le projet ${p0.id} ? Les tâches conservent leur référence.`)) return;
+      try { await api(`/api/projects/${encodeURIComponent(p0.id)}`, { method: 'DELETE' }); closeModal(); refreshActive(); }
+      catch (err) { msg(err.message || String(err), false); }
+    });
+    // REPOS : associer / retirer / éditer / créer.
+    const linkGo = document.getElementById('pd-link-go');
+    if (linkGo) linkGo.addEventListener('click', async () => {
+      const repoId = document.getElementById('pd-link-repo').value;
+      const role = document.getElementById('pd-link-role').value.trim() || undefined;
+      const gitTokenIdEl = document.getElementById('pd-link-git-token');
+      const gitTokenId = gitTokenIdEl && gitTokenIdEl.value.trim() || undefined;
+      try {
+        await api(`/api/projects/${encodeURIComponent(p0.id)}/repos/${encodeURIComponent(repoId)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role, gitTokenId }) });
+        await refreshDetailData();
+        const rr = repoMap().get(repoId);
+        if (rr && !rr.workspace) {
+          msg('Repo associé — aucun workspace Coder : provisionnement possible.');
+          if (IS_ADMIN) provisionRepoModal(rr, { projectId: p0.id, gitTokenId, onProvisioned: async (pr) => { await refreshDetailData(); render(); msg('Repo associé et workspace provisionné : ' + pr.workspace); } });
+        } else { msg('Repo associé.'); render(); }
+      } catch (err) { msg(err.message || String(err), false); }
+    });
+    panel.querySelectorAll('[data-pd-unlink-repo]').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm(`Retirer le repo ${b.dataset.pdUnlinkRepo} du projet ? Le repo reste enregistré.`)) return;
+      try {
+        await api(`/api/projects/${encodeURIComponent(p0.id)}/repos/${encodeURIComponent(b.dataset.pdUnlinkRepo)}`, { method: 'DELETE' });
+        await refreshDetailData(); msg('Repo retiré.'); render();
+      } catch (err) { msg(err.message || String(err), false); }
+    }));
+    panel.querySelectorAll('[data-pd-edit-repo]').forEach((b) => b.addEventListener('click', () => editRepoInline(b.dataset.pdEditRepo)));
+    panel.querySelectorAll('[data-pd-provision-repo]').forEach((b) => b.addEventListener('click', () => {
+      const rr = repoMap().get(b.dataset.pdProvisionRepo); if (!rr) return;
+      provisionRepoModal(rr, { projectId: p0.id, gitTokenId: b.dataset.pdProvisionGitToken || undefined, onProvisioned: async (pr) => { await refreshDetailData(); render(); msg('Workspace provisionné : ' + pr.workspace + ' · ' + (pr.repoDir || '')); } });
+    }));
+    const rForm = document.getElementById('pd-repo-form');
+    if (rForm) rForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        const body = {
+          id: document.getElementById('pd-r-id').value.trim(),
+          name: document.getElementById('pd-r-name').value.trim() || undefined,
+          repoDir: document.getElementById('pd-r-repodir').value.trim() || undefined,
+          gitUrl: document.getElementById('pd-r-giturl').value.trim() || undefined,
+          workspace: document.getElementById('pd-r-ws').value.trim() || undefined,
+          mainBranch: document.getElementById('pd-r-branch').value.trim() || undefined,
+          e2eBaseUrl: document.getElementById('pd-r-e2e-url').value.trim() || undefined,
+          organizationId: currentOrg || undefined,
+        };
+        await api('/api/repos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        await api(`/api/projects/${encodeURIComponent(p0.id)}/repos/${encodeURIComponent(body.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+        await refreshDetailData();
+        const nrr = repoMap().get(body.id);
+        if (body.gitUrl && nrr && !nrr.workspace) {
+          msg('Repo créé et associé — aucun workspace Coder : provisionnement possible.');
+          if (IS_ADMIN) provisionRepoModal(nrr, { onProvisioned: async (pr) => { await refreshDetailData(); render(); msg('Repo créé, associé et workspace provisionné : ' + pr.workspace); } });
+          else render();
+        } else { msg('Repo créé et associé.'); render(); }
+      } catch (err) { msg(err.message || String(err), false); }
+    });
+    // DOCUMENTS : ajouter / voir / supprimer.
+    const dMode = document.getElementById('pd-d-mode');
+    if (dMode) {
+      const fileEl = document.getElementById('pd-d-file');
+      const pathEl = document.getElementById('pd-d-path');
+      const sync = () => { const up = dMode.value === 'upload'; fileEl.hidden = !up; pathEl.hidden = up; fileEl.required = up; pathEl.required = !up; };
+      dMode.addEventListener('change', sync); sync();
+    }
+    const dForm = document.getElementById('pd-doc-form');
+    if (dForm) dForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        const [tt, tid] = document.getElementById('pd-d-target').value.split(':');
+        const body = { kind: document.getElementById('pd-d-kind').value, title: document.getElementById('pd-d-title').value.trim() || undefined, organizationId: currentOrg || undefined };
+        if (tt === 'project') body.projectId = tid; else body.repoId = tid;
+        if (dMode.value === 'upload') {
+          const f = document.getElementById('pd-d-file').files[0];
+          if (!f) throw new Error('Choisissez un fichier.');
+          if (f.size > 2 * 1024 * 1024) throw new Error('Fichier trop volumineux (max 2 Mo).');
+          const buf = await f.arrayBuffer();
+          body.filename = f.name; body.dataBase64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+        } else {
+          body.path = document.getElementById('pd-d-path').value.trim();
+          if (!body.path) throw new Error('Chemin requis.');
+        }
+        await api('/api/docs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        await loadDocs(); msg('Document enregistré.'); render();
+      } catch (err) { msg(err.message || String(err), false); }
+    });
+    panel.querySelectorAll('[data-pd-view-doc]').forEach((b) => b.addEventListener('click', () => viewRefDoc(b.dataset.pdViewDoc)));
+    panel.querySelectorAll('[data-pd-del-doc]').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('Supprimer ce document de référence ?')) return;
+      try { await api(`/api/docs/${encodeURIComponent(b.dataset.pdDelDoc)}`, { method: 'DELETE' }); await loadDocs(); msg('Document supprimé.'); render(); }
+      catch (err) { msg(err.message || String(err), false); }
+    }));
+  };
+
+  // Édition inline d'un repo (dans l'onglet Repos) : remplace la liste par un formulaire.
+  const editRepoInline = (repoId) => {
+    const r = repoMap().get(repoId); if (!r) return;
+    const panel = document.getElementById('pd-panel');
+    panel.innerHTML = `
+      <form id="pd-edit-repo-form" class="pilot-form">
+        <h3>Modifier le repo <code>${esc(r.id)}</code></h3>
+        <input id="pe-id" value="${esc(r.id)}" readonly>
+        <input id="pe-name" placeholder="nom lisible" value="${esc(r.name || '')}">
+        <input id="pe-description" placeholder="description" value="${esc(r.description || '')}">
+        <textarea id="pe-deploy" class="modal-textarea" rows="3" placeholder="mécanisme de déploiement CI/CD">${esc(r.deploy || '')}</textarea>
+        <input id="pe-ws" placeholder="workspace Coder" value="${esc(r.workspace || '')}">
+        <input id="pe-repodir" placeholder="répertoire du dépôt" value="${esc(r.repoDir || '')}">
+        <input id="pe-giturl" placeholder="remote git (ex: https://github.com/org/repo.git)" value="${esc(r.gitUrl || '')}">
+        <input id="pe-branch" placeholder="branche de déploiement" value="${esc(r.mainBranch || '')}">
+        <input id="pe-e2e-dir" placeholder="checkout E2E (e2eRepoDir)" value="${esc(r.e2eRepoDir || '')}">
+        <input id="pe-e2e-url" placeholder="URL E2E (e2eBaseUrl)" value="${esc(r.e2eBaseUrl || '')}">
+        <div class="actions-buttons">
+          <button type="submit" class="launch-btn">Enregistrer</button>
+          <button type="button" class="ghost" id="pe-cancel">Annuler</button>
+        </div>
+      </form>`;
+    document.getElementById('pe-cancel').onclick = () => render();
+    document.getElementById('pd-edit-repo-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        await api('/api/repos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+          id: r.id,
+          name: document.getElementById('pe-name').value.trim() || undefined,
+          description: document.getElementById('pe-description').value.trim() || undefined,
+          deploy: document.getElementById('pe-deploy').value.trim() || undefined,
+          workspace: document.getElementById('pe-ws').value.trim() || undefined,
+          repoDir: document.getElementById('pe-repodir').value.trim() || undefined,
+          gitUrl: document.getElementById('pe-giturl').value.trim() || undefined,
+          mainBranch: document.getElementById('pe-branch').value.trim() || undefined,
+          e2eRepoDir: document.getElementById('pe-e2e-dir').value.trim() || undefined,
+          e2eBaseUrl: document.getElementById('pe-e2e-url').value.trim() || undefined,
+        }) });
+        await refreshDetailData(); render();
+      } catch (err) { msg(err.message || String(err), false); }
+    });
+  };
+
+  const refreshDetailData = async () => {
+    try { projects = ((await api('/api/projects')).projects || []); } catch {}
+    try { repos = ((await api('/api/repos')).repos || []); } catch {}
+    await loadDocs();
+  };
+
+  render();
 }
 
 // Libellé court d'un kind de document (ADR-12).
@@ -2646,235 +3622,114 @@ async function viewRefDoc(docId) {
   } catch (e) { alert('Lecture impossible : ' + (e.message || e)); }
 }
 
-// Modale documents de référence (ADR-12) d'un projet ou d'un repo : liste les
-// docs + ajout (kind/titre/chemin) rattaché à un projet ou un repo.
-async function projectDocsModal(projectId, repoMap, repoOnly) {
-  let allDocs = [];
-  const ctx = { scopeLabel: '', scopeId: projectId || repoOnly || '' };
-  let scopeTitle = '';
-  let projects = [];
-  try { projects = ((await api('/api/projects')).projects || []); } catch {}
-  const loadDocs = async () => {
-    const q = projectId ? `projectId=${encodeURIComponent(projectId)}&includeRepoDocs=1` : (repoOnly ? `repoId=${encodeURIComponent(repoOnly)}` : '');
-    const r = await api(`/api/docs?${q}`).catch(() => ({ docs: [] }));
-    allDocs = r.docs || [];
-  };
-  await loadDocs();
-  if (projectId) {
-    const p = projects.find((x) => x.id === projectId);
-    scopeTitle = p ? (p.name || p.id) : projectId;
-  } else if (repoOnly) {
-    const rr = repoMap.get(repoOnly);
-    scopeTitle = (rr && (rr.name || rr.id)) || repoOnly;
-  }
-  const kindOpts = `<option value="adr-tech">ADR — Architecture technique</option><option value="specs-fonctionnelles">Specs fonctionnelles</option><option value="scenarios-gherkin">Scénarios (Gherkin)</option>`;
-  const targetOpts = projectId ? projects.filter((x) => x.id === projectId).flatMap((x) => [{ v: 'project:' + projectId, l: 'Projet ' + (x.name || x.id) }, ...(x.repos || []).map((rid) => { const r = repoMap.get(rid); return { v: 'repo:' + rid, l: 'Repo ' + (r ? (r.name || r.id) : rid) }; })]) : [{ v: 'repo:' + repoOnly, l: 'Repo ' + scopeTitle }];
-  const renderList = () => {
-    const list = document.getElementById('pd-list');
-    if (!allDocs.length) { list.innerHTML = '<p class="muted-sm">Aucun document de référence. Ajoutez-en (ADR technique, specs, Gherkin).</p>'; return; }
-    list.innerHTML = allDocs.map((d) => `
-      <div class="recette-item">
-        <div><code class="chip">${esc(docKindLabel(d.kind))}</code> <strong>${esc(d.title || d.docId)}</strong>
-          <span class="muted-sm">${d.projects && d.projects.length ? '· projets ' + esc(d.projects.join(', ')) : ''}${d.repos && d.repos.length ? '· repos ' + esc(d.repos.join(', ')) : ''}</span>
-        </div>
-        <div class="muted-sm">${esc(d.path)}</div>
-        <div class="e2e-actions"><button type="button" class="ghost tiny" data-view-doc="${esc(d.docId)}">Regarder</button><button type="button" class="ghost tiny danger-text" data-del-doc="${esc(d.docId)}">Supprimer</button></div>
-      </div>`).join('');
-    document.querySelectorAll('#pd-list [data-view-doc]').forEach((b) => b.addEventListener('click', () => viewRefDoc(b.dataset.viewDoc)));
-    document.querySelectorAll('#pd-list [data-del-doc]').forEach((b) => b.addEventListener('click', async () => {
-      await api(`/api/docs/${encodeURIComponent(b.dataset.delDoc)}`, { method: 'DELETE' }).catch(() => {});
-      await loadDocs(); renderList();
-    }));
-  };
+// ===========================================================================
+// Provisionnement d'un workspace Coder pour un repo (ADR 09). Modal qui demande
+// le nom du workspace + (si l'organisation n'en a pas) les tokens Coder et git,
+// puis appelle POST /api/repos/:id/provision → workspace-create.mjs (clone du
+// remote + masquage du token) et enregistre workspace/repoDir sur le repo.
+// ===========================================================================
+function orgHasCoderToken(orgId) {
+  return !!(ORGANIZATIONS.find((o) => o.id === (orgId || currentOrg)) || {}).hasCoderToken;
+}
+function orgHasGitToken(orgId) {
+  const o = ORGANIZATIONS.find((x) => x.id === (orgId || currentOrg)) || {};
+  return !!(o.hasGitToken) || (Array.isArray(o.gitTokens) && o.gitTokens.length > 0);
+}
+
+function provisionRepoModal(repo, opts = {}) {
+  const org = opts.org || currentOrg;
+  const orgInfo = ORGANIZATIONS.find((o) => o.id === org) || {};
+  const needCoder = !orgHasCoderToken(org);
+  const hasGitTokens = (orgInfo.gitTokens || []).length > 0;
+  const needGit = !orgHasGitToken(org) && !hasGitTokens && !opts.gitTokenId;
+  const hasGit = !!(repo.gitUrl || repo.repoDir);
+  const wsDefault = String(repo.id || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  const missing = [needCoder ? 'token Coder' : null, needGit ? 'token git' : null].filter(Boolean);
+  // Sélection du token git à utiliser pour le clone.
+  const orgTokens = (orgInfo.gitTokens || []);
+  const selectedGitTokenId = opts.gitTokenId || '';
+  const showGitSelect = orgTokens.length > 0;
   showModal(`
     <div class="modal modal-wide">
-      <h2>Documents de référence <code class="muted-sm">${esc(scopeTitle)}</code></h2>
-      <p class="muted-sm">ADR-12 — registre de docs (adr-tech / specs-fonctionnelles / scenarios-gherkin) fournis en contexte aux agents (création de test, recette). Importez un fichier depuis votre PC, ou référencez un chemin existant (workspace/checkout).</p>
-      <div id="pd-list" class="recette-list" style="max-height:32vh;overflow:auto"></div>
-      <form id="pd-form" class="pilot-form" style="border-top:1px solid rgba(255,255,255,.1);padding-top:10px">
-        <div class="row-2" style="display:flex;gap:8px;flex-wrap:wrap">
-          <select id="pd-kind" style="flex:1;min-width:180px">${kindOpts}</select>
-          <select id="pd-target" style="flex:1;min-width:150px">${targetOpts.map((t) => `<option value="${esc(t.v)}">${esc(t.l)}</option>`).join('')}</select>
+      <h2>Provisionner un workspace Coder</h2>
+      <p class="muted">Repo <code class="chip-repo">${esc(repo.id)}</code>${repo.workspace ? ` · ws actuel <code>${esc(repo.workspace)}</code>` : ''}</p>
+      ${!hasGit ? '<p class="msg error">Aucun remote git connu pour ce repo — renseignez l\'URL du dépôt (champ ci-dessous).</p>' : ''}
+      <form id="prov-form" class="pilot-form">
+        <label class="modal-field">Nom du workspace Coder <span class="muted-sm">— créé via le template ${esc(orgInfo.coderTemplate || 'de l\'organisation')}</span>
+          <input id="prov-ws" value="${esc(wsDefault)}" placeholder="ex: ia-crm" required>
+        </label>
+        <label class="modal-field">Remote git (clone dans le workspace)
+          <input id="prov-giturl" value="${esc(repo.gitUrl || '')}" placeholder="https://github.com/org/repo.git" ${hasGit ? '' : 'required'}>
+        </label>
+        <div class="pd-inline">
+          <input id="prov-owner" placeholder="owner Coder (défaut : courant)">
+          <input id="prov-template" placeholder="template Coder" value="${esc(orgInfo.coderTemplate || '')}">
         </div>
-        <input id="pd-title" placeholder="titre (ex. ADR — Architecture madatalk)" style="margin-top:8px">
-        <div style="margin-top:8px;display:flex;gap:10px;align-items:center">
-          <select id="pd-mode" style="width:180px">
-            <option value="upload">Importer depuis mon PC</option>
-            <option value="path">Référencer un chemin existant</option>
+        ${showGitSelect ? `<label class="modal-field">Token git à utiliser pour le clone
+          <select id="prov-git-token-id">
+            <option value="">— token par défaut de l'organisation —</option>
+            ${orgTokens.map((t) => `<option value="${esc(t.id)}" ${t.id === selectedGitTokenId ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}
           </select>
-          <input id="pd-file" type="file" accept=".md,.markdown,.txt,.feature,.adoc" style="flex:1">
-          <input id="pd-path" placeholder="chemin du fichier existant (ex. /home/coder/mada-talk/docs/adr-technique.md)" hidden style="flex:1">
-        </div>
-        <div class="modal-actions" style="margin-top:8px">
-          <button type="button" class="ghost" id="modal-cancel">Fermer</button>
-          <button type="submit" class="launch-btn">+ Ajouter le document</button>
-        </div>
-      </form>
-      <div id="pd-msg" class="msg"></div>
-    </div>`);
-  renderList();
-  const modeSel = document.getElementById('pd-mode');
-  const fileEl = document.getElementById('pd-file');
-  const pathEl = document.getElementById('pd-path');
-  const syncMode = () => {
-    const upload = modeSel.value === 'upload';
-    fileEl.hidden = !upload;
-    pathEl.hidden = upload;
-    if (upload) fileEl.required = true; else { fileEl.required = false; pathEl.required = true; }
-  };
-  modeSel.addEventListener('change', syncMode);
-  syncMode();
-  document.getElementById('modal-cancel').onclick = closeModal;
-  document.getElementById('pd-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const msg = document.getElementById('pd-msg');
-    const [targetType, targetId] = document.getElementById('pd-target').value.split(':');
-    try {
-      const body = { kind: document.getElementById('pd-kind').value, title: document.getElementById('pd-title').value.trim() || undefined };
-      if (targetType === 'project') body.projectId = targetId; else body.repoId = targetId;
-      if (modeSel.value === 'upload') {
-        const f = fileEl.files[0];
-        if (!f) throw new Error('Choisissez un fichier à importer.');
-        if (f.size > 2 * 1024 * 1024) throw new Error('Fichier trop volumineux (max 2 Mo).');
-        const buf = await f.arrayBuffer();
-        body.filename = f.name;
-        body.dataBase64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
-      } else {
-        body.path = pathEl.value.trim();
-        if (!body.path) throw new Error('Chemin requis en mode « référencer ».');
-      }
-      await api('/api/docs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      fileEl.value = '';
-      pathEl.value = '';
-      document.getElementById('pd-title').value = '';
-      await loadDocs(); renderList();
-      msg.textContent = 'Document enregistré.'; msg.className = 'msg ok';
-    } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
-  });
-}
-
-// Modale édition d'un REPO (le repo porte workspace/répertoire/branches/e2e).
-function repoFormModal(repo) {
-  const editing = !!repo;
-  const ws = (repo && repo.workspace) || '';
-  showModal(`
-    <div class="modal">
-      <h2>${editing ? `Modifier le repo <code>${esc(repo.id)}</code>` : 'Nouveau repo'}</h2>
-      <form id="repo-modal-form" class="pilot-form">
-        <input id="rm-id" placeholder="identifiant (ex: mada-talk, oniria)" value="${esc(repo?.id || '')}" ${editing ? 'readonly' : ''} required>
-        <input id="rm-name" placeholder="nom lisible" value="${esc(repo?.name || '')}">
-        <label class="modal-field">Description <span class="muted-sm">— à quoi sert ce repo pour le projet</span>
-          <input id="rm-description" placeholder="ex. frontend client SPA du projet Madatalk" value="${esc(repo?.description || '')}">
-        </label>
-        <label class="modal-field">Mécanisme de déploiement CI/CD <span class="muted-sm">— workflows, branches de déclenchement, cibles de CE repo (fourni en contexte à l'orchestrateur)</span>
-          <textarea id="rm-deploy" class="modal-textarea" rows="4" placeholder="ex. GitHub Actions preprod-deploy.yml sur push main → /var/www/... ; runner self-hosted">${esc(repo?.deploy || '')}</textarea>
-        </label>
-        <label class="modal-field">Workspace Coder <span class="muted-sm">— où vit le checkout</span>
-          <input id="rm-workspace" placeholder="ex: madatalk, ONIRIA" value="${esc(ws)}">
-        </label>
-        <label class="modal-field">Répertoire du dépôt <span class="muted-sm">— chemin du checkout (hôte : volume Coder, ex. /var/lib/docker/volumes/coder-…/_data/&lt;projet&gt;)</span>
-          <input id="rm-repodir" placeholder="ex: /var/lib/docker/volumes/coder-…/_data/mada-talk" value="${esc(repo?.repoDir || '')}">
-        </label>
-        <label class="modal-field">Branche de déploiement <span class="muted-sm">— par défaut (requise pour déployer ce repo)</span>
-          <input id="rm-mainbranch" placeholder="ex: main, oniria-preprod" value="${esc(repo?.mainBranch || '')}">
-        </label>
-        <label class="modal-field">Checkout E2E hôte (e2eRepoDir)</label>
-          <input id="rm-e2e-dir" placeholder="ex: /root/mada-talk-preprod" value="${esc(repo?.e2eRepoDir || '')}">
-        </label>
-        <label class="modal-field">URL de test E2E (e2eBaseUrl)</label>
-          <input id="rm-e2e-url" placeholder="ex: https://preprod-client.madatalk.fr" value="${esc(repo?.e2eBaseUrl || '')}">
-        </label>
-        <div class="modal-actions">
-          <button type="button" class="ghost" id="modal-cancel">Annuler</button>
-          <button type="submit" class="launch-btn">${editing ? 'Enregistrer' : 'Créer le repo'}</button>
+        </label>` : ''}
+        ${missing.length
+          ? `<p class="muted-sm">L'organisation <code>${esc(org)}</code> n'a pas ${missing.join(' et ')} enregistré${missing.length > 1 ? 's' : ''} — ils seront mémorisés chiffrés <strong>sur l'organisation</strong> pour les prochains provisionnements.</p>`
+          : '<p class="muted-sm">L\'organisation a déjà ses tokens (Coder + git) — rien à saisir.</p>'}
+        ${needCoder ? `<label class="modal-field">Token Coder <span class="muted-sm">(${esc((orgInfo.coderUrl || 'ide.madatalk.fr'))})</span>
+          <input id="prov-coder-token" type="password" placeholder="token Coder" required>
+        </label>` : ''}
+        ${needGit ? `<label class="modal-field">Token git (PAT) <span class="muted-sm">— accès au clone</span>
+          <input id="prov-git-token" type="password" placeholder="personal access token" required>
+        </label>` : ''}
+        <div class="actions-buttons">
+          <button type="submit" class="launch-btn">Créer le workspace</button>
+          <button type="button" class="ghost" id="prov-cancel">Annuler</button>
         </div>
       </form>
-      <div id="repo-modal-msg" class="msg"></div>
+      <div id="prov-msg" class="msg"></div>
     </div>`);
-  document.getElementById('modal-cancel').onclick = closeModal;
-  document.getElementById('repo-modal-form').addEventListener('submit', async (e) => {
+  document.getElementById('prov-cancel').onclick = closeModal;
+  document.getElementById('prov-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const msg = document.getElementById('repo-modal-msg');
+    const btn = e.target.querySelector('button[type=submit]');
+    const msgEl = document.getElementById('prov-msg');
+    btn.disabled = true;
+    msgEl.textContent = 'Création du workspace Coder… (clone du remote + masquage du token)';
+    msgEl.className = 'msg ok';
     try {
-      const body = {
-        id: document.getElementById('rm-id').value.trim(),
-        name: document.getElementById('rm-name').value.trim() || undefined,
-        description: document.getElementById('rm-description').value.trim() || undefined,
-        deploy: document.getElementById('rm-deploy').value.trim() || undefined,
-        workspace: document.getElementById('rm-workspace').value.trim() || undefined,
-        repoDir: document.getElementById('rm-repodir').value.trim() || undefined,
-        mainBranch: document.getElementById('rm-mainbranch').value.trim() || undefined,
-        e2eRepoDir: document.getElementById('rm-e2e-dir').value.trim() || undefined,
-        e2eBaseUrl: document.getElementById('rm-e2e-url').value.trim() || undefined,
-      };
-      await api('/api/repos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      closeModal();
-      refreshActive();
-    } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
-  });
-}
-
-// Modale « associer un repo existant à ce projet » (N:N).
-function repoLinkModal(projectId, repoMap) {
-  const allRepos = [...repoMap.values()];
-  showModal(`
-    <div class="modal">
-      <h2>Associer un repo à <code>${esc(projectId)}</code></h2>
-      <p class="muted-sm">Le repo doit être enregistré au préalable (bouton « Nouveau repo » depuis un projet, ou via API /api/repos).</p>
-      <form id="repo-link-form" class="pilot-form">
-        <select id="rl-repo" required>
-          <option value="">— repo —</option>
-          ${allRepos.map((r) => `<option value="${esc(r.id)}">${esc(r.name || r.id)}</option>`).join('')}
-        </select>
-        <input id="rl-role" placeholder="rôle (frontend, backend, console…)" value="">
-        <div class="modal-actions">
-          <button type="button" class="ghost" id="modal-cancel">Annuler</button>
-          <button type="submit" class="launch-btn">Associer</button>
-        </div>
-      </form>
-      <div id="repo-link-msg" class="msg"></div>
-    </div>`);
-  document.getElementById('modal-cancel').onclick = closeModal;
-  document.getElementById('repo-link-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const msg = document.getElementById('repo-link-msg');
-    const repoId = document.getElementById('rl-repo').value;
-    try {
-      await api(`/api/projects/${encodeURIComponent(projectId)}/repos/${encodeURIComponent(repoId)}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: document.getElementById('rl-role').value.trim() || undefined }),
+      const gitTokenIdEl = document.getElementById('prov-git-token-id');
+      const gitTokenId = gitTokenIdEl ? gitTokenIdEl.value.trim() || undefined : undefined;
+      const r = await api(`/api/repos/${encodeURIComponent(repo.id)}/provision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspaceName: document.getElementById('prov-ws').value.trim(),
+          gitUrl: document.getElementById('prov-giturl').value.trim() || undefined,
+          repoDir: repo.repoDir || undefined,
+          owner: document.getElementById('prov-owner').value.trim() || undefined,
+          template: document.getElementById('prov-template').value.trim() || undefined,
+          gitTokenId: gitTokenId || opts.gitTokenId || undefined,
+          coderToken: needCoder ? document.getElementById('prov-coder-token').value : undefined,
+          gitToken: needGit ? document.getElementById('prov-git-token').value : undefined,
+        }),
       });
       closeModal();
-      refreshActive();
-    } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
+      if (opts.onProvisioned) await opts.onProvisioned(r);
+    } catch (err) {
+      msgEl.textContent = (err.message || String(err));
+      msgEl.className = 'msg error';
+      btn.disabled = false;
+    }
   });
 }
 
-function repoUnlinkModal(projectId, repoId) {
-  showModal(`
-    <div class="modal">
-      <h2>Retirer le repo du projet</h2>
-      <p>Retirer <code>${esc(repoId)}</code> du projet <code>${esc(projectId)}</code> ? Le repo reste enregistré.</p>
-      <div class="modal-actions">
-        <button class="ghost" id="modal-cancel">Annuler</button>
-        <button class="danger" id="modal-confirm">Retirer</button>
-      </div>
-    </div>`);
-  document.getElementById('modal-cancel').onclick = closeModal;
-  document.getElementById('modal-confirm').onclick = async () => {
-    try {
-      await api(`/api/projects/${encodeURIComponent(projectId)}/repos/${encodeURIComponent(repoId)}`, { method: 'DELETE' });
-      closeModal();
-      refreshActive();
-    } catch (e) { alert('Échec : ' + (e.message || e)); }
-  };
-}
-
+// Modale documents de référence (ADR-12) d'un projet ou d'un repo : liste les
+// docs + ajout (kind/titre/chemin) rattaché à un projet ou un repo.
 async function projectFormModal(project) {
   const editing = !!project;
   showModal(`
     <div class="modal">
       <h2>${editing ? 'Modifier le projet' : 'Nouveau projet'}</h2>
-      <p class="muted-sm">Un <strong>projet</strong> porte un nom et référence un ou plusieurs <strong>repos</strong> (workspace Coder + répertoire du dépôt + branches + e2e). Créez le projet puis associez-lui ses repos.</p>
+      <p class="muted-sm">Un <strong>projet</strong> porte un nom et référence un ou plusieurs <strong>repos</strong> (workspace Coder + répertoire du dépôt + branches + e2e). Créez le projet puis associez-lui ses repos depuis « Détail ».</p>
       <form id="project-modal-form" class="pilot-form">
         <label class="modal-field">Identifiant <span class="muted-sm">— ex: madatalk, oniria</span>
           <input id="pm-id" placeholder="identifiant" value="${esc(project?.id || '')}" ${editing ? 'readonly' : ''} required>
@@ -2897,33 +3752,13 @@ async function projectFormModal(project) {
       const body = {
         id: document.getElementById('pm-id').value.trim(),
         name: document.getElementById('pm-name').value.trim(),
+        organizationId: currentOrg || undefined,
       };
       await api('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       closeModal();
       refreshActive();
     } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
   });
-}
-
-function projectDeleteModal(projectId) {
-  showModal(`
-    <div class="modal">
-      <h2>Supprimer le projet</h2>
-      <p class="warn">Supprimer le projet <span class="code">${esc(projectId)}</span> du registre ?</p>
-      <p class="muted-sm">Les tâches existantes conservent leur référence de projet.</p>
-      <div class="modal-actions">
-        <button class="ghost" id="modal-cancel">Annuler</button>
-        <button class="danger" id="modal-confirm">Supprimer</button>
-      </div>
-    </div>`);
-  document.getElementById('modal-cancel').onclick = closeModal;
-  document.getElementById('modal-confirm').onclick = async () => {
-    try {
-      await api(`/api/projects/${encodeURIComponent(projectId)}`, { method: 'DELETE' });
-      closeModal();
-      refreshActive();
-    } catch (e) { alert('Échec : ' + (e.message || e)); }
-  };
 }
 
 async function taskCreateModal() {
@@ -3055,6 +3890,7 @@ async function taskCreateModal() {
         scope: scopeRaw ? scopeRaw.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
         linkedTasks,
         repoIds: projRepoIds[pid] && projRepoIds[pid].length ? projRepoIds[pid] : undefined,
+        organizationId: currentOrg || undefined,
       }) });
       closeModal();
       refreshActive();
@@ -3074,7 +3910,8 @@ async function taskActionsModal(taskId) {
   // Décisions humaines ACTIONNABLES = awaiting sans permission_id (canal B :
   // besoin/prérequis/validation demandés par un agent) — les permissions d'outil
   // (permission_id présent) restent résolues dans la session de l'agent.
-  const awaiting = decisions.filter((d) => d.status === 'awaiting' && d.kind !== 'recette' && !d.permission_id);
+  // Une tâche `done` n'a PLUS d'attente humaine : on ne propose aucune action.
+  const awaiting = status === 'done' ? [] : decisions.filter((d) => d.status === 'awaiting' && d.kind !== 'recette' && !d.permission_id);
   const linked = detail.linkedTasks || [];
 
   showModal(`
@@ -3417,12 +4254,32 @@ async function reworkTaskModal(taskId) {
 const RECETTE_CLS_LABEL = { rework: 'Rework', bug: 'Bug', improvement: 'Improvement', feature: 'Feature' };
 const RECETTE_CLS_BADGE = { rework: 'danger', bug: 'danger', improvement: 'approve', feature: 'ghost' };
 
+function testIntentBadge(it) {
+  const t = it && it.testIntent;
+  if (!t || !t.action) return '';
+  const actionLabel = t.action === 'create' ? 'créer un test' : t.action === 'update' ? 'adapter un test' : 'obsoléter un test';
+  const typeLabel = t.testType === 'e2e' ? 'E2E' : 'unitaire';
+  const target = t.target ? ` · ${t.target}` : '';
+  return `<span class="badge" style="background:rgba(255,180,60,.16);color:#ffb43c;border:1px solid rgba(255,180,60,.35)" title="Intention test : ${esc(t.action)} (${typeLabel})${t.scenario ? ' — ' + esc(t.scenario) : ''}${t.reason ? ' — ' + esc(t.reason) : ''}">${esc(typeLabel)} : ${esc(actionLabel)}${esc(target)}</span>`;
+}
+
+function docIntentBadge(it) {
+  const d = it && it.docIntent;
+  if (!d || !d.action) return '';
+  const actionLabel = d.action === 'create' ? 'documenter' : d.action === 'update' ? 'mettre à jour' : 'obsoléter';
+  const typeLabel = d.docType === 'adr-tech' ? 'ADR' : d.docType === 'specs-fonctionnelles' ? 'SPECS' : d.docType === 'scenarios-gherkin' ? 'GHERKIN' : 'DOC';
+  const target = d.target ? ` · ${d.target}` : '';
+  return `<span class="badge" style="background:rgba(140,190,255,.16);color:#8cbeff;border:1px solid rgba(140,190,255,.35)" title="Intention doc : ${esc(d.action)} (${typeLabel})${d.summary ? ' — ' + esc(d.summary) : ''}${d.reason ? ' — ' + esc(d.reason) : ''}">📄 ${esc(typeLabel)} : ${esc(actionLabel)}${esc(target)}</span>`;
+}
+
 function recetteItemRow(it) {
   return `<div class="recette-item">
     <code class="muted-sm">#${it.id || it.itemId}</code>
     <span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span>
     ${it.project ? `<code class="chip-project">${esc(it.project)}</code>` : ''}
     ${it.execOrder != null ? `<span class="badge order-badge" title="Ordre d'exécution (même numéro = parallèle)">ordre ${esc(it.execOrder)}</span>` : ''}
+    ${testIntentBadge(it)}
+    ${docIntentBadge(it)}
     ${it.vigilance ? `<span class="badge danger" title="Point de vigilance / écart sémantique : ${esc(it.vigilance)}">⚠ vigilance</span>` : ''}
     <span>${esc(it.content)}</span>
     ${it.status === 'task_created' && it.created_task_id ? `<code class="muted-sm">→ ${esc(it.created_task_id)}</code>` : ''}
@@ -3433,7 +4290,7 @@ function recetteSectionHtml(recetteStatus, detail) {
   const rec = detail && detail.recette;
   if (!rec) {
     return `<div class="actions-section"><h3>Recette</h3>
-      <p class="muted-sm">Cette tâche n'est couverte par aucune recette. Créez une recette (onglet <a href="#" onclick="goToTab('recettes'); return false;">Recettes</a>) pour couvrir plusieurs tâches d'un même périmètre.</p>
+      <p class="muted-sm">Cette tâche n'est couverte par aucune recette. Créez une recette (onglet <a href="#" onclick="goToTab('recettes'); return false;">Recettes</a>) pour couvrir plusieurs tâches d'un même périmètre (1 recette = 1 projet).</p>
     </div>`;
   }
   const st = rec.status;
@@ -3449,7 +4306,7 @@ function recetteSectionHtml(recetteStatus, detail) {
     </div>` : '');
   const statusTxt = st === 'done' ? `faite${rec.confirmed_at ? ` le ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}` : RECETTE_STATUS_LABEL[st] || st;
   return `<div class="actions-section"><h3>Recette — ${statusTxt}</h3>
-    <p class="muted-sm"><strong>${esc(title)}</strong> ${recProjChips(rec.projects || (rec.project ? [rec.project] : []))}</p>
+    <p class="muted-sm"><strong>${esc(title)}</strong> ${recetteScopeChips(rec)}</p>
     ${items.length ? `<div class="recette-list">${items.map(recetteItemRow).join('')}</div>` : '<p class="muted-sm">Aucun élément relevé.</p>'}
     ${btns}
   </div>`;
@@ -3783,6 +4640,7 @@ async function renderE2ESecrets() {
   const pane = document.getElementById('pane-e2esecrets');
   let projects = [];
   try { projects = ((await api('/api/projects')).projects || []); } catch {}
+  if (currentProject) e2eFilterProject = currentProject;
   let selected = e2eFilterProject || (projects[0] && projects[0].id) || '';
   let vars = [];
   __secCache = [];
@@ -3903,7 +4761,7 @@ function e2eVarModal(project, projects, existingName) {
 
 const RENDER = {
   overview: renderOverview, observability: renderObservability, projects: renderProjects, tasks: renderTasks, e2etests: renderE2ETests, e2esecrets: renderE2ESecrets, recettes: renderRecettes,
-  events: renderEvents, deployments: renderDeployments, decisions: renderDecisions, artifacts: renderArtifacts, plans: renderPlans, archives: renderArchives, ecosystem: renderEcosystem, users: renderUsers,
+  events: renderEvents, deployments: renderDeployments, decisions: renderDecisions, artifacts: renderArtifacts, plans: renderPlans, archives: renderArchives, ecosystem: renderEcosystem, workspaces: renderWorkspaces, users: renderUsers,
 };
 
 // --- Rafraîchissement automatique (polling, min 10 s) ----------------------
@@ -3947,19 +4805,23 @@ async function init() {
     const me = await api('/api/me');
     ME = me.user;
     IS_ADMIN = !!(ME && ME.is_admin);
-    document.getElementById('whoami').textContent = ME.username + (ME.is_admin ? ' (admin)' : (ME.role === 'supervisor' ? ' (superviseur)' : ''));
-    if (ME.is_admin) document.getElementById('tab-users').hidden = false;
-    // Rôle SUPERVISOR / lecture seule : classe body (masque les actions
-    // d'écriture via CSS) + onglets sans intérêt en lecture (archives=actions,
-    // observabilité omise en v1, users réservé admin).
-    if (ME.isReadOnly || ME.role === 'supervisor') {
-      document.body.classList.add('readonly');
-      // Onglets sans intérêt / non prévus pour le rôle lecture seule :
-      // observabilité (omise en v1), archives (actions), users (réservé admin).
-      for (const t of ['observability', 'archives', 'users']) {
-        const btn = document.querySelector(`#tabs [data-tab="${t}"]`);
-        if (btn) btn.hidden = true;
+    document.getElementById('whoami').textContent = ME.username + (ME.is_admin ? ' (admin)' : (ME.role === 'supervisor' ? ' (superviseur)' : (ME.role === 'user' ? ' (utilisateur)' : '')));
+    // Bandeau : libellé COURT (évite le débordement d'en-tête).
+    const roBanner = document.querySelector('.readonly-banner');
+    if (roBanner) {
+      if (ME.role === 'user') {
+        roBanner.textContent = 'Utilisateur';
+        roBanner.title = "Rôle utilisateur : vous pouvez créer/agir, mais vous ne voyez que les données que vous avez créées dans l'organisation active.";
+        roBanner.style.display = 'inline-block';
+      } else if (ME.role === 'supervisor') {
+        roBanner.textContent = 'Superviseur';
+        roBanner.title = "Rôle superviseur : lecture seule sur toutes les données de l'organisation active.";
       }
+    }
+    // Rôle SUPERVISOR / lecture seule stricte : classe body (masque les actions
+    // d'écriture via CSS). Un `user` peut écrire (boutons visibles).
+    if (ME.role === 'supervisor') {
+      document.body.classList.add('readonly');
     }
   } catch { return; }
 
@@ -3998,11 +4860,22 @@ async function init() {
     window.location.href = '/login';
   });
 
-  document.querySelectorAll('#tabs button').forEach((btn) => btn.addEventListener('click', () => {
-    taskFilter = '';   // navigation manuelle : réinitialiser le filtre tâche
-    switchTab(btn.dataset.tab);
-    refreshActive();
-  }));
+  // Organisations : charge la liste, peuple le sélecteur global, câble les actions.
+  await loadOrganizations();
+  const orgSel = document.getElementById('org-select');
+  if (orgSel) orgSel.addEventListener('change', () => switchOrganization(orgSel.value));
+  const orgBtn = document.getElementById('org-manage-btn');
+  if (orgBtn) orgBtn.addEventListener('click', () => orgManageModal());
+  // Écran de choix si l'utilisateur appartient à plusieurs orgs et n'en a pas choisi.
+  if (ME && Array.isArray(ME.organizations) && ME.organizations.length > 1 && !ME.activeOrganizationId) {
+    orgPickerModal();
+  }
+
+  // Navigation dynamique : accueil = liste des projets ; si un projet est
+  // mémorisé, on le rouvre directement sur sa vue d'ensemble.
+  renderNav();
+  if (currentProject) switchTab('overview');
+  else switchTab('projects');
 
   // Fermer la modale en cliquant sur le fond.
   document.getElementById('modal-backdrop').addEventListener('click', (e) => {

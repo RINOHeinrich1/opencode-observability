@@ -25,8 +25,11 @@ import { homedir } from "node:os";
 const OPENCODE_BIN = "/root/.opencode/bin/opencode";
 // Serveur opencode auquel attacher les sessions (pour qu'elles soient streamées
 // dans le web et que les permissions y soient résolues). Surchargeable via env.
-const OPENCODE_SERVER_URL = process.env.OPENCODE_SERVER_URL || "http://127.0.0.1:4096";
 const AGENT_DIR = process.env.OPENCODE_AGENT_DIR || join(homedir(), ".config", "opencode", "agent");
+// Lus À L'EXÉCUTION (pas au chargement) : le .env du panneau est chargé après les
+// imports ES → une lecture top-level verrait une valeur obsolète.
+function ocServerUrl() { return process.env.OPENCODE_SERVER_URL || "http://127.0.0.1:4096"; }
+function ocEnv() { const d = process.env.OPENCODE_DATA_HOME; return d ? { ...process.env, XDG_DATA_HOME: d } : process.env; }
 
 function assertBinary() {
   if (!existsSync(OPENCODE_BIN)) {
@@ -63,6 +66,7 @@ export function listSessions(dir) {
     encoding: "utf8",
     maxBuffer: 16 * 1024 * 1024,
     timeout: 15000,
+    env: ocEnv(),
   };
   if (dir) opts.cwd = dir;
   const out = execFileSync(OPENCODE_BIN, ["session", "list", "--format", "json"], opts);
@@ -79,14 +83,18 @@ export function sessionExists(sessionId, dir) {
   return listSessions(dir).some((s) => s.id === sessionId);
 }
 
-// Résout le sessionId le plus récent (fallback en cas d'échec de capture du flux).
+// Résout le sessionId via le titre demandé (fallback en cas d'échec de capture du
+// flux). NE retourne JAMAIS une session arbitraire (`sessions[0]`) : cela risquait
+// de rattacher une recette/tâche/test à un ID sans rapport (ghost), cassant le
+// lien de reprise et le deep-link du panneau. Sans correspondance de titre exacte
+// → null (l'appelant échouera proprement au lieu de persister un mauvais ID).
 function latestSessionId(title, dir) {
   const sessions = listSessions(dir);
   if (title) {
     const byTitle = sessions.find((s) => s.title === title);
     if (byTitle) return byTitle.id;
   }
-  return sessions[0]?.id || null;
+  return null;
 }
 
 // --- Lancement ------------------------------------------------------------
@@ -107,7 +115,7 @@ export function launchSession({ dir, agent = "orchestrator", prompt, title }) {
       return;
     }
 
-    const args = ["run", prompt, "--agent", agent, "--format", "json", "--attach", OPENCODE_SERVER_URL];
+    const args = ["run", prompt, "--agent", agent, "--format", "json", "--attach", ocServerUrl()];
     const model = readAgentModel(agent);
     if (model) args.push("--model", model);
     if (dir) args.push("--dir", dir);
@@ -116,6 +124,7 @@ export function launchSession({ dir, agent = "orchestrator", prompt, title }) {
     const child = spawn(OPENCODE_BIN, args, {
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
+      env: ocEnv(),
     });
 
     let sessionId = null;
@@ -131,7 +140,7 @@ export function launchSession({ dir, agent = "orchestrator", prompt, title }) {
 
     const timeout = setTimeout(() => {
       finish(sessionId || latestSessionId(title, dir));
-    }, 8000);
+    }, 20000);
 
     child.stdout.on("data", (chunk) => {
       buffer += chunk.toString();
@@ -180,11 +189,12 @@ export function injectMessage({ sessionId, prompt, dir }) {
     throw new Error(`session inconnue ou expirée : ${sessionId}`);
   }
 
-  const args = ["run", prompt, "--continue", "--session", sessionId, "--agent", "orchestrator", "--format", "json", "--attach", OPENCODE_SERVER_URL];
+  const args = ["run", prompt, "--continue", "--session", sessionId, "--agent", "orchestrator", "--format", "json", "--attach", ocServerUrl()];
 
   const child = spawn(OPENCODE_BIN, args, {
     detached: true,
     stdio: ["ignore", "pipe", "pipe"],
+    env: ocEnv(),
   });
   child.stdout.on("data", () => {});
   child.stderr.on("data", () => {});
@@ -289,9 +299,11 @@ export function buildReworkPrompt({ taskId, remarks, by }) {
  * La recette est un objet de PROJET (titre + 0..N tâches couvertes).
  * Mission + cadre, jamais méthode.
  */
-export function buildRecettePrompt({ project, projects, title, taskIds, docs = [] }) {
-  const projs = (projects && projects.length ? projects : (project ? [project] : []));
-  const first = projs[0] || project || "";
+export function buildRecettePrompt({ project, repos, title, taskIds, docs = [] }) {
+  const proj = (project && String(project).trim()) || "";
+  const repoBlock = (repos && repos.length)
+    ? `  Repos transverses du projet (portée réelle — ADR 11) : ${repos.map((x) => x.repoId || x.id || x).join(", ")}`
+    : "";
   const docBlock = (docs && docs.length)
     ? [
         "",
@@ -302,16 +314,16 @@ export function buildRecettePrompt({ project, projects, title, taskIds, docs = [
       ]
     : [];
   return [
-    `Ouvre la recette **« ${title || first} »** (projets : ${projs.join(", ")}) (v0.9.0).`,
+    `Ouvre la recette **« ${title || proj} »** — projet : \`${proj}\`${repoBlock ? `\n${repoBlock}` : ""} (v0.9.0).`,
     "",
     taskIds && taskIds.length ? `Tâches couvertes par cette recette : ${taskIds.join(", ")}.` : "Cette recette ne couvre aucune tâche (parcours global / exploratoire).",
-    "Une recette peut couvrir **un ou plusieurs projets** (pas de projet principal). Chaque élément relevé est rattaché à **UN projet cible** (celui où la future tâche sera créée) — renseigne `project` dans `recette_item_add`, obligatoirement parmi les projets de la recette.",
+    "Une recette = **un seul projet** (produit). Sa portée réelle est couverte par les **repos transverses du projet** (ex: le projet mada-talk traverse les repos mada-talk et oniria). Chaque élément relevé est rattaché au **projet de la recette** (la future tâche y sera créée) — le `project` de `recette_item_add` doit être le projet de la recette, jamais un repo transverse.",
     "Les tâches couvertes restent HISTORIQUEMENT INTACTES : tu ne les modifies jamais (aucune transition, aucun rework direct).",
     ...docBlock,
     "Mission :",
-    "- Récupère le contexte : `recette_get(<recetteId>)` (titre, projets, tâches couvertes, éléments), et pour chaque tâche couverte `task_get` (plans, commits, artefacts, tâches liées), `artifact_list`, `events_list`.",
+    "- Récupère le contexte : `recette_get(<recetteId>)` (titre, projet, repos transverses, tâches couvertes, éléments), et pour chaque tâche couverte `task_get` (plans, commits, artefacts, tâches liées), `artifact_list`, `events_list`.",
     "- Accompagne l'utilisateur dans la vérification du périmètre : réponds à ses questions, aide-le à comprendre ce qui a été réalisé.",
-    "- Enregistre chaque élément détecté via `recette_item_add` avec **classification** (`rework`/`bug`/`improvement`/`feature`), **project** (projet cible de l'élément), **scope** (chemins), **titre court** et **critère d'acceptation** (ce qui permettra de considérer la tâche créée comme terminée).",
+    "- Enregistre chaque élément détecté via `recette_item_add` avec **classification** (`rework`/`bug`/`improvement`/`feature`), **project** (= projet de la recette), **scope** (chemins), **titre court** et **critère d'acceptation** (ce qui permettra de considérer la tâche créée comme terminée).",
     "- Regroupe les remarques liées ; **ne crée AUCUNE tâche pendant la discussion** (les tâches seront créées à la confirmation finale, via le panneau).",
     "- Prépare la synthèse consolidée des éléments (type + action + projet) pour la présenter à l'utilisateur.",
     "",
@@ -387,6 +399,40 @@ export function buildFreeTestPrompt({ project, projects, message, docs = [] }) {
     "Règle IA : tu ne traites que le texte ; la vidéo est une preuve humaine.",
   ];
   return lines.join("\n");
+}
+
+// Prompt d'une session d'orchestration UNIQUE pour un BATCH (mode `session`).
+// L'orchestrateur pilote TOUTES les tâches du batch depuis cette seule session :
+// il délègue chaque tâche aux agents de fond (atomic-plan → build-notify) dans
+// l'ordre dicté par la readiness (dépendances + conflits fichiers), prépare ce
+// qui peut l'être pendant les points bloquants, et respecte les portes humaines.
+export function buildBatchSessionPrompt({ batch, tasksDetail, repos }) {
+  const b = batch || {};
+  const tasks = tasksDetail || [];
+  const readiness = b.readiness || [];
+  const line = [];
+  line.push(`Pilote le **batch d'orchestration ${b.batchId || "?"}** — « ${b.title || ""} » (projet ${b.project || "?"}) en MODE SESSION UNIQUE.`);
+  line.push("");
+  line.push(`Le batch couvre ${tasks.length} tâche(s) issues de ${b.recetteId ? "la recette " + b.recetteId : "un regroupement ad-hoc"}. Tu es l'**unique session d'orchestration** de ce batch : les tâches sont exécutées en ordonnancement par TOI (délégation aux agents de fond), pas par des sessions par tâche.`);
+  line.push("");
+  line.push("Règles d'orchestration du batch :");
+  line.push(`- Ne lance JAMAIS plus de ${b.maxParallel || 2} tâches en cours simultanément (plafond de parallélisme).`);
+  line.push("- Consulte la READINESS (`batch_readiness`) et la MATRICE DE CONFLIT (`batch_conflict_matrix`) à chaque décision : une tâche n'est lançable que si ses dépendances sont satisfaites ET qu'aucune de ses étapes ne chevauche une étape active d'une autre tâche.");
+  line.push("- Une tâche bloquée (dépendance non satisfaite, étape en conflit, déploiement en attente) n'est pas perdue : PRÉPARE ce qui est préparable (plans des tâches suivantes, contexte), puis lance-la dès que le blocage est levé — sans intervention humaine pour l'ORDONNANCEMENT.");
+  line.push("- Les PORTES HUMAINES restent humaines : validation de plan (`decision_request` kind=validation), review/merge, déploiement. Tu ne les franchis jamais ; tu enchaînes la suite après résolution.");
+  line.push("- À chaque tâche terminée (`done`), relance la readiness : une autre tâche devient peut-être lançable. Quand TOUTES les tâches sont `done`, passe le batch à `completed` (`batch_set_status`).");
+  line.push("");
+  if (tasks.length) {
+    line.push("Tâches du batch :");
+    for (const t of tasks) {
+      line.push(`  - ${t.id || t.taskId} [${t.status || "?"}] — ${(t.title || t.request || "").slice(0, 90)}`);
+    }
+  }
+  line.push("");
+  line.push("Pour CHAQUE tâche, suis le pipeline d'orchestration standard (cf. ton guide `orchestrator.md`) : task_get pour l'état, délégation à `atomic-plan` (planification) puis `build-notify` (exécution), plan_transition/task_transition, décisions humaines, déploiement via le mécanisme CI/CD des repos concernés.");
+  line.push("");
+  line.push("Cadre : tu n'édites jamais le code toi-même (tu délègues), tu ne ré-enregistres pas les tâches (déjà enregistrées, statut `queued`/`started`), tu publies `task_event`/événements pour tracer. Tu informes l'utilisateur de l'avancement et des blocages.");
+  return line.join("\n");
 }
 
 export { OPENCODE_BIN };

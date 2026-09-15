@@ -5,7 +5,7 @@
 // sessions opencode est délégué au bridge `session-bridge.mjs` (Plan C).
 
 import { taskOrchestrator, coderWorkspaces } from "./mcp-client.mjs";
-import { launchSession, injectMessage, buildLaunchPrompt, buildReworkPrompt, buildRecettePrompt, buildTestPrompt, buildFreeTestPrompt, listSessions, killSession, sessionExists } from "./session-bridge.mjs";
+import { launchSession, injectMessage, buildLaunchPrompt, buildReworkPrompt, buildRecettePrompt, buildTestPrompt, buildFreeTestPrompt, buildBatchSessionPrompt, listSessions, killSession, sessionExists } from "./session-bridge.mjs";
 
 // Décision n°7 : agents contraints par type de tâche.
 export function agentsForType(type, auditTarget) {
@@ -27,23 +27,133 @@ export function agentsForType(type, auditTarget) {
   ];
 }
 
-export async function listWorkspaces() {
-  return coderWorkspaces("workspace_list", {});
+export async function listWorkspaces(org) {
+  const disc = (await coderWorkspaces("workspace_list", {})) || {};
+  let workspaces = disc.workspaces || disc.discovered || [];
+  // Enrichit la découverte Docker avec le VRAI statut Coder (coder list) : les
+  // transitions (starting/stopping/restarting/deleting) ne sont pas visibles
+  // via Docker, et le statut "stopped" après un stop l'est à peine.
+  try {
+    const cfg = await getOrganizationCoderConfig(org || "onirtech");
+    if (cfg && cfg.url && cfg.token) {
+      const env = { ...process.env, CODER_URL: cfg.url, CODER_SESSION_TOKEN: cfg.token };
+      const list = JSON.parse(execFileSync("coder", ["list", "--output", "json"], { encoding: "utf8", env, timeout: 30000 }));
+      const sub = (x, k) => (x && x[k]) || null;
+      const stateOf = (w) => {
+        const lb = w.latest_build || {};
+        const status = lb.status || null; // started/running/succeeded/failed…
+        const transition = lb.transition || null; // start/stop/delete/restart
+        const job = (lb.job && lb.job.status) || null; // pending/running/succeeded/failed
+        const transitioning = job && ["pending", "running", "started"].includes(job);
+        let label = transitioning ? `${transition || "?"}ing` : status;
+        if (!label) label = "unknown";
+        return { label, transition, buildStatus: status, job, transitioning };
+      };
+      const byName = new Map(list.map((w) => [`${w.owner_name}/${w.name}`, w]));
+      // Match par owner/name (RINOHeinrich1/myxmax), sinon par name simple.
+      workspaces = workspaces.map((w) => {
+        const ownerName = (w.owner || "").toLowerCase();
+        const key = `${ownerName}/${String(w.name).toLowerCase()}`;
+        const match = byName.get(key.toLowerCase()) || [...byName.entries()].find(([k]) => k.toLowerCase().endsWith(`/${String(w.name).toLowerCase()}`))?.[1];
+        const st = match ? stateOf(match) : null;
+        return { ...w, ...(st ? { coderStatus: st.label, coderTransition: st.transition, coderBuildStatus: st.buildStatus, jobStatus: st.job, transitioning: st.transitioning } : {}) };
+      });
+    }
+  } catch { /* enrichissement best-effort : on garde la découverte Docker */ }
+  return { count: workspaces.length, workspaces };
+}
+
+// --- Workspaces Coder : opérations CRUD via coder CLI (admin) ---------------
+import { execFileSync, spawn } from "node:child_process";
+import { getOrganizationCoderConfig } from "/root/.config/opencode/mcp/task-orchestrator/db.mjs";
+
+function coderExec(org, args) {
+  return getOrganizationCoderConfig(org).then((cfg) => {
+    if (!cfg || !cfg.url || !cfg.token) throw new Error(`Config Coder incomplète pour l'org ${org}`);
+    const env = { ...process.env, CODER_URL: cfg.url, CODER_SESSION_TOKEN: cfg.token };
+    return execFileSync("coder", args, { encoding: "utf8", env, timeout: 120000 });
+  });
+}
+
+export async function showWorkspace(name, org) {
+  const out = await coderExec(org || "onirtech", ["show", name]);
+  return { output: out };
+}
+
+// Lance une commande coder en ARRIÈRE-PLAN (non bloquant) : répond immédiatement
+// avec {queued:true}, le statut évolue ensuite dans la liste (polling).
+function coderActionAsync(org, args) {
+  return new Promise((resolve, reject) => {
+    getOrganizationCoderConfig(org || "onirtech").then((cfg) => {
+      if (!cfg || !cfg.url || !cfg.token) { reject(new Error(`Config Coder incomplète pour l'org ${org || "onirtech"}`)); return; }
+      const env = { ...process.env, CODER_URL: cfg.url, CODER_SESSION_TOKEN: cfg.token };
+      const child = spawn("coder", args, { env, stdio: "ignore" });
+      const done = (code) => {
+        resolve({ queued: true, exitCode: code });
+        // collecte tronquée pour diagnostic si échec
+      };
+      child.on("error", reject);
+      child.on("exit", done);
+    }).catch(reject);
+  });
+}
+
+export async function startWorkspace(name, org) {
+  return coderActionAsync(org, ["start", name, "--yes"]);
+}
+export async function stopWorkspace(name, org) {
+  return coderActionAsync(org, ["stop", name, "--yes"]);
+}
+export async function restartWorkspace(name, org) {
+  return coderActionAsync(org, ["restart", name, "--yes"]);
+}
+export async function deleteWorkspace(name, org) {
+  return coderActionAsync(org, ["delete", name, "--yes"]);
 }
 
 export async function listProjects() {
   return taskOrchestrator("project_list", {});
 }
 
+// --- Organisations (v0.9.47) : tenant de premier niveau (nom + description) --
+export async function listOrganizations() {
+  const r = await taskOrchestrator("org_list", {});
+  return (r && r.organizations) || [];
+}
+export async function registerOrganization({ id, name, description, isDefault, coderUrl, coderToken, coderTemplate, gitToken, by }) {
+  const r = await taskOrchestrator("org_register", { id, name, description: description || undefined, isDefault: !!isDefault, coderUrl: coderUrl !== undefined ? coderUrl : undefined, coderToken: coderToken || undefined, coderTemplate: coderTemplate !== undefined ? coderTemplate : undefined, gitToken: gitToken || undefined, createdBy: by });
+  return r && r.organization;
+}
+export async function deleteOrganization(id) {
+  return taskOrchestrator("org_delete", { id });
+}
+export async function setDefaultOrganization(id) {
+  const r = await taskOrchestrator("org_set_default", { id });
+  return r && r.organization;
+}
+
+// --- Tokens git multiples par organisation (v0.10) ---------------------------
+export async function addOrgGitToken({ org, name, token, by }) {
+  const r = await taskOrchestrator("org_git_token_add", { org, name, token, createdBy: by });
+  return r || {};
+}
+export async function listOrgGitTokens(org) {
+  const r = await taskOrchestrator("org_git_token_list", { org });
+  return (r && r.tokens) || [];
+}
+export async function deleteOrgGitToken({ id, org }) {
+  return taskOrchestrator("org_git_token_delete", { id, org });
+}
+
 // --- Repos (ADR 09) : dépôt de code physique, rattaché à 1..N projets --------
 export async function listRepos(projectId) {
   return taskOrchestrator("repo_list", { projectId: projectId || undefined });
 }
-export async function registerRepo({ id, name, description, deploy, workspace, repoDir, branches, mainBranch, e2eRepoDir, e2eBaseUrl, createdBy }) {
-  return taskOrchestrator("repo_register", { id, name: name || undefined, description: description || undefined, deploy: deploy || undefined, workspace: workspace || undefined, repoDir: repoDir || undefined, branches, mainBranch: mainBranch || undefined, e2eRepoDir: e2eRepoDir || undefined, e2eBaseUrl: e2eBaseUrl || undefined, createdBy });
+export async function registerRepo({ id, name, description, deploy, workspace, repoDir, gitUrl, branches, mainBranch, e2eRepoDir, e2eBaseUrl, organizationId, createdBy }) {
+  return taskOrchestrator("repo_register", { id, name: name || undefined, description: description || undefined, deploy: deploy || undefined, workspace: workspace || undefined, repoDir: repoDir || undefined, gitUrl: gitUrl || undefined, branches, mainBranch: mainBranch || undefined, e2eRepoDir: e2eRepoDir || undefined, e2eBaseUrl: e2eBaseUrl || undefined, organizationId: organizationId || undefined, createdBy });
 }
-export async function linkRepoToProject({ projectId, repoId, role }) {
-  return taskOrchestrator("project_repo_link", { projectId, repoId, role: role || undefined });
+export async function linkRepoToProject({ projectId, repoId, role, gitTokenId }) {
+  return taskOrchestrator("project_repo_link", { projectId, repoId, role: role || undefined, gitTokenId: gitTokenId || undefined });
 }
 export async function unlinkRepoFromProject({ projectId, repoId }) {
   return taskOrchestrator("project_repo_unlink", { projectId, repoId });
@@ -53,7 +163,7 @@ export async function deleteRepo(id) {
   return taskOrchestrator("repo_delete", { id });
 }
 
-export async function createProject({ id, name, workspace, gitPath, mainBranch, e2eRepoDir, e2eBaseUrl, createdBy }) {
+export async function createProject({ id, name, workspace, gitPath, mainBranch, e2eRepoDir, e2eBaseUrl, organizationId, createdBy }) {
   if (!id || !name) throw new Error("id et name requis pour créer un projet");
   // ADR 09 : le PRODUIT ne porte plus de branche/repo (attributs du REPO).
   // Les champs workspace/gitPath/mainBranch restent acceptés en rétrocompat
@@ -62,6 +172,7 @@ export async function createProject({ id, name, workspace, gitPath, mainBranch, 
     id, name, workspace: workspace || undefined, gitPath: gitPath || undefined,
     mainBranch: mainBranch || undefined, createdBy,
     e2eRepoDir: e2eRepoDir || undefined, e2eBaseUrl: e2eBaseUrl || undefined,
+    organizationId: organizationId || undefined,
   });
 
   // Rétrocompat : crée le répertoire du projet dans le workspace Coder si un
@@ -109,7 +220,7 @@ export async function editTask({ taskId, request, title, acceptanceCriteria, sco
     linkedTasks: linkedTasks !== undefined ? linkedTasks.filter((l) => l && l.taskId) : undefined,
   });
 }
-export async function createTask({ request, title, acceptanceCriteria, project, type, scope, priority, auditTarget, linkedTasks, directExecution, agents, repoIds, originTaskId, originReason }) {
+export async function createTask({ request, title, acceptanceCriteria, project, type, scope, priority, auditTarget, linkedTasks, directExecution, agents, repoIds, originTaskId, originReason, createdBy, organizationId }) {
   if (!request || !project || !type) throw new Error("request, project et type requis");
   const reg = await taskOrchestrator("task_register", {
     request,
@@ -125,6 +236,8 @@ export async function createTask({ request, title, acceptanceCriteria, project, 
     repoIds: Array.isArray(repoIds) && repoIds.length ? repoIds : undefined,
     originTaskId: originTaskId || undefined,
     originReason: originReason || undefined,
+    createdBy: createdBy || undefined,
+    organizationId: organizationId || undefined,
   });
   const taskId = reg && (reg.taskId || (reg.task && reg.task.id));
   const list = agents && agents.length ? agents : agentsForType(type, auditTarget);
@@ -337,7 +450,8 @@ export async function registerDoc(args) {
   return taskOrchestrator("doc_register", {
     kind: args.kind, title: args.title || undefined, path: args.path,
     description: args.description || undefined,
-    projectId: args.projectId || undefined, repoId: args.repoId || undefined, createdBy: args.createdBy,
+    projectId: args.projectId || undefined, repoId: args.repoId || undefined,
+    organizationId: args.organizationId || undefined, createdBy: args.createdBy,
   });
 }
 export async function updateDoc(args) {
@@ -364,7 +478,7 @@ const DOC_KINDS = ["adr-tech", "specs-fonctionnelles", "scenarios-gherkin"];
 // Import d'un fichier DOCUMENT depuis le PC de l'utilisateur : le fichier est
 // stocké côté serveur (storage/ref-docs) puis enregistré comme doc de référence
 // (ADR-12) rattaché à un projet et/ou un repo. Renvoie le doc enregistré.
-export async function registerDocUpload({ kind, title, filename, dataBase64, projectId, repoId, by }) {
+export async function registerDocUpload({ kind, title, filename, dataBase64, projectId, repoId, organizationId, by }) {
   if (!dataBase64 || !filename) throw new Error("fichier requis (filename + dataBase64)");
   if (!DOC_KINDS || !DOC_KINDS.includes(kind)) throw new Error("kind requis (adr-tech | specs-fonctionnelles | scenarios-gherkin)");
   const fs = await import("node:fs");
@@ -381,6 +495,7 @@ export async function registerDocUpload({ kind, title, filename, dataBase64, pro
     path: dest,
     projectId: projectId || undefined,
     repoId: repoId || undefined,
+    organizationId: organizationId || undefined,
     createdBy: by,
   });
   return { ok: true, doc: r && r.doc };
@@ -392,17 +507,17 @@ export function refDocRelPath(absPath) {
   return String(absPath).replace("/root/orchestrator-panel/storage/", "");
 }
 
-export async function createRecette({ project, projects, title, description, taskIds, documents, docIds, by }) {
-  const projs = [...new Set(((projects && projects.length ? projects : (project ? [project] : [])).map((p) => p && String(p).trim()).filter(Boolean)))];
-  if (!projs.length) throw new Error("au moins un projet requis pour créer une recette");
+export async function createRecette({ project, title, description, taskIds, documents, docIds, by, organizationId }) {
+  if (!project || !String(project).trim()) throw new Error("un projet (produit) requis pour créer une recette — ses repos transverses couvrent la portée");
   if (!title || !String(title).trim()) throw new Error("titre requis pour créer une recette");
   const r = await taskOrchestrator("recette_start", {
-    project: projs[0],
-    projects: projs,
+    project: String(project).trim(),
     title: String(title).trim(),
     description: description ? String(description).trim() : undefined,
     taskIds: (taskIds || []).filter(Boolean),
     status: "pending",
+    createdBy: by || undefined,
+    organizationId: organizationId || undefined,
   });
   const recetteId = r.recette.recetteId;
   // Rattache les documents fournis à la création (import ou artefact).
@@ -426,12 +541,10 @@ export async function createRecette({ project, projects, title, description, tas
   if (Array.isArray(docIds) && docIds.length) {
     const wanted = new Set(docIds.map((x) => String(x).trim()).filter(Boolean));
     const allDocs = [];
-    for (const p of projs) {
-      try {
-        const rl = await taskOrchestrator("doc_list", { projectId: p, includeRepoDocs: true });
-        for (const d of ((rl && rl.docs) || [])) if (d && !allDocs.some((x) => x.docId === d.docId)) allDocs.push(d);
-      } catch {}
-    }
+    try {
+      const rl = await taskOrchestrator("doc_list", { projectId: project, includeRepoDocs: true });
+      for (const d of ((rl && rl.docs) || [])) if (d && !allDocs.some((x) => x.docId === d.docId)) allDocs.push(d);
+    } catch {}
     for (const d of allDocs) {
       if (!wanted.has(d.docId)) continue;
       try {
@@ -456,41 +569,91 @@ export async function launchRecetteSession({ recetteId, force = false }) {
   const rec = r && r.recette;
   if (!rec) throw new Error(`recette inconnue : ${recetteId}`);
 
+  const proj = rec.project;
+  const gitPath = await projectGitPath(proj);
+  const dir = gitPath || null;
+
   // REPRISE : dès qu'une session est rattachée à la recette, on la REPREND —
   // on n'en relance JAMAIS automatiquement une nouvelle. L'ancienne détection
   // par `opencode session list` (répertoire) dépendait du cwd du serveur au
   // moment du lancement : en cas de faux négatif, chaque clic créait une
   // nouvelle session (doublons). Pour repartir de zéro : `force = true`.
+  // Si le projet n'a pas de répertoire (gitPath null), la session stockée est
+  // dans un contexte inconnu (souvent un fantôme du cwd panneau) — on la
+  // ignore et on en crée une nouvelle dans le projet global d'opencode.
   if (!force && rec.sessionId && /^ses_/.test(rec.sessionId)) {
-    return { recetteId, sessionId: rec.sessionId, resumed: true };
+    if (dir && sessionExists(rec.sessionId, dir)) {
+      return { recetteId, sessionId: rec.sessionId, resumed: true };
+    }
+    // gitPath null ou session disparue → on crée une nouvelle session.
   }
-
-  // Multi-projets : pas de « projet principal » métier. Pour le lancement de la
-  // session (simple ancrage), on prend le 1er projet rattaché qui a un gitPath.
-  const projs = (rec.projects && rec.projects.length ? rec.projects : (rec.project ? [rec.project] : []));
-  let dir = null;
-  for (const p of projs) {
-    const g = await projectGitPath(p);
-    if (g) { dir = g; break; }
-  }
-  // ADR-12 : documents de référence des projets couverts (adr-tech, specs,
+  // ADR-12 : documents de référence du projet couvert (adr-tech, specs,
   // gherkin) — lus en contexte par l'agent de recette pour confronter le constat.
   let recDocs = [];
   try {
-    for (const p of projs) {
-      const r = await taskOrchestrator("doc_list", { projectId: p, includeRepoDocs: true });
-      const pDocs = (r && r.docs) || [];
-      const seen = new Set(recDocs.map((d) => d.docId));
-      for (const d of pDocs) if (d && d.docId && !seen.has(d.docId)) { recDocs.push(d); seen.add(d.docId); }
-    }
+    const rd = await taskOrchestrator("doc_list", { projectId: proj, includeRepoDocs: true });
+    recDocs = (rd && rd.docs) || [];
   } catch {}
-  const prompt = buildRecettePrompt({ project: projs[0] || rec.project, projects: projs, title: rec.title, taskIds: rec.tasks || [], docs: recDocs });
-  const { sessionId } = await launchSession({ dir, agent: "agent-recette", prompt, title: `Recette ${rec.title || projs.join(", ")}` });
+  const prompt = buildRecettePrompt({ project: proj, repos: rec.repos || [], title: rec.title, taskIds: rec.tasks || [], docs: recDocs });
+  const { sessionId } = await launchSession({ dir, agent: "agent-recette", prompt, title: `Recette ${rec.title || proj}` });
   if (!sessionId || !/^ses_/.test(sessionId)) {
     throw new Error("échec de lancement de la session de recette (agent-recette indisponible ?)");
   }
   await taskOrchestrator("recette_session_set", { recetteId, sessionId });
   return { recetteId, sessionId, resumed: false };
+}
+
+// Lance la SESSION D'ORCHESTRATION UNIQUE d'un batch en mode `session`.
+// Une seule session orchestrateur pilote toutes les tâches (ordonnancement +
+// délégation aux agents de fond). Anti-doublon : si le batch a déjà une session
+// rattachée, on la REPREND (sauf `force = true`).
+export async function launchBatchSession({ batchId, force = false }) {
+  if (!batchId) throw new Error("batchId requis");
+  const r = await taskOrchestrator("batch_get", { batchId });
+  const batch = r && r.batch;
+  if (!batch) throw new Error(`batch inconnu : ${batchId}`);
+
+  if (!force && batch.sessionId && /^ses_/.test(batch.sessionId)) {
+    const gitPath = await projectGitPath(batch.project);
+    if (gitPath && sessionExists(batch.sessionId, gitPath)) {
+      return { batchId, sessionId: batch.sessionId, resumed: true };
+    }
+  }
+
+  // Ancrage : checkout (gitPath) du projet + détail des tâches pour le prompt.
+  const gitPath = await projectGitPath(batch.project);
+  const dir = gitPath || null;
+  const tasksDetail = [];
+  for (const taskId of batch.tasks || []) {
+    try {
+      const t = await taskOrchestrator("task_get", { taskId });
+      const task = t && t.task;
+      tasksDetail.push({ id: taskId, title: task && task.title, request: task && task.request, status: (t && t.executions && t.executions[0] && t.executions[0].status) || "queued" });
+    } catch { tasksDetail.push({ id: taskId, status: "?" }); }
+  }
+  const prompt = buildBatchSessionPrompt({ batch, tasksDetail });
+  const { sessionId } = await launchSession({ dir, agent: "orchestrator", prompt, title: `Batch ${batch.batchId} — ${(batch.title || "").slice(0, 50)}` });
+  if (!sessionId || !/^ses_/.test(sessionId)) {
+    throw new Error("échec de lancement de la session d'orchestration du batch (orchestrator indisponible ?)");
+  }
+  await taskOrchestrator("batch_set_session", { batchId, sessionId });
+  return { batchId, sessionId, resumed: false };
+}
+
+// Lecture des batches (délégation MCP) — pour le panneau.
+export async function listBatches(project) {
+  const r = await taskOrchestrator("batch_list", { project: project || undefined });
+  return (r && r.batches) || [];
+}
+
+export async function getBatchDetail(batchId) {
+  const r = await taskOrchestrator("batch_get", { batchId });
+  return r && r.batch;
+}
+
+export async function setBatchStatus(batchId, status) {
+  const r = await taskOrchestrator("batch_set_status", { batchId, status });
+  return r && r.batch;
 }
 
 // Passe un test E2E en DRAFT (entité créée, spec en cours de rédaction via session).
@@ -619,9 +782,15 @@ export async function launchTestSession({ e2eTestId, force = false, mode, docIds
   if (!t) throw new Error(`test E2E inconnu : ${e2eTestId}`);
 
   // REPRISE : dès qu'une session est rattachée au test, on la REPREND (jamais de
-  // doublon). Pour repartir de zéro : `force = true`.
+  // doublon). Pour repartir de zéro : `force = true`. Si la session rattachée a
+  // disparu (expirée/nettoyée), on en crée une nouvelle sans demander `force`.
   if (!force && t.sessionId && /^ses_/.test(t.sessionId)) {
-    return { e2eTestId, sessionId: t.sessionId, resumed: true };
+    const projs0 = (t.projects && t.projects.length ? t.projects : (t.project ? [t.project] : []));
+    let g0 = null;
+    for (const p of projs0) { g0 = await projectGitPath(p); if (g0) break; }
+    if (g0 && sessionExists(t.sessionId, g0)) {
+      return { e2eTestId, sessionId: t.sessionId, resumed: true };
+    }
   }
 
   // Ancrage : repo source du test (1er projet couvert avec un gitPath).
@@ -685,21 +854,7 @@ export async function removeRecetteDocument({ documentId }) {
   return taskOrchestrator("recette_doc_remove", { documentId });
 }
 
-// Ajoute un projet à une recette existante (recette multi-projets).
-export async function addRecetteProject({ recetteId, project, by }) {
-  if (!recetteId || !project) throw new Error("recetteId et projet requis");
-  const r = await taskOrchestrator("recette_project_add", { recetteId, project });
-  return { ok: true, recette: r && r.recette };
-}
-
-// Retire un projet d'une recette existante (refus si dernier projet / tâches couvertes).
-export async function removeRecetteProject({ recetteId, project, by }) {
-  if (!recetteId || !project) throw new Error("recetteId et projet requis");
-  const r = await taskOrchestrator("recette_project_remove", { recetteId, project });
-  return { ok: true, recette: r && r.recette };
-}
-
-// Rattache une tâche couverte à une recette (garde projet vérifiée côté MCP).
+// Rattache une tâche couverte à une recette (garde : projet de la recette vérifié côté MCP).
 export async function addRecetteTask({ recetteId, taskId }) {
   if (!recetteId || !taskId) throw new Error("recetteId et taskId requis");
   const r = await taskOrchestrator("recette_link_task", { recetteId, taskId });
@@ -721,7 +876,7 @@ export async function removeRecetteItem({ recetteId, itemId }) {
 }
 
 // Clôt la recette : crée une tâche par élément confirmé (via task_register) puis confirme.
-export async function finishRecette({ recetteId, items, by }) {
+export async function finishRecette({ recetteId, items, by, launchMode = "batch" }) {
   if (!recetteId) throw new Error("recetteId requis");
   const r = await taskOrchestrator("recette_get", { recetteId });
   const rec = r && r.recette;
@@ -730,39 +885,104 @@ export async function finishRecette({ recetteId, items, by }) {
 
   const created = [];
   const CLASS_LABEL = { rework: "Rework", bug: "Bug", improvement: "Improvement", feature: "Feature" };
-  // Projets de la recette (aucun « projet principal ») : un item = un projet cible.
-  const recProjs = (rec.projects && rec.projects.length ? rec.projects : (rec.project ? [rec.project] : []));
-  const projByItem = {};
-  for (const i of rec.items || []) if (i.itemId) projByItem[i.itemId] = i.project;
-  for (const it of items || []) {
-    if (!it || !it.content) continue;
+  // 1 recette = 1 PROJET unique : chaque item cible le projet de la recette
+  // (les repos transverses du projet sont des repos, pas des projets).
+  const recProject = rec.project;
+  // Phase 4 : l'execOrder des items détermine la PRÉCÉDENCE entre les tâches
+  // créées. Les items de même numéro sont parallèles ; un numéro supérieur
+  // dépend des inférieurs (dependencies → auto-avancement séquentiel du batch).
+  const orderedItems = (items || [])
+    .filter((it) => it && it.content)
+    .sort((a, b) => (Number(a.execOrder) || 999) - (Number(b.execOrder) || 999));
+  // Intentions TEST des items enregistrés (source de vérité : rec.items via
+  // recette_get → testIntent). Un constat qui requiert de faire évoluer les tests
+  // crée une tâche clairement orientée test (test-agent).
+  const recItemsById = new Map((rec.items || []).map((i) => [i.itemId, i]));
+  const intentLabel = (intent) => intent && intent.action ? `${intent.testType === "e2e" ? "[E2E TEST] " : "[TEST] "}${intent.action === "create" ? "créer" : intent.action === "update" ? "adapter" : "obsoléter"}${intent.target ? ` (${intent.target})` : ""}` : null;
+  const byOrder = new Map(); // execOrder → [taskId]
+  for (const it of orderedItems) {
     const cls = ["rework", "bug", "improvement", "feature"].includes(it.classification) ? it.classification : "rework";
     const type = cls === "bug" ? "debug" : "feature";
-    const itemProject = (it.project && recProjs.includes(it.project)) ? it.project
-      : (projByItem[Number(it.itemId)] && recProjs.includes(projByItem[Number(it.itemId)])) ? projByItem[Number(it.itemId)]
-      : (recProjs[0] || rec.project);
-    const request = `[${CLASS_LABEL[cls]} — issu de la recette ${recetteId}] ${it.content}`;
+    const itemProject = recProject;
+    const execOrder = (it.execOrder != null && it.execOrder !== "") ? Number(it.execOrder) : null;
+    // Intentions test/document de l'item enregistré (testIntent/docIntent), sinon du payload.
+    const full = recItemsById.get(Number(it.itemId)) || it;
+    const testIntent = full.testIntent || null;
+    const docIntent = full.docIntent || null;
+    const docTypeTag = docIntent && docIntent.docType === "scenarios-gherkin" ? "GHERKIN"
+      : docIntent && docIntent.docType === "specs-fonctionnelles" ? "SPECS"
+      : docIntent && docIntent.docType === "adr-tech" ? "ADR"
+      : docIntent ? "DOC" : null;
+    const docIntentLabel = docIntent && docIntent.action
+      ? `[${docTypeTag || "DOC"} ${docIntent.action === "create" ? "documenter" : docIntent.action === "update" ? "mettre à jour" : "obsoléter"}${docIntent.target ? ` (${docIntent.target})` : ""}]`
+      : null;
+    const intentTag = testIntent ? intentLabel(testIntent) : null;
+    const tags = [intentTag, docIntentLabel].filter(Boolean).join(" ");
+    // Dépendances : toutes les tâches déjà créées d'ORDRE STRICTEMENT INFÉRIEUR.
+    const deps = [];
+    if (execOrder != null) {
+      for (const [order, ids] of byOrder) {
+        if (order < execOrder) deps.push(...ids);
+      }
+    }
+    const request = `${tags ? tags + " — " : ""}[${CLASS_LABEL[cls]} — issu de la recette ${recetteId}] ${it.content}`;
+    // Acceptance : intention test → comportement/scénario à couvrir ; intention doc →
+    // le document doit refléter la décision ; sinon le critère fourni.
+    const acceptanceCriterion = it.acceptance || (testIntent
+      ? `${testIntent.action === "obsolete" ? "Le test obsolète est retiré/marqué obsolète." : `Le test couvre le comportement attendu.${testIntent.scenario ? ` Scénario : ${testIntent.scenario}.` : ""}`}`
+      : docIntent
+        ? `${docIntent.action === "obsolete" ? "Le document obsolète est retiré/marqué obsolète." : `Le document de référence reflète la décision de recette.${docIntent.summary ? ` À documenter : ${docIntent.summary}.` : ""}`}`
+        : undefined);
     const reg = await taskOrchestrator("task_register", {
       request,
-      title: it.title || `[${CLASS_LABEL[cls]}] ${it.content.slice(0, 60)}`,
+      title: it.title || `${tags ? tags + " — " : ""}[${CLASS_LABEL[cls]}] ${it.content.slice(0, 60)}`,
       project: itemProject,
       type,
       priority: "normal",
       scope: Array.isArray(it.scope) && it.scope.length ? it.scope : undefined,
-      acceptanceCriteria: it.acceptance ? [it.acceptance] : undefined,
+      acceptanceCriteria: acceptanceCriterion ? [acceptanceCriterion] : undefined,
+      dependencies: deps.length ? [...new Set(deps)] : undefined,
       linkedTasks: (rec.tasks || []).map((t) => ({ taskId: t, description: `Couvert par la recette ${recetteId} — ${CLASS_LABEL[cls]}` })),
       recetteClass: cls,
       recetteId,
     });
     const newTaskId = reg && (reg.taskId || (reg.task && reg.task.id));
     if (newTaskId) {
-      created.push({ taskId: newTaskId, classification: cls, content: it.content });
+      created.push({ taskId: newTaskId, classification: cls, content: it.content, execOrder, testIntent, docIntent });
+      if (execOrder != null) {
+        const arr = byOrder.get(execOrder) || [];
+        arr.push(newTaskId);
+        byOrder.set(execOrder, arr);
+      }
       try { await taskOrchestrator("recette_item_update", { itemId: Number(it.itemId), status: "task_created", createdTaskId: newTaskId }); } catch {}
     }
   }
 
   const confirmed = await taskOrchestrator("recette_confirm", { recetteId, confirmedBy: by || "human" });
-  return { ok: true, recetteId, created, recette: confirmed.recette };
+  // Batch d'orchestration (v0.9.0) : les tâches créées par cette recette forment
+  // UN batch naturel — une session d'orchestration unique pour les séquencer sans
+  // conflit. maxParallel = 2 (défaut sûr).
+  let batch = null;
+  if (created.length) {
+    try {
+      // Mode de lancement (3 options à la clôture) :
+      //  - batch   → le worker batch-pilot lance les tâches prêtes automatiquement ;
+      //  - session → une session orchestrateur unique pilote le batch (déclenché ensuite) ;
+      //  - manual  → aucun auto-lancement, l'utilisateur lance chaque tâche lui-même.
+      const mode = ["batch", "session", "manual"].includes(launchMode) ? launchMode : "batch";
+      const b = await taskOrchestrator("batch_register", {
+        project: recProject,
+        title: `Recette ${rec.title || recetteId}`,
+        recetteId,
+        taskIds: created.map((c) => c.taskId),
+        maxParallel: 2,
+        launchMode: mode,
+        createdBy: by || "human",
+      });
+      batch = b && b.batch;
+    } catch {}
+  }
+  return { ok: true, recetteId, created, batch, launchMode: batch && (batch.launchMode || "batch"), recette: confirmed.recette };
 }
 
 // ===========================================================================
@@ -774,7 +994,7 @@ export async function finishRecette({ recetteId, items, by }) {
 // Enregistre (ou réactive) un test E2E + paramètres éventuels. project = PROJET
 // (produit) ; repoIds = repos de code associés (repos traversés, ADR 11). Renvoie
 // le test à jour (via e2e_test_get) afin que la réponse contienne repos + params.
-export async function createE2ETest({ project, specFile, scenario, title, description, coveredProjects, repoIds, params }) {
+export async function createE2ETest({ project, specFile, scenario, title, description, coveredProjects, repoIds, params, organizationId, createdBy }) {
   if (!project || !specFile || !scenario) throw new Error("project (projet produit), specFile et scenario requis");
   const r = await taskOrchestrator("e2e_test_register", {
     project,
@@ -784,6 +1004,8 @@ export async function createE2ETest({ project, specFile, scenario, title, descri
     description: description ? String(description).trim() : undefined,
     coveredProjects: Array.isArray(coveredProjects) && coveredProjects.length ? coveredProjects.map((p) => p && String(p).trim()).filter(Boolean) : undefined,
     repoIds: Array.isArray(repoIds) && repoIds.length ? repoIds.map((x) => x && String(x).trim()).filter(Boolean) : undefined,
+    organizationId: organizationId || undefined,
+    createdBy: createdBy || undefined,
   });
   const test = r && r.test;
   const id = test && (test.e2eTestId || test.id);
@@ -887,7 +1109,6 @@ function e2eStableId(project, specFile, scenario) {
   return `E2E-${proj}-${hash}`;
 }
 
-const execFileSync = (await import("node:child_process")).execFileSync;
 const fs = (await import("node:fs"));
 const path = (await import("node:path"));
 

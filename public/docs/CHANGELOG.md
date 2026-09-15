@@ -5,6 +5,472 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## 2026-09-15 · Panneau — gestion CRUD des Workspaces Coder (v0.9.57)
+
+Page dédiée **Workspaces** (onglet réservé aux admins) sur le panneau :
+
+- **Liste** : tous les workspaces découverts (Docker) enrichis du **statut Coder
+  réel** (`coder list --output json`) — `running` / `stopped` / `failed` et les
+  **transitions** (`starting`, `stopping`, `restarting`, `deleting`).
+- **Actions en arrière-plan** : `start` / `stop` / `restart` / `delete` sont
+  lancés **sans bloquer** (`spawn`, réponse immédiate `{queued:true}`) car
+  `coder stop|restart|delete` exigent `--yes` en non-interactif (sinon `EOF`).
+- **Mise à jour sans rechargement** : après une action, la table **re-poll toutes
+  les 3 s** (`followWorkspaces`) jusqu'à stabilisation de la transition — plus
+  besoin d'actualiser la page pour voir le statut changer.
+- **Retour visuel sur les boutons** : au clic, le bouton se désactive avec un
+  **spinner** + libellé « Start…/Stop…/… » (rétabli en cas d'erreur) ; pendant
+  une transition les actions sont désactivées.
+- **Détail** : `GET /api/workspaces/:name` (`coder show`) en modale.
+- **Création** : modale de création (org, nom, dépôt à cloner) via
+  `scripts/workspace-create.mjs` ; org par défaut `body.org || activeOrganizationId || "onirtech"`.
+- **Auth** : routes + onglet **admin uniquement** (403 pour les superviseurs).
+
+## 2026-09-08 · Création de workspace Coder + clone git + rotation du token (v0.9.56)
+
+Automatisation de l'infrastructure Coder pour un projet :
+
+- **`scripts/workspace-create.mjs`** : crée un workspace Coder
+  (`coder create <owner>/<name> --template <t> --preset none --yes
+  --use-parameter-defaults`), puis **clone** optionnellement le remote git dans
+  le workspace (auth via le token git d'org) et **masque** le token
+  (credential helper). Config (URL, template, token) + token git lus depuis le
+  **secret d'organisation**.
+- **`scripts/workspace-git-setup.mjs`** : masque le token git (remote propre +
+  helper `~/.config/git-token` 0600).
+- **`scripts/coder-token-rotate.mjs` + job pm2 `coder-token-rotate`** : le serveur
+  Coder plafonne la durée des tokens à **168 h (7 j)** → **rotation auto** (vérifie
+  toutes les 12 h ; recrée le token si < 48 h restantes) et met à jour le secret
+  d'organisation. Le token n'est jamais affiché.
+- **Template Coder** : `ONIRTECH` (paramétrable par org — `organizations.coder_template`).
+- **Routes panel (admin)** : `POST /api/workspaces` (créer + cloner) et
+  `POST /api/workspaces/:container/git-setup` (masquer).
+- **Token Coder** de l'org `onirtech` renseigné (chiffré) + token git (chiffré).
+
+## 2026-09-08 · Token git masqué dans les workspaces + remote git par repo (v0.9.55 / MCP v0.8.36)
+
+- **Masquage du token git** (`scripts/workspace-git-setup.mjs`) : retire le token
+  de l'**URL du remote** (`https://user:TOKEN@…`) et le fournit via un
+  **credential helper** lisant un fichier `$HOME/.config/git-token` (0600). Le
+  token n'est plus lisible dans `git remote -v` / `.git/config`, mais reste
+  exploité (fetch/push). Appliqué à **ONIRIA** (`/home/coder/oniria`) et
+  **madatalk** (`/home/coder/mada-talk`).
+- **Route panel** `POST /api/workspaces/:container/git-setup` (admin) : masque le
+  token d'un dépôt dans un workspace (extrait le token du remote, ou fourni).
+- **Token git par organisation** : `organizations.git_token_enc` (chiffré) —
+  saisissable dans *Organisations → Configurer*. Le token n'est jamais réaffiché.
+- **Template Coder par organisation** : `organizations.coder_template`.
+- **Remote git par repo** : champ **remote git** dans les formulaires de repo
+  (création + édition) → stocké dans `repos.git_url`.
+- Config Coder/git désormais **100 % paramétrable par organisation** (URL,
+  template, token Coder, token git) — plus de configuration statique.
+
+## 2026-09-08 · Config Coder paramétrable par organisation (URL + token chiffré) (v0.9.54 / MCP v0.8.35)
+
+La configuration Coder n'est plus statique : elle est **propre à chaque
+organisation** et paramétrable depuis le panneau.
+
+- **`organizations.coder_url`** + **`organizations.coder_token_enc`** : l'URL du
+  serveur Coder (seed `https://ide.madatalk.fr`) et le **token chiffré**
+  (AES-256-GCM via `secret-crypto`, même mécanisme que les secrets E2E).
+- **MCP** : `org_register` accepte `coderUrl` + `coderToken` (chiffré, absent =
+  inchangé) ; `org_list`/`org_get` exposent `coderUrl` + `hasCoderToken` — **le
+  token n'est JAMAIS renvoyé**. `getOrganizationCoderConfig` (interne) le déchiffre.
+- **Panel** : gestion des organisations → chaque org affiche son URL Coder + l'état
+  du token (🔒 défini / non défini) + bouton **Configurer** (URL + token en champ
+  masqué, laisser vide = inchangé).
+
+## 2026-09-08 · En-tête : libellé court + superviseur peut ouvrir un projet (v0.9.53)
+
+- **Bandeau de rôle raccourci** : « Superviseur » / « Utilisateur » (le détail est
+  en infobulle) — évite le débordement de l'en-tête avec un texte long.
+- **Bouton « Ouvrir » d'un projet visible en lecture seule** : il était masqué
+  (classe `launch-btn`) pour le superviseur/utilisateur ; c'est une **navigation**
+  (non une écriture), donc il est désormais accessible à tous.
+
+## 2026-09-08 · Accès par projet + écriture limitée à ses données (v0.9.52)
+
+Deux gardes d'isolation supplémentaires :
+
+- **Accès par PROJET** (N:N `user_projects`) : par défaut un utilisateur n'a
+  accès à **aucun** projet (peu importe son rôle). L'**admin** a accès à **tous**
+  les projets de l'organisation. Les projets accessibles sont **sélectionnés à la
+  création** de l'utilisateur (multi-sélection) et **modifiables** (onglet
+  Utilisateurs → « Projets » → cases à cocher).
+  - Filtre serveur par projet accessible : projets, tâches, recettes, tests E2E,
+    vue d'ensemble.
+  - **Backfill** : `Gonzague` → accès au projet `mada-talk`.
+- **Écriture limitée aux propres données (rôle `user`)** : toute écriture
+  (`POST/PUT/DELETE`) sur `/api/{tasks|recettes|e2e-tests}/:id` exige
+  `created_by = soi-même`. La création reste permise (attribuée à l'utilisateur).
+
+## 2026-09-08 · Rôle « utilisateur » : peut créer, ne voit que ses créations (v0.9.51)
+
+Le rôle `user` peut désormais **écrire** (créer/agir) — il n'est plus en lecture
+seule stricte (réservée au `supervisor`).
+
+- **admin** : écriture, toutes les données de l'organisation.
+- **supervisor** : **lecture seule stricte** (toutes les données de l'org).
+- **user** : **peut créer/agir**, mais ne **voit que ses propres créations**
+  (`created_by = soi-même`) dans l'organisation active.
+- `auth.isReadOnly` = `supervisor` uniquement ; `ownerScope` = username si `user`.
+- Écritures du panneau attribuées à l'utilisateur + à l'**organisation active**
+  (`activeOrganizationId`), pas à son org « legacy ».
+- **Projets/repos** restent visibles à tous les membres de l'org (ressources
+  partagées) — seuls les **travaux** (tâches, recettes, tests E2E, stats) sont
+  filtrés par propriétaire pour un `user`.
+- **Gestion des organisations** réservée aux **admins** (`POST/DELETE /api/orgs`,
+  `POST /api/orgs/:id/default`).
+- UI : bandeau « Utilisateur — vous ne voyez que vos créations » (boutons de
+  création visibles) ; aide Utilisateurs mise à jour.
+
+## 2026-09-08 · Rôle « utilisateur » — lecture seule limitée à ses créations (v0.9.50)
+
+Le rôle `user` prend un sens distinct du rôle `supervisor` (avant, les deux
+étaient strictement identiques : lecture seule).
+
+- **`admin`** : écriture, **toutes** les données de l'organisation active.
+- **`supervisor`** : lecture seule, **toutes** les données de l'organisation.
+- **`user`** : lecture seule, **uniquement ses propres créations**
+  (`created_by = son username`) dans l'organisation active.
+- Implémentation : `auth.ownerScope = username` si rôle `user`, sinon `null` ;
+  filtre serveur `created_by = ownerScope` sur tâches, vue d'ensemble (stats),
+  projets, repos, recettes, tests E2E.
+- UI : bandeau adapté (« Utilisateur — vos données uniquement » vs « Superviseur —
+  toutes les données ») ; profil `(utilisateur)` ; aide de l'onglet Utilisateurs
+  précisée.
+
+## 2026-09-08 · Multi-organisation : N:N utilisateur↔org + isolation serveur (v0.9.49 / MCP v0.8.34)
+
+Modèle multi-tenant complet : un utilisateur peut appartenir à **plusieurs**
+organisations ; il choisit son organisation après connexion ; l'isolation est
+appliquée **côté serveur**.
+
+- **Appartenance N:N** : table `user_organizations` (panel.db), backfill depuis
+  l'org unique. L'admin gère les organisations d'un utilisateur (onglet
+  Utilisateurs → bouton « Gérer » → cases à cocher).
+- **Organisation active = session** : `sessions.active_organization_id`. À la
+  connexion, si l'utilisateur a **plusieurs** orgs et n'en a pas choisi →
+  **écran de choix** (`orgPickerModal`). Si une seule → entrée directe. Route
+  `POST /api/session/organization` (contrôle d'appartenance).
+- **Isolation serveur** : les listes sont filtrées par l'organisation **active de
+  la session** (pas le client) — tâches, vue d'ensemble (`/api/stats`), projets,
+  repos, utilisateurs (membres de l'org). Writes : org active.
+- **Organisation par défaut** : flag `organizations.is_default` (ONIRTECH ★).
+  L'onglet **Écosystème** n'est accessible **que** si l'org active est la défaut
+  (`/api/ecosystem` → 403 sinon ; onglet masqué). `org_set_default` (MCP).
+- **MCP** : `org_set_default`, `isDefault` sur `org_list/get`, `organizationId`
+  exposé sur `project_list`/`repo_list`/`task_get`.
+
+## 2026-09-08 · Fix isolation organisation à la création (v0.9.48)
+
+Correction d'un bug d'isolation : un projet (et d'autres entités) créé depuis le
+panneau alors qu'une organisation est sélectionnée dans l'en-tête partait dans
+l'organisation par défaut (ONIRTECH) au lieu de l'organisation active.
+
+- **Cause** : `organizationId` n'était **pas propagé** par les fonctions `pilot`
+  (`createProject`, `registerRepo`, `registerDoc`, `registerDocUpload`,
+  `createE2ETest`, `createRecette`) — le MCP retombait sur l'organisation par
+  défaut. Le front n'envoyait pas non plus l'organisation active.
+- **Correctif** : les fonctions `pilot` acceptent et transmettent
+  `organizationId` ; le panneau envoie `organizationId = currentOrg` (organisation
+  du sélecteur d'en-tête) sur **toutes** les créations (projet, repo, tâche,
+  recette, test E2E, document) ; les routes serveur transmettent `createdBy` +
+  `organizationId`.
+- **Résultat** : une donnée créée avec « HAVET DIGITALE » sélectionnée est bien
+  rattachée à `havetdigital`.
+
+## 2026-09-08 · Multi-organisation + attribution utilisateur (v0.9.47 / MCP v0.8.33)
+
+Alignement des **données** et des **fonctions** : toute donnée créée depuis le
+panneau est désormais **rattachée à un utilisateur** et à une **organisation**.
+
+- **Table `organizations`** (tenant de premier niveau) : `id` (slug), `name`,
+  `description`. Seed **ONIRTECH** (`onirtech`). CRUD via MCP (`org_register/
+  list/get/delete`) et routes panel (`GET/POST /api/orgs`, `DELETE /api/orgs/:id`).
+- **`organization_id`** sur les entités de 1er niveau : `projects`, `repos`,
+  `recettes`, `tasks`, `e2e_tests`, `docs`, `artifacts`. Backfill → `onirtech`.
+  Les sous-éléments (plans, événements, exécutions) héritent via leur parent.
+- **`created_by`** (username) sur toutes ces entités. Backfill → **Rino** (toutes
+  les données existantes lui appartiennent). Les écritures du panneau posent
+  désormais `createdBy = user.username` (tâches, projets, repos, recettes, docs).
+- **Users** : `panel.db users.organization_id` (backfill `onirtech`) ; l'onglet
+  Utilisateurs affiche et permet de changer l'organisation ; création d'utilisateur
+  avec organisation.
+- **Panel** : **sélecteur d'organisation** en en-tête (filtre global : projets,
+  tâches, vue d'ensemble) + bouton **Organisations** (gestion nom/description).
+- **MCP** : `org_*`, `organizationId`/`createdBy` sur `task_register`,
+  `project_register`, `repo_register`, `doc_register`, `recette_start`,
+  `e2e_test_register` ; `project_list`/`task_get` exposent `organizationId`.
+
+## 2026-09-08 · Panel — carte projet épurée + modale détail UNIQUE (v0.9.46)
+
+- **Carte projet épurée** : ne garde que le **titre**, le bouton **Ouvrir**, le
+  bouton **Détail** et les **badges des repos associés**. Tout le reste (identité,
+  repos détaillés, documents) est déplacé dans la modale détail.
+- **Une SEULE modale détail** (`projectDetailModal`), responsive, avec **onglets
+  internes** — plus aucune sous-modale :
+  - **Projet** : nom (modifiable) + suppression du projet ;
+  - **Repos** : liste détaillée (workspace, branche, déploiement, répertoire, E2E),
+    édition inline d'un repo, association d'un repo existant, création + association
+    d'un nouveau repo, retrait d'un repo ;
+  - **Documents** : liste des docs de référence (ADR/specs/Gherkin), ajout (import
+    PC ou chemin), lecture, suppression.
+  - Toutes les actions re-rendent la modale (pas de fermeture/réouverture).
+- **Code mort supprimé** : `repoFormModal`, `projectDocsModal`, `repoLinkModal`,
+  `repoUnlinkModal`, `projectDeleteModal` (remplacées par la modale unique).
+
+## 2026-09-08 · Panel — navigation centrée projet (v0.9.45)
+
+Refonte de la navigation : **l'accueil = la liste des projets** ; **ouvrir un
+projet** scope toutes les vues à ce projet.
+
+- **Nav dynamique à 2 états** (`renderNav`) :
+  - aucun projet ouvert → onglets **globaux** (Projets, Vue d'ensemble,
+    Écosystème, Utilisateurs[admin]) ;
+  - projet ouvert → **sous-onglets du projet** : Vue d'ensemble, Tâches,
+    Recettes, Tests E2E, Déploiements, Décisions, Plans, Événements, Documents,
+    Vars & Secrets E2E, Archives — + bouton **← Projets** et **bandeau projet**.
+- **Bouton « Ouvrir »** sur chaque carte projet (`openProject` / `closeProject`,
+  projet courant mémorisé dans localStorage).
+- **Filtre projet propagé aux endpoints** : `?project=` ajouté à `deployments`,
+  `decisions`, `plans`, `events`, `artifacts`, `stats` (join `tasks.project`) ;
+  `tasks`, `recettes`, `e2e-tests`, `e2e-vars` déjà filtrables. Les vues
+  réutilisées (tâches, recettes, tests E2E, secrets) **verrouillent** leur
+  sélecteur projet sur le projet ouvert.
+- **Vue d'ensemble projet** : `/api/stats?project=` (compteurs scopés).
+
+## 2026-09-08 · Filtre par date de création dans la liste des tâches (v0.9.44)
+
+L'onglet **Tâches** dispose d'un filtre par **date de création** : deux champs
+`du` / `au` (dates inclusives) + bouton d'effacement. Persistant (localStorage),
+combinable avec les filtres projet/statut/recette/actif. Filtre sur
+`created_at` (partie date `YYYY-MM-DD`).
+
+## 2026-09-08 · « Attente humaine » masquée sur les tâches done + rétro-soldage (v0.9.43)
+
+Une tâche **terminée (`done`)** n'a plus d'attente humaine : le badge « ⏳ attente
+humaine » et le bloc « Validation (décisions en attente) » ne s'affichent plus
+pour elle, même si une décision résiduelle traîne en base.
+
+- **Liste des tâches** (`registryTasks`) : `waiting_human` exclut désormais les
+  tâches `done` (jointure au statut d'exécution courant).
+- **Détail d'une tâche** (panel) : le bloc « Validation (décisions en attente) »
+  n'apparaît que si la tâche n'est **pas** `done`.
+- **Overview** : le compteur « Décisions ouvertes » exclut les décisions des
+  tâches `done`.
+- **Rétro-soldage** : les décisions `awaiting` résiduelles de tâches `done`
+  (13 reliquats antérieurs) ont été soldées `approved` / « résolu en session »
+  + événement `DECISIONS_RESOLVED_IN_SESSION`.
+
+## 2026-09-08 · Soldage des décisions « résolu en session » à la clôture (MCP v0.8.32)
+
+Quand une tâche passe **`done`**, les décisions/permissions encore `awaiting` qui
+lui sont rattachées sont **soldées** : marquées `approved` avec la résolution
+**« résolu en session »**.
+
+Pourquoi : l'utilisateur répond parfois **directement dans le chat** (session
+agent) au lieu du panneau — aucune décision `permission.replied` n'est alors émise
+et la décision restait `awaiting` pour toujours, alors que la tâche est terminée
+(= le parcours a été validé).
+
+- **`applyTransition` → `to="done"`** : dans la même transaction, solde toutes les
+  décisions `awaiting` de la tâche (`approved`, `resolution='résolu en session'`).
+- Trace : événement **`DECISIONS_RESOLVED_IN_SESSION`** (nb de décisions soldées).
+- Couvre tous les `kind` : `validation`, `permission`, `review`… (une décision de
+  `recette` n'est pas concernée : elle se résout via le flux recette).
+
+## 2026-09-08 · Mode « Session unique » : la session d'orchestration par batch (v0.9.42)
+
+Le mode `launch_mode='session'` (choisi à la clôture d'une recette) est câblé :
+**une session orchestrateur unique pilote toutes les tâches du batch** avec
+l'intelligence d'orchestration (ordonnancement, conflits, préparation croisée).
+
+- **`buildBatchSessionPrompt`** (session-bridge) : prompt de mission batch — le
+  batch, ses tâches, les règles d'orchestration (plafond `max_parallel`, readiness,
+  préparation croisée, portes humaines, complétion).
+- **`pilot.launchBatchSession`** : ouvre (ou reprend, anti-doublon) la session
+  orchestrateur du batch, ancrée sur le gitPath du projet ; rattache `batch.session_id`.
+- **Routes HTTP** : `GET /api/batches` (liste), `GET /api/batches/:id`,
+  `POST /api/batches/:id/session` (lancer/reprendre), `POST /api/batches/:id/status`.
+- **Panel — onglet Recettes** : section « Batches d'orchestration actifs » (cartes
+  avec mode + bouton Lancer/Reprendre la session) + modale détail (readiness,
+  conflits fichiers, bouton session).
+- **agent `orchestrator.md`** : section « MODE SESSION BATCH » — détection de la
+  mission, boucle d'orchestration (readiness → plafond → délégation), **préparation
+  croisée** (bloqué ≠ perdu : on prépare ce qui est préparable), portes humaines
+  intactes, complétion du batch. L'orchestrateur ne dépasse jamais `max_parallel`,
+  n'ouvre pas de session par tâche, n'édite pas le code.
+- Rappel des modes : `batch` (worker auto) | `session` (cette session unique) |
+  `manual` (pilote humain).
+
+## 2026-09-08 · Recette — 3 modes de lancement à la clôture (v0.9.41)
+
+À la clôture d'une recette, l'utilisateur choisit **comment lancer les tâches
+créées** (fondation ; le mode `session` sera câblé à la session orchestrateur
+unique dans une étape suivante).
+
+- **`batches.launch_mode`** : `batch` (défaut — le worker `batch-pilot` lance les
+  tâches prêtes auto, session par tâche) | `session` (une session orchestrateur
+  unique doit piloter le batch — déclenchement à venir) | `manual` (aucun
+  auto-lancement, l'utilisateur pilote chaque tâche comme avant).
+- **Panel — modale « Terminer la recette »** : sélecteur à 3 radios (Batch /
+  Session unique / Manuel), le choix est transmis à `finishRecette` et stocké sur
+  le batch créé.
+- **Worker `batch-pilot`** : ne pilote **que** les batches `active AND
+  launch_mode='batch'` — les modes `session`/`manual` sont ignorés (aucune session
+  auto-lancée, pas de complétion auto).
+- **MCP** : `batch_register(launchMode)`, `batch_set_launch_mode`, `batch_get`/
+  `batch_list` exposent `launchMode`. task-orchestrator v0.8.31.
+- Le mode `session` (session orchestrateur unique qui pilote tout le batch avec
+  l'intelligence d'orchestration : DAG, conflits, préparation croisée) est
+  **la prochaine étape** — le worker reste en file de sécurité.
+
+## 2026-09-08 · Recette — raisonner sur les DOCUMENTS de référence + capture `docIntent` (v0.9.40)
+
+L'agent de recette ne se contente plus de lire les documents ADR-12 comme simple
+référence de comparaison : il **diagnostique le sens de l'écart** (code faux vs
+**document dépassé**) et capture structuré le besoin de faire évoluer les
+documents du projet suite aux décisions de recette.
+
+- **agent-recette.md — section « Raisonner sur les DOCUMENTS de référence du
+  projet »** : pour chaque constat, l'agent distingue « le code est faux » (rework/
+  bug, la doc reste la référence) de « **la règle a changé / le document est
+  dépassé / une règle émerge** » → le document doit être **mis à jour / obsolété /
+  créé** (`docIntent`). Il ne modifie **jamais** les documents (lecture seule) :
+  il capture le besoin, notifié à l'utilisateur et transmis à la tâche créée.
+  Croisement test↔doc signalé quand pertinent.
+- **Capture structurée `docIntent`** sur les éléments de recette
+  (`recette_items.doc_intent`, JSON) : `{ action: create|update|obsolete,
+  docType: adr-tech|specs-fonctionnelles|scenarios-gherkin, target, summary,
+  reason }`. Outils `recette_item_add` / `recette_item_update` acceptent
+  `docIntent` ; `recette_get` le renvoie.
+- **Clôture** (`finishRecette`) : un item avec `docIntent` crée une tâche marquée
+  `[ADR]/[SPECS]/[GHERKIN] mettre à jour…` (ou documenter / obsoléter) + critère
+  d'acceptation orienté document si absent.
+- **Panel** : badge « 📄 intention doc » (type ADR/SPECS/GHERKIN + action + cible)
+  sur les éléments (détail, items, section recette d'une tâche).
+- **MCP** : task-orchestrator v0.8.30.
+
+## 2026-09-08 · Recette — raisonner sur les TESTS du projet + capture `testIntent` (v0.9.39)
+
+L'agent de recette ne se contente plus de lire les tests comme **preuve** : il
+**raisonne sur le cycle de vie des tests** du projet (unitaires + E2E) et capture
+structuré le besoin d'évolution.
+
+- **agent-recette.md — section « Raisonner sur les TESTS du projet »** : pour
+  chaque constat (bug/rework/feature/changement de comportement), l'agent
+  questionne la couverture par les tests et décide si un test doit être
+  **créé** (bug non couvert → test de non-régression ; nouveau comportement →
+  nouveau test), **adapté** (comportement livré ≠ voulu → test à corriger) ou
+  **obsolété** (comportement supprimé). Il ne rédige **jamais** les specs
+  (lecture seule) : il capture le besoin, traité ensuite par **test-agent**.
+- **Capture structurée `testIntent`** sur les éléments de recette
+  (`recette_items.test_intent`, JSON) : `{ action: create|update|obsolete,
+  testType: unit|e2e, target, scenario, reason }`. Outils `recette_item_add` /
+  `recette_item_update` acceptent `testIntent` ; `recette_get` le renvoie.
+- **Clôture** (`finishRecette`) : un item avec `testIntent` crée une tâche
+  **marquée** `[E2E TEST] créer…` / `[TEST] …` (+ critère d'acceptation orienté
+  test si absent), pour être traitée par **test-agent**.
+- **Panel** : badge « intention test » (type + action + cible) sur les éléments
+  (détail, items, section recette d'une tâche).
+- **MCP** : task-orchestrator v0.8.29.
+
+## 2026-09-08 · Batch d'orchestration — Phase 4 : auto-avancement sur dépendances (v0.9.38)
+
+Les tâches séquentielles d'un batch s'enchaînent **automatiquement** : une tâche
+dépendante démarre seule dès que ses prérequis sont terminés, sans intervention
+humaine. C'est la concrétisation du « traité automatiquement quand les
+dépendances sont traitées ».
+
+- **Propagation execOrder → dependencies** (`finishRecette`) : à la clôture d'une
+  recette, les tâches créées héritent de la **précédence** de leurs items.
+  Items de **même `execOrder`** = parallèles (aucune dépendance) ; un numéro
+  **supérieur** = dépend des inférieurs (`task.dependencies`). Le worker
+  `batch-pilot` lance alors la 2e vague **seule quand la 1re est `done`**.
+- **Readiness corrigée (deps hors batch)** (`batch_readiness`) : une dépendance
+  est satisfaite si la tâche référencée est `done`/`deployed`/
+  `post_deploy_verified` — **qu'elle soit dans le batch ou non** (une tâche qui
+  dépend d'un prérequis déjà fait ailleurs ne reste pas bloquée).
+- **MCP** : task-orchestrator v0.8.28 (readiness deps hors batch).
+- Portes humaines **inchangées** : validation de plan, merge, déploiement
+  restent des décisions humaines (Phase 2). L'auto-avancement ne concerne que le
+  **lancement séquentiel** des tâches prêtes du batch.
+
+## 2026-09-08 · Batch d'orchestration — Phase 3 : interleaving fin au niveau ÉTAPE (v0.9.37)
+
+La granularité de la coordination descend des **tâches** aux **étapes de plan** :
+c'est la brique qui permet qu'une étape de la tâche A tourne pendant que la tâche
+B attend (ex. un déploiement), sans conflit.
+
+- **`plan_steps.files` (Phase 3)** : chaque étape atomic-plan déclare les fichiers
+  qu'elle touche. Extraction depuis le tableau du Plan-*.md (colonne fichier
+  détectée par contenu — le tableau a 6 ou 7 colonnes selon le plan), filtre
+  strict (vrais chemins de fichiers, pas les commandes `npm run`/`git push`).
+  Backfill idempotent des plans existants (`backfillStepFiles`, ~919 étapes
+  remplies). Exposé dans `plan_get`/`getPlanSteps` (`stepFiles`/`files`).
+- **Matrice de conflit au niveau étape** (`batch_conflict_matrix`) : paires de
+  tâches dont des **étapes** se chevauchent (fichiers déclarés) **+** chevauchement
+  de **fichiers réels de commits** quand non couvert par les déclarés.
+- **Readiness affinée** (`batch_readiness`) : une tâche est `ready` si **aucune de
+  ses étapes todo** ne chevauche une étape active/done d'une autre tâche ; expose
+  `blockedSteps` (étapes qui attendent un fichier occupé) et `interleavableWith`.
+- **MCP** : task-orchestrator v0.8.27 (readiness/matrice étape), plan-manager
+  v0.1.1 (`files` par étape + backfill).
+- Le worker `batch-pilot` (Phase 2) continue de lancer les tâches `ready` — la
+  Phase 3 affine **quand** une tâche est prête (par étape, pas par tâche entière).
+
+## 2026-09-08 · Batch d'orchestration — Phase 2 : auto-avancement contrôlé (v0.9.36)
+
+Le **pilote de batch** (`batch-pilot.mjs`, process pm2 dédié) applique le
+principe « une orchestration, N tâches séquencées sans conflit » : dès qu'un
+créneau se libère dans un batch `active`, la tâche suivante **prête** démarre
+automatiquement (≤ `max_parallel` écrivains simultanés).
+
+- **Worker `batch-pilot`** (fork pm2, verrou advisory PostgreSQL = un seul
+  pilote actif ; polling ~20 s + LISTEN/NOTIFY `registry_changed`) : pour chaque
+  batch `active`, `batch_get` → readiness → lance les tâches `ready` non lancées
+  (via `pilot.launchTask`, garde `queued` + trace `task_sessions`) ; quand toutes
+  les tâches sont `done` → batch `completed` automatiquement.
+- **Périmètre de sûreté** : le worker ne lance QUE les tâches `ready` encore
+  `queued`. Les **portes humaines restent humaines** (validation de plan, merge,
+  déploiement) — le worker ne les franchit jamais. La continuation post-décision
+  est déjà assurée par `resolveDecision` (injection dans la session orchestrateur).
+- **Agent `orchestrator`** : rappel des règles batch dans le pipeline.
+
+### Phase 1 (v0.9.35) — rappel
+Nouvelle entité **`batch`** (1er niveau) + outils MCP `batch_*` (v0.8.26) :
+`register/get/list/add_task/remove_task/set_session/set_status/readiness/
+conflict_matrix`. Readiness calculée (deps + conflits) + **matrice de conflit
+fichiers** (déclarés via plans + réels via plan_commits). Recette = batch naturel
+(les tâches créées à la clôture d'une recette forment un batch). Phase 1 =
+visibilité, aucun automatisme.
+
+## 2026-09-08 · Recette = 1 projet unique + repos transverses du projet (v0.9.34)
+
+Correction d'une **erreur de conception** dans la recette : le modèle multi-projets
+(1 recette = 1..N projets, table `recette_projects`) est abandonné au profit du
+modèle validé **« 1 projet + repos transverses »** (cohérent avec ADR 11).
+
+- **1 recette = 1 PROJET (produit)** — `recettes.project`. Sa portée réelle est
+  couverte par les **repos transverses du projet** (`project_repos`) : ex. le
+  projet `mada-talk` traverse les repos `mada-talk` **et** `oniria`.
+- **Table `recette_projects`** = **légacy** (historique des anciennes recettes
+  multi-projets) : plus écrite ni lue par la logique. `recette_get` / `recette_list`
+  renvoient désormais `project` + `repos[]` (au lieu de `projects[]`).
+- **Garde tâches couvertes** : une tâche ne peut être couverte que si elle
+  appartient au **projet de la recette**.
+- **Garde éléments** : `recette_item_add` impose le projet de la recette (les
+  repos transverses ne sont pas des projets).
+- **MCP** : `recette_start(project)` (projet requis, refus si `projects[]` > 1) ;
+  outils `recette_project_add` / `recette_project_remove` **retirés**.
+- **Panel** : création de recette = **sélecteur UNIQUE de projet** + affichage des
+  repos transverses du projet ; carte/détail/clôture affichent le projet et ses
+  repos (`chip-repo`), suppression de la gestion « projets rattachés (1..N) ».
+- **agents** : `agent-recette.md` — recette = 1 projet, `project` obligatoire
+  (`recette.project`), repos transverses lus via `recette.repos` ; prompt de
+  session (`buildRecettePrompt`) aligné (projet + repos, ADR 11).
+
 ## 2026-09-06 · Synthèse — référentiel documentaire des PROJETS (ADR-12) + couverture E2E
 
 Cette session a fait émerger un **référentiel documentaire par projet** (ADR-12),

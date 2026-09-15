@@ -7,7 +7,7 @@ import { join, dirname, extname, normalize, basename, relative } from "node:path
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawn } from "node:child_process";
 import pg from "pg";
-import { openDb, getUserByUsername, verifyPassword, createUser, updateUserRole, listUsers, updatePassword, deleteUser, createSession, deleteSession, pruneSessions, listArchives, archivedTaskIds, archiveTask, restoreTask, getArchive, removeArchive } from "./panel-db.mjs";
+import { openDb, getUserByUsername, verifyPassword, createUser, updateUserRole, updateUserOrganization, listUsers, listUserOrganizations, setUserOrganizations, listUsersByOrganization, listUserProjects, setUserProjects, listUsersByProject, getUserOpencode, setUserOpencode, listUsersOpencode, updatePassword, deleteUser, createSession, deleteSession, setSessionOrganization, pruneSessions, listArchives, archivedTaskIds, archiveTask, restoreTask, getArchive, removeArchive } from "./panel-db.mjs";
 import { currentUser, sessionToken, cookieHeader, clearCookieHeader } from "./auth.mjs";
 import { scanEcosystem, updateAgentModel } from "./ecosystem.mjs";
 import { loadEnv } from "./env.mjs";
@@ -30,6 +30,22 @@ const DATABASE_URL = process.env.DATABASE_URL || "postgres://orchestrator:orches
 const REFRESH_S = Math.max(10, Number(process.env.PANEL_REFRESH_S) || 10);
 const SESSION_BASE_URL = process.env.SESSION_BASE_URL || "https://dev.madatalk.fr";
 const OPENCODE_BIN = process.env.OPENCODE_BIN || "/root/.opencode/bin/opencode";
+// Données opencode ciblées (instance dédiée de l'utilisateur) : isole la base
+// des sessions pour `opencode models`/`export` et les lancements d'agents.
+const OPENCODE_DATA_HOME = process.env.OPENCODE_DATA_HOME || null;
+const OC_ENV = OPENCODE_DATA_HOME ? { ...process.env, XDG_DATA_HOME: OPENCODE_DATA_HOME } : process.env;
+
+// Organisation par défaut (cache court) — seule autorisée à configurer l'écosystème.
+let _defaultOrgCache = { id: null, at: 0 };
+async function getDefaultOrgId() {
+  if (Date.now() - _defaultOrgCache.at < 60000) return _defaultOrgCache.id;
+  try {
+    const orgs = await pilot.listOrganizations();
+    const def = (orgs || []).find((o) => o.isDefault);
+    _defaultOrgCache = { id: def ? def.id : null, at: Date.now() };
+  } catch { _defaultOrgCache = { id: _defaultOrgCache.id, at: Date.now() }; }
+  return _defaultOrgCache.id;
+}
 
 // Liste des modèles disponibles (fournisseur/modèle), depuis `opencode models`,
 // mise en cache 5 minutes.
@@ -38,7 +54,7 @@ function listModels() {
   const now = Date.now();
   if (_modelsCache.models.length && now - _modelsCache.at < 5 * 60 * 1000) return _modelsCache.models;
   try {
-    const out = execFileSync(OPENCODE_BIN, ["models"], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024, timeout: 15000 });
+    const out = execFileSync(OPENCODE_BIN, ["models"], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024, timeout: 15000, env: OC_ENV });
     const models = out.split("\n").map((l) => l.trim()).filter((l) => l && l.includes("/"));
     _modelsCache = { at: now, models };
   } catch {
@@ -136,37 +152,74 @@ function latestStatusSubquery() {
   return "(SELECT status FROM executions e WHERE e.task_id = t.id ORDER BY attempt DESC LIMIT 1)";
 }
 
-async function registryStats() {
+async function registryStats(url, forcedOrg, ownerScope, projectAccess) {
   const archived = await archivedTaskIds();
   const db = registry();
+  const project = url && url.searchParams ? url.searchParams.get("project") : null;
+  const org = forcedOrg || (url && url.searchParams ? url.searchParams.get("org") : null);
+  const accessOk = (proj) => projectAccess === null || projectAccess === undefined || projectAccess.includes(proj);
   const byStatus = {};
   let tasks = 0;
   let openDecisions = 0;
   try {
-    const res = await db.query(`SELECT t.id, ${latestStatusSubquery()} AS status FROM tasks t`);
+    const res = project
+      ? await db.query(`SELECT t.id, t.organization_id, t.created_by, t.project, ${latestStatusSubquery()} AS status FROM tasks t WHERE t.project = $1`, [project])
+      : await db.query(`SELECT t.id, t.organization_id, t.created_by, t.project, ${latestStatusSubquery()} AS status FROM tasks t`);
+    const inScope = (r) => !archived.has(r.id)
+      && (!org || (r.organization_id || "onirtech") === org)
+      && (!ownerScope || r.created_by === ownerScope)
+      && accessOk(r.project);
+    const ids = new Set(res.rows.filter(inScope).map((r) => r.id));
     for (const r of res.rows) {
-      if (archived.has(r.id)) continue;
+      if (!inScope(r)) continue;
       const st = r.status || "queued";
       byStatus[st] = (byStatus[st] || 0) + 1;
       tasks++;
     }
-    const decRes = await db.query("SELECT task_id FROM decisions WHERE status = 'awaiting'");
-    openDecisions = decRes.rows.filter((d) => !archived.has(d.task_id)).length;
+    const decRes = await db.query(
+      `SELECT d.task_id FROM decisions d
+       WHERE d.status = 'awaiting'
+         AND (SELECT status FROM executions e WHERE e.task_id = d.task_id ORDER BY attempt DESC LIMIT 1) <> 'done'`,
+    );
+    openDecisions = decRes.rows.filter((d) => !archived.has(d.task_id) && ids.has(d.task_id)).length;
   } catch {
     /* registre indisponible */
   }
-  return { tasks, byStatus, openDecisions, archived: archived.size };
+  return { tasks, byStatus, openDecisions, archived: archived.size, project: project || null };
 }
 
-async function registryTasks(url) {
+// Garde : l'utilisateur (username) est-il propriétaire de l'entité (tasks/recettes/e2e) ?
+// Renvoie true si l'entité est introuvable (la route renverra 404 elle-même).
+async function userOwnsEntity(username, kind, id) {
+  const db = registry();
+  try {
+    if (kind === "tasks") {
+      const r = (await db.query("SELECT created_by FROM tasks WHERE id = $1", [id])).rows[0];
+      return !r || r.created_by === username;
+    }
+    if (kind === "recettes") {
+      const r = (await db.query("SELECT created_by FROM recettes WHERE recette_id = $1", [id])).rows[0];
+      return !r || r.created_by === username;
+    }
+    if (kind === "e2e-tests") {
+      const r = (await db.query("SELECT created_by FROM e2e_tests WHERE id = $1", [id])).rows[0];
+      return !r || r.created_by === username;
+    }
+  } catch { return false; }
+  return true;
+}
+
+async function registryTasks(url, forcedOrg, ownerScope, projectAccess) {
   const db = registry();
   const archived = await archivedTaskIds();
   const project = url.searchParams.get("project");
   const status = url.searchParams.get("status");
+  const org = forcedOrg || url.searchParams.get("org");
+  const accessOk = (proj) => projectAccess === null || projectAccess === undefined || projectAccess.includes(proj);
   let rows = [];
   try {
     const res = await db.query(
-      `SELECT t.id, t.project, t.type, t.priority, t.request, t.title, t.created_at, t.session_id, t.recette_status, t.recette_class,
+      `SELECT t.id, t.project, t.type, t.priority, t.request, t.title, t.created_at, t.session_id, t.recette_status, t.recette_class, t.organization_id, t.created_by,
          ${latestStatusSubquery()} AS status,
          (SELECT attempt FROM executions e WHERE e.task_id = t.id ORDER BY attempt DESC LIMIT 1) AS attempt,
          (SELECT rework_count FROM executions e WHERE e.task_id = t.id ORDER BY attempt DESC LIMIT 1) AS rework_count,
@@ -175,10 +228,14 @@ async function registryTasks(url) {
          (SELECT ri.exec_order FROM recette_items ri WHERE ri.created_task_id = t.id ORDER BY ri.id LIMIT 1) AS recette_order,
          (SELECT ri.vigilance FROM recette_items ri WHERE ri.created_task_id = t.id ORDER BY ri.id LIMIT 1) AS recette_vigilance,
          EXISTS (SELECT 1 FROM decisions d WHERE d.task_id = t.id AND d.status = 'awaiting'
-                 AND d.permission_id IS NULL AND d.kind <> 'recette') AS waiting_human
+                 AND d.permission_id IS NULL AND d.kind <> 'recette'
+                 AND (SELECT status FROM executions e WHERE e.task_id = t.id ORDER BY attempt DESC LIMIT 1) <> 'done') AS waiting_human
        FROM tasks t ORDER BY t.created_at DESC`,
     );
-    rows = res.rows.filter((r) => !archived.has(r.id));
+    rows = res.rows.filter((r) => !archived.has(r.id)
+      && (!org || (r.organization_id || "onirtech") === org)
+      && (!ownerScope || r.created_by === ownerScope)
+      && accessOk(r.project));
     // Agrégat E2E par tâche : nombre de tests liés + dernier statut par test.
     if (rows.length) {
       const ids = rows.map((r) => r.id);
@@ -255,10 +312,9 @@ async function registryTaskDetail(id) {
      WHERE rt.task_id = $1 ORDER BY r.created_at DESC LIMIT 1`, [id],
   ))[0];
   if (rec) {
-    const items = mapRecetteItems(await q("SELECT id, project, content, classification, discussion, scope, title, acceptance, exec_order, vigilance, status, created_task_id, created_at FROM recette_items WHERE recette_id = $1 ORDER BY id ASC", [rec.recette_id]));
+    const items = mapRecetteItems(await q("SELECT id, project, content, classification, discussion, scope, title, acceptance, exec_order, vigilance, test_intent, doc_intent, status, created_task_id, created_at FROM recette_items WHERE recette_id = $1 ORDER BY id ASC", [rec.recette_id]));
     const tasks = (await q("SELECT task_id FROM recette_tasks WHERE recette_id = $1", [rec.recette_id])).map((x) => x.task_id);
-    const projs = (await q("SELECT project FROM recette_projects WHERE recette_id = $1 ORDER BY project", [rec.recette_id])).map((x) => x.project);
-    recette = { recetteId: rec.recette_id, project: rec.project, projects: projs.length ? projs : (rec.project ? [rec.project] : []), title: rec.title, sessionId: rec.session_id, status: rec.status, confirmedAt: rec.confirmed_at, confirmedBy: rec.confirmed_by, tasks, items };
+    recette = { recetteId: rec.recette_id, project: rec.project, repos: await reposOfProject(rec.project), title: rec.title, sessionId: rec.session_id, status: rec.status, confirmedAt: rec.confirmed_at, confirmedBy: rec.confirmed_by, tasks, items };
   }
   return { task: { ...task, repos: taskRepos }, executions, events, deployments, decisions, artifacts, sessions, linkedTasks, emergentFrom, recette, archived: (await archivedTaskIds()).has(id) };
 }
@@ -289,13 +345,19 @@ async function registryEvents(url) {
   const db = registry();
   const archived = await archivedTaskIds();
   const taskId = url.searchParams.get("taskId");
+  const project = url.searchParams.get("project");
   const limit = Number(url.searchParams.get("limit") || 200);
   let rows = [];
   try {
-    const res = taskId
-      ? await db.query("SELECT * FROM events WHERE task_id = $1 ORDER BY seq DESC LIMIT $2", [taskId, limit])
-      : await db.query("SELECT * FROM events ORDER BY seq DESC LIMIT $1", [limit]);
-    rows = res.rows;
+    if (taskId) {
+      rows = (await db.query("SELECT * FROM events WHERE task_id = $1 ORDER BY seq DESC LIMIT $2", [taskId, limit])).rows;
+    } else if (project) {
+      rows = (await db.query(
+        `SELECT e.* FROM events e JOIN tasks t ON t.id = e.task_id
+         WHERE t.project = $1 ORDER BY e.seq DESC LIMIT $2`, [project, limit])).rows;
+    } else {
+      rows = (await db.query("SELECT * FROM events ORDER BY seq DESC LIMIT $1", [limit])).rows;
+    }
   } catch { rows = []; }
   return { events: rows.filter((e) => !archived.has(e.task_id)) };
 }
@@ -304,12 +366,18 @@ async function registryDeployments(url) {
   const db = registry();
   const archived = await archivedTaskIds();
   const taskId = url.searchParams.get("taskId");
+  const project = url.searchParams.get("project");
   let rows = [];
   try {
-    const res = taskId
-      ? await db.query("SELECT * FROM deployments WHERE task_id = $1 ORDER BY id DESC", [taskId])
-      : await db.query("SELECT * FROM deployments ORDER BY id DESC LIMIT 200");
-    rows = res.rows;
+    if (taskId) {
+      rows = (await db.query("SELECT * FROM deployments WHERE task_id = $1 ORDER BY id DESC", [taskId])).rows;
+    } else if (project) {
+      rows = (await db.query(
+        `SELECT d.* FROM deployments d JOIN tasks t ON t.id = d.task_id
+         WHERE t.project = $1 ORDER BY d.id DESC LIMIT 500`, [project])).rows;
+    } else {
+      rows = (await db.query("SELECT * FROM deployments ORDER BY id DESC LIMIT 200")).rows;
+    }
   } catch { rows = []; }
   return { deployments: rows.filter((d) => !archived.has(d.task_id)) };
 }
@@ -318,18 +386,25 @@ async function registryDeployments(url) {
    const db = registry();
    const archived = await archivedTaskIds();
    const taskId = url.searchParams.get("taskId");
+   const project = url.searchParams.get("project");
    let rows = [];
    try {
-     const res = taskId
-       ? await db.query(
+     if (taskId) {
+       rows = (await db.query(
            `SELECT d.*, t.title AS task_title, t.project AS task_project, t.request AS task_request
             FROM decisions d LEFT JOIN tasks t ON t.id = d.task_id
-            WHERE d.task_id = $1 ORDER BY d.id DESC`, [taskId])
-       : await db.query(
+            WHERE d.task_id = $1 ORDER BY d.id DESC`, [taskId])).rows;
+     } else if (project) {
+       rows = (await db.query(
+           `SELECT d.*, t.title AS task_title, t.project AS task_project, t.request AS task_request
+            FROM decisions d JOIN tasks t ON t.id = d.task_id
+            WHERE t.project = $1 ORDER BY d.id DESC LIMIT 500`, [project])).rows;
+     } else {
+       rows = (await db.query(
            `SELECT d.*, t.title AS task_title, t.project AS task_project, t.request AS task_request
             FROM decisions d LEFT JOIN tasks t ON t.id = d.task_id
-            ORDER BY d.id DESC LIMIT 200`);
-     rows = res.rows;
+            ORDER BY d.id DESC LIMIT 200`)).rows;
+     }
    } catch { rows = []; }
    return { decisions: rows.filter((d) => !archived.has(d.task_id)) };
  }
@@ -338,12 +413,18 @@ async function registryArtifacts(url) {
   const db = registry();
   const archived = await archivedTaskIds();
   const taskId = url.searchParams.get("taskId");
+  const project = url.searchParams.get("project");
   let rows = [];
   try {
-    const res = taskId
-      ? await db.query("SELECT * FROM artifacts WHERE task_id = $1 ORDER BY id DESC", [taskId])
-      : await db.query("SELECT * FROM artifacts ORDER BY id DESC LIMIT 500");
-    rows = res.rows;
+    if (taskId) {
+      rows = (await db.query("SELECT * FROM artifacts WHERE task_id = $1 ORDER BY id DESC", [taskId])).rows;
+    } else if (project) {
+      rows = (await db.query(
+        `SELECT a.* FROM artifacts a JOIN tasks t ON t.id = a.task_id
+         WHERE t.project = $1 ORDER BY a.id DESC LIMIT 500`, [project])).rows;
+    } else {
+      rows = (await db.query("SELECT * FROM artifacts ORDER BY id DESC LIMIT 500")).rows;
+    }
   } catch { rows = []; }
   return { artifacts: rows.filter((a) => !archived.has(a.task_id)) };
 }
@@ -352,15 +433,23 @@ async function registryPlans(url) {
   const db = registry();
   const archived = await archivedTaskIds();
   const taskId = url.searchParams.get("taskId");
+  const project = url.searchParams.get("project");
   let rows = [];
   try {
-    const res = await db.query(
-      `SELECT p.id, p.task_id, p.objective, p.deliverables, p.status, p.branch, p.created_at,
-              (SELECT pe.status FROM plan_executions pe WHERE pe.plan_id = p.id ORDER BY pe.id DESC LIMIT 1) AS execution_status,
-              (SELECT COUNT(*) FROM plan_commits pc WHERE pc.plan_id = p.id) AS commit_count
-       FROM plans p ORDER BY p.created_at DESC`,
-    );
-    rows = res.rows;
+    if (project) {
+      rows = (await db.query(
+        `SELECT p.id, p.task_id, p.objective, p.deliverables, p.status, p.branch, p.created_at,
+                (SELECT pe.status FROM plan_executions pe WHERE pe.plan_id = p.id ORDER BY pe.id DESC LIMIT 1) AS execution_status,
+                (SELECT COUNT(*) FROM plan_commits pc WHERE pc.plan_id = p.id) AS commit_count
+         FROM plans p JOIN tasks t ON t.id = p.task_id
+         WHERE t.project = $1 ORDER BY p.created_at DESC`, [project])).rows;
+    } else {
+      rows = (await db.query(
+        `SELECT p.id, p.task_id, p.objective, p.deliverables, p.status, p.branch, p.created_at,
+                (SELECT pe.status FROM plan_executions pe WHERE pe.plan_id = p.id ORDER BY pe.id DESC LIMIT 1) AS execution_status,
+                (SELECT COUNT(*) FROM plan_commits pc WHERE pc.plan_id = p.id) AS commit_count
+         FROM plans p ORDER BY p.created_at DESC`)).rows;
+    }
   } catch { rows = []; }
   let stepStmt = async (planId) => (await db.query("SELECT step_id, status FROM plan_steps WHERE plan_id = $1", [planId]).catch(() => ({ rows: [] }))).rows;
   const plans = [];
@@ -528,14 +617,16 @@ async function handleLogout(req, res) {
 
 async function handleUsers(req, res, user) {
   if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
-  if (req.method === "GET") return sendJson(res, 200, { users: await listUsers() });
+  if (req.method === "GET") return sendJson(res, 200, { users: user.activeOrganizationId ? await listUsersByOrganization(user.activeOrganizationId) : await listUsers() });
   if (req.method === "POST") {
-    const { username, password, role } = await readBody(req);
+    const { username, password, role, organizationId, projectIds } = await readBody(req);
     if (!username || !password) return sendJson(res, 400, { error: "username et password requis" });
     try {
       // role : admin | supervisor | user (défaut user ; isAdmin rétrocompat).
-      const u = await createUser(String(username), String(password), false, role || "user");
-      return sendJson(res, 201, { ok: true, user: { id: u.id, username: u.username, is_admin: u.is_admin ? true : false, role: (u.role || "user") } });
+      const u = await createUser(String(username), String(password), false, role || "user", organizationId);
+      // Accès par projet (aucun par défaut).
+      if (Array.isArray(projectIds) && projectIds.length) { try { await setUserProjects(u.id, projectIds); } catch {} }
+      return sendJson(res, 201, { ok: true, user: { id: u.id, username: u.username, is_admin: u.is_admin ? true : false, role: (u.role || "user"), organizationId: u.organization_id || null } });
     } catch (e) {
       return sendJson(res, 409, { error: "nom d'utilisateur déjà pris" });
     }
@@ -547,6 +638,46 @@ async function handleUserAction(req, res, user, path) {
   if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
   const parts = path.split("/").filter(Boolean);
   const id = Number(parts[2]);
+  if (req.method === "GET" && parts[3] === "organizations") {
+    return sendJson(res, 200, { organizations: await listUserOrganizations(id) });
+  }
+  // Instance opencode dédiée (identité par utilisateur).
+  if (parts[3] === "opencode") {
+    if (req.method === "GET") {
+      const oc = await getUserOpencode(id);
+      if (!oc) return sendJson(res, 404, { error: "utilisateur inconnu" });
+      return sendJson(res, 200, { username: oc.username, port: oc.port, password: oc.password, provisioned: !!(oc.port && oc.password), url: `https://${oc.username.toLowerCase()}.dev.madatalk.fr` });
+    }
+    if (req.method === "POST") {
+      const { randomBytes } = await import("node:crypto");
+      const oc = await getUserOpencode(id);
+      if (!oc) return sendJson(res, 404, { error: "utilisateur inconnu" });
+      const port = oc.port || (4200 + id);
+      const password = oc.password || randomBytes(18).toString("base64url");
+      try {
+        execFileSync("node", ["/root/.config/opencode/scripts/opencode-user-provision.mjs", "--user", oc.username, "--port", String(port), "--password", password], { encoding: "utf8", timeout: 120000 });
+      } catch (e) { return sendJson(res, 500, { error: String((e && e.stderr) || (e && e.message) || e).slice(0, 500) }); }
+      await setUserOpencode(id, { port, password });
+      return sendJson(res, 200, { ok: true, username: oc.username, port, password, url: `https://${oc.username.toLowerCase()}.dev.madatalk.fr` });
+    }
+    if (req.method === "DELETE") {
+      const oc = await getUserOpencode(id);
+      if (oc) { try { execFileSync("node", ["/root/.config/opencode/scripts/opencode-user-provision.mjs", "--user", oc.username, "--deprovision"], { encoding: "utf8", timeout: 60000 }); } catch {} }
+      await setUserOpencode(id, { port: null, password: null });
+      return sendJson(res, 200, { ok: true });
+    }
+  }
+  if (req.method === "GET" && parts[3] === "projects") {
+    return sendJson(res, 200, { projects: await listUserProjects(id) });
+  }
+  // Accès par projet (N:N) : remplace la liste des projets d'un utilisateur.
+  if (req.method === "POST" && parts[3] === "projects") {
+    const { projectIds } = await readBody(req);
+    try {
+      const projects = await setUserProjects(id, Array.isArray(projectIds) ? projectIds : []);
+      return sendJson(res, 200, { ok: true, projects });
+    } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+  }
   if (req.method === "DELETE") {
     await deleteUser(id);
     return sendJson(res, 200, { ok: true });
@@ -565,6 +696,20 @@ async function handleUserAction(req, res, user, path) {
     if (!u) return sendJson(res, 404, { error: "utilisateur inconnu" });
     return sendJson(res, 200, { ok: true, user: { id: u.id, username: u.username, is_admin: u.is_admin ? true : false, role: u.role || "user" } });
   }
+  if (req.method === "POST" && parts[3] === "organization") {
+    const { organizationId } = await readBody(req);
+    const u = await updateUserOrganization(id, organizationId ? String(organizationId) : null);
+    if (!u) return sendJson(res, 404, { error: "utilisateur inconnu" });
+    return sendJson(res, 200, { ok: true, user: { id: u.id, username: u.username, organizationId: u.organization_id || null } });
+  }
+  // Appartenance N:N : remplace la liste des organisations d'un utilisateur.
+  if (req.method === "POST" && parts[3] === "organizations") {
+    const { organizationIds } = await readBody(req);
+    try {
+      const orgs = await setUserOrganizations(id, Array.isArray(organizationIds) ? organizationIds : []);
+      return sendJson(res, 200, { ok: true, organizations: orgs });
+    } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+  }
   return sendJson(res, 405, { error: "méthode non autorisée" });
 }
 
@@ -580,23 +725,126 @@ function mapRecetteItems(rows) {
     acceptance: i.acceptance ?? null,
     execOrder: i.exec_order ?? null,
     vigilance: i.vigilance ?? null,
+    testIntent: i.test_intent ? (() => { try { const o = JSON.parse(i.test_intent); return o && o.action ? o : null; } catch { return null; } })() : null,
+    docIntent: i.doc_intent ? (() => { try { const o = JSON.parse(i.doc_intent); return o && o.action ? o : null; } catch { return null; } })() : null,
     status: i.status,
     createdTaskId: i.created_task_id ?? null,
     createdAt: i.created_at,
   }));
 }
 
-// Projets rattachés à une recette (recette_projects) — indexé par recette_id.
-async function recetteProjectsByIds(ids) {
+// Repos transverses par projet (project_repos — ADR 11) — la portée réelle
+// d'une recette du projet. Indexé par project_id.
+async function reposByProjectIds(ids) {
   if (!ids || !ids.length) return {};
   const rows = (await registry().query(
-    "SELECT recette_id, project FROM recette_projects WHERE recette_id = ANY($1) ORDER BY project",
+    `SELECT pr.project_id, pr.repo_id, pr.role, r.name, r.git_path AS repo_dir
+     FROM project_repos pr LEFT JOIN repos r ON r.id = pr.repo_id
+     WHERE pr.project_id = ANY($1) ORDER BY pr.repo_id`,
     [ids],
   )).rows;
   const map = {};
-  for (const x of rows) (map[x.recette_id] = map[x.recette_id] || []).push(x.project);
+  for (const x of rows) (map[x.project_id] = map[x.project_id] || []).push({ repoId: x.repo_id, role: x.role, name: x.name || x.repo_id, repoDir: x.repo_dir });
   return map;
 }
+
+async function reposOfProject(project) {
+  if (!project) return [];
+  const m = await reposByProjectIds([project]);
+  return m[project] || [];
+}
+
+// --- Provisionnement d'un workspace Coder pour un repo (ADR 09) --------------
+// Si le repo n'a pas de workspace Coder, crée le workspace (workspace-create.mjs,
+// clone du remote git + masquage du token), dérive le repoDir hôte depuis le
+// volume monté sur /home/coder, puis enregistre workspace + repoDir sur le repo.
+// Tokens Coder/git : si l'organisation n'en a pas enregistrés, ils sont demandés
+// (400 avec code coder-token-required / git-token-required) avant toute création.
+class ProvisionError extends Error {
+  constructor(message, code, status = 400) { super(message); this.code = code; this.status = status; }
+}
+
+async function deriveRepoGitUrl({ gitUrl, repoDir }) {
+  if (gitUrl) return String(gitUrl).trim().replace(/^(https?:\/\/)[^@/]+@/, "$1");
+  if (repoDir && existsSync(join(repoDir, ".git"))) {
+    try {
+      const out = execFileSync("git", ["-C", repoDir, "remote", "get-url", "origin"], { encoding: "utf8", timeout: 20000 });
+      const u = String(out || "").trim();
+      if (u) return u.replace(/^(https?:\/\/)[^@/]+@/, "$1");
+    } catch {}
+  }
+  return null;
+}
+
+async function provisionRepoWorkspace({ repoId, org, body, username }) {
+  const orgs = await pilot.listOrganizations();
+  const orgInfo = (orgs || []).find((o) => o.id === org) || null;
+  if (orgInfo && !orgInfo.coderUrl) throw new ProvisionError("Organisation sans URL Coder configurée (coderUrl).", "coder-url-required");
+
+  const gitUrl = await deriveRepoGitUrl({ gitUrl: prev(body && body.gitUrl), repoDir: prev(body && body.repoDir) });
+  if (!gitUrl) throw new ProvisionError("Aucun remote git pour ce repo (gitUrl absent et pas de checkout hôte). Renseignez d'abord l'URL du dépôt.", "git-url-required");
+
+  // Token git sélectionné pour la liaison repo↔projet (org_git_tokens).
+  // Si un gitTokenId est fourni dans le body, on le propage à workspace-create.mjs
+  // qui le résoudra via db (jamais de token en clair sur argv).
+  const gitTokenId = prev(body && body.gitTokenId);
+  const hasOrgGitToken = !!(orgInfo && orgInfo.hasGitToken) || (Array.isArray(orgInfo && orgInfo.gitTokens) && orgInfo.gitTokens.length > 0);
+  const hasCoderToken = !!(orgInfo && orgInfo.hasCoderToken);
+  const coderGiven = prev(body && body.coderToken);
+  const gitGiven = prev(body && body.gitToken);
+  if (!hasOrgGitToken && !gitTokenId && !gitGiven) throw new ProvisionError("Token git requis — l'organisation n'a pas de token git enregistré et aucun token sélectionné pour cette liaison (gitTokenId).", "git-token-required");
+  if (!hasCoderToken && !coderGiven) throw new ProvisionError("Token Coder requis — l'organisation n'a pas de token Coder enregistré.", "coder-token-required");
+
+  // Tokens fournis par l'utilisateur → mémorisés (chiffrés) sur l'organisation,
+  // UNIQUEMENT si l'organisation n'en avait pas (ne jamais écraser un token actif).
+  if ((!hasCoderToken && coderGiven) || (!hasOrgGitToken && gitGiven)) {
+    await pilot.registerOrganization({
+      id: org, name: (orgInfo && orgInfo.name) || org,
+      coderToken: (!hasCoderToken && coderGiven) ? coderGiven : undefined,
+      gitToken: (!hasOrgGitToken && gitGiven) ? gitGiven : undefined,
+      by: username,
+    });
+  }
+
+  const wsName = String((body && body.workspaceName) || repoId).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  if (!wsName) throw new ProvisionError("Impossible de dériver un nom de workspace valide.", "invalid-workspace-name");
+
+  const args = [
+    "/root/.config/opencode/scripts/workspace-create.mjs",
+    "--org", org,
+    "--name", wsName,
+    ...(body && body.owner ? ["--owner", String(body.owner)] : []),
+    ...(body && body.template ? ["--template", String(body.template)] : []),
+    ...(gitTokenId ? ["--git-token-id", gitTokenId] : []),
+    "--clone", gitUrl,
+    "--repo", `/home/coder/${wsName}`,
+    ...((Array.isArray(body && body.params) ? body.params : []).flatMap((p) => ["--param", String(p)])),
+  ];
+  let out;
+  try {
+    out = JSON.parse(execFileSync("node", args, { encoding: "utf8", timeout: 900000 }));
+  } catch (e) {
+    throw new ProvisionError("Échec de création du workspace : " + String(e && (e.stdout || e.stderr || e.message) || e).slice(0, 500), "provision-failed");
+  }
+  if (!out || !out.ok) {
+    throw new ProvisionError("Échec de création du workspace : " + String((out && out.error) || JSON.stringify(out)).slice(0, 400), "provision-failed");
+  }
+
+  // repoDir hôte du checkout : source du volume monté sur /home/coder + wsName.
+  let hostRepoDir = prev(body && body.repoDir) || `/home/coder/${wsName}`;
+  if (out.container) {
+    try {
+      const src = execFileSync("docker", ["inspect", "-f", '{{range .Mounts}}{{if eq .Destination "/home/coder"}}{{.Source}}{{end}}{{end}}', out.container], { encoding: "utf8" }).trim();
+      if (src) hostRepoDir = join(src, wsName);
+    } catch {}
+  }
+
+  const repo = await pilot.registerRepo({ id: repoId, workspace: wsName, repoDir: hostRepoDir, organizationId: org, createdBy: username });
+  return { ok: true, repoId, workspace: wsName, container: out.container || null, cloned: out.cloned || null, repoDir: hostRepoDir, gitSetup: out.gitSetup || null, repo };
+}
+
+// Valeur effective ('' / null / undefined → null) pour les champs libres.
+function prev(v) { return (v === undefined || v === null || String(v).trim() === "") ? null : String(v).trim(); }
 
 // --- Tests E2E (entités de 1er niveau) : lecture SQL + écritures via pilot --
 function mapE2ETestRow(r) {
@@ -672,7 +920,7 @@ async function e2eProjectsByTestIds(ids) {
   return map;
 }
 
-async function registryE2ETests(url) {
+async function registryE2ETests(url, forcedOrg, ownerScope) {
   const db = registry();
   const project = url.searchParams.get("project");
   const status = url.searchParams.get("status");
@@ -684,7 +932,12 @@ async function registryE2ETests(url) {
     params.push(String(project));
     // ADR 11 : project = PROJET (produit) du test.
     conds.push(`t.project = $${params.length}`);
+  } else if (projectAccess !== null && projectAccess !== undefined) {
+    if (!projectAccess.length) conds.push("1 = 0");
+    else { params.push(projectAccess); conds.push(`t.project = ANY($${params.length})`); }
   }
+  if (forcedOrg) { params.push(forcedOrg); conds.push(`(t.organization_id = $${params.length})`); }
+  if (ownerScope) { params.push(ownerScope); conds.push(`t.created_by = $${params.length}`); }
   if (status) { params.push(String(status)); conds.push(`t.status = $${params.length}`); }
   if (search) {
     params.push(`%${String(search)}%`);
@@ -863,8 +1116,10 @@ function e2eTitleSlug(title) {
   return s || "test";
 }
 
-async function handleE2ECreate(res, b) {
-  const { project, specFile, scenario, title, description, coveredProjects, repoIds, repos, params, viaAgent, docIds } = b || {};
+async function handleE2ECreate(res, b, user) {
+  const { project, specFile, scenario, title, description, coveredProjects, repoIds, repos, params, viaAgent, docIds, organizationId } = b || {};
+  const orgId = organizationId || (user && user.organizationId) || undefined;
+  const createdBy = user && user.username;
   if (!project) return sendJson(res, 400, { error: "project requis (projet produit)" });
   const guard = e2eParamsGuard(params);
   if (guard) return sendJson(res, 400, { error: guard });
@@ -880,7 +1135,7 @@ async function handleE2ECreate(res, b) {
     const slug = e2eTitleSlug(title);
     const specPath = (specFile && String(specFile).trim()) || `tests/playwright/${slug}.spec.ts`;
     const sc = (scenario && String(scenario).trim()) || String(title).trim();
-    const r = await pilot.createE2ETest({ project, specFile: specPath, scenario: sc, title, description, coveredProjects, repoIds: repoIdsFinal, params });
+    const r = await pilot.createE2ETest({ project, specFile: specPath, scenario: sc, title, description, coveredProjects, repoIds: repoIdsFinal, params, organizationId: orgId, createdBy });
     const test = r && r.test;
     if (!test) return sendJson(res, 500, { error: "création du test échouée" });
     // Passe l'entité en DRAFT (spec pas encore rédigé) puis lance la session.
@@ -891,7 +1146,7 @@ async function handleE2ECreate(res, b) {
   }
 
   if (!specFile || !scenario) return sendJson(res, 400, { error: "project, specFile et scenario requis pour enregistrer un test existant" });
-  const r = await pilot.createE2ETest({ project, specFile, scenario, title, description, coveredProjects, repoIds: repoIdsFinal, params });
+  const r = await pilot.createE2ETest({ project, specFile, scenario, title, description, coveredProjects, repoIds: repoIdsFinal, params, organizationId: orgId, createdBy });
   return sendJson(res, 201, { ok: true, test: r && r.test });
 }
 
@@ -1018,6 +1273,48 @@ async function handleE2EObsolete(res, id) {
   return sendJson(res, 200, await pilot.obsoleteE2ETest(id));
 }
 
+// --- Redémarrage des instances opencode (systemd) ---------------------------
+// Chaque utilisateur dispose d'une instance systemd `opencode@<user>.service` ;
+// le redémarrage recharge la config des agents (modèles, permissions, skills).
+const OPENCODE_SHARED_UNIT = "opencode.service";
+
+// L'unité existe-t-elle ? (fichier d'unité présent OU instance chargée/démarrée)
+function opencodeUnitExists(unit) {
+  if (!/^opencode@[a-zA-Z0-9_-]+\.service$/.test(unit) && unit !== OPENCODE_SHARED_UNIT) return false;
+  try {
+    execFileSync("systemctl", ["list-unit-files", unit], { encoding: "utf8", timeout: 10000 });
+    return true;
+  } catch {
+    // Instance non installée sur disque mais chargée/démarrée (démarrée à la volée).
+    try {
+      const out = execFileSync("systemctl", ["list-units", unit, "--all", "--no-legend", "--no-pager"], { encoding: "utf8", timeout: 10000 });
+      return out.split("\n").some((l) => l.trim().split(/\s+/)[0] === unit);
+    } catch {
+      return false;
+    }
+  }
+}
+
+// Liste des instances opencode@<user>.service (fichiers + instance chargée) + opencode.service.
+function listOpencodeUnits() {
+  const units = new Set();
+  const collect = (out) => {
+    for (const line of out.split("\n")) {
+      const name = line.trim().split(/\s+/)[0];
+      // Exclut le template nu (opencode@.service) : non redémarrable sans instance.
+      if (name && name.endsWith(".service") && !name.endsWith("@.service")) units.add(name);
+    }
+  };
+  try {
+    collect(execFileSync("systemctl", ["list-unit-files", "opencode@*.service", "--no-legend", "--no-pager"], { encoding: "utf8", timeout: 10000 }));
+  } catch { /* aucun fichier d'unité template — on continue avec les instances chargées */ }
+  try {
+    collect(execFileSync("systemctl", ["list-units", "opencode@*.service", "--all", "--no-legend", "--no-pager"], { encoding: "utf8", timeout: 10000 }));
+  } catch { /* idem */ }
+  if (opencodeUnitExists(OPENCODE_SHARED_UNIT)) units.add(OPENCODE_SHARED_UNIT);
+  return [...units].sort();
+}
+
 // --- Router ----------------------------------------------------------------
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
@@ -1041,6 +1338,17 @@ const server = createServer(async (req, res) => {
     const user = await currentUser(req);
     if (path === "/api/logout" && req.method === "POST") return handleLogout(req, res);
 
+    // Vérification d'authentification pour nginx `auth_request` : 200 + en-tête
+    // X-User si authentifié, 401 sinon. Sert à gater dev.madatalk.fr (opencode web).
+    if (path === "/api/auth-check") {
+      if (!user) return sendJson(res, 401, { error: "non authentifié" });
+      // Port de l'instance opencode DÉDIÉE à l'utilisateur (routage nginx dynamique).
+      let ocPort = "";
+      try { const oc = await getUserOpencode(user.id); ocPort = oc && oc.port ? String(oc.port) : ""; } catch {}
+      res.writeHead(200, { "Content-Type": "application/json", "X-User": user.username, "X-Opencode-Port": ocPort });
+      return res.end(JSON.stringify({ ok: true, user: user.username, port: ocPort }));
+    }
+
     if (!user) {
       if (path.startsWith("/api/")) return sendJson(res, 401, { error: "non authentifié" });
       return redirect(res, "/login");
@@ -1052,15 +1360,41 @@ const server = createServer(async (req, res) => {
     if (user.isReadOnly && req.method !== "GET") {
       if (path.startsWith("/api/")) return sendJson(res, 403, { error: "lecture seule (rôle superviseur) — opération non autorisée" });
     }
+    // Garde rôle `user` : l'écriture est limitée à SES PROPRES entités
+    // (tasks / recettes / e2e-tests). La création (sans id) reste permise et est
+    // attribuée à l'utilisateur.
+    if (user.role === "user" && req.method !== "GET") {
+      const m = path.match(/^\/api\/(tasks|recettes|e2e-tests)\/([^/]+)/);
+      if (m) {
+        const owned = await userOwnsEntity(user.username, m[1], decodeURIComponent(m[2]));
+        if (!owned) return sendJson(res, 403, { error: "accès en écriture limité à vos propres données" });
+      }
+    }
 
     if (path === "/api/me") return sendJson(res, 200, { user });
+    // Change l'organisation ACTIVE de la session (isolation serveur). L'utilisateur
+    // doit être membre de l'organisation ciblée.
+    if (path === "/api/session/organization" && req.method === "POST") {
+      const b = await readBody(req);
+      const target = b && b.organizationId ? String(b.organizationId) : null;
+      if (!target) return sendJson(res, 400, { error: "organizationId requis" });
+      const member = (user.organizations || []).includes(target);
+      if (!member) return sendJson(res, 403, { error: "vous n'appartenez pas à cette organisation" });
+      await setSessionOrganization(sessionToken(req), target);
+      return sendJson(res, 200, { ok: true, activeOrganizationId: target });
+    }
     // Rendu markdown à la volée (GET, lecture) — utilisé par la vue d'approbation.
     if (path === "/api/render-md" && req.method === "GET") {
       const text = url.searchParams.get("text") || "";
       const html = text ? marked.parse(text) : "";
       return sendJson(res, 200, { html });
     }
-    if (path === "/api/ecosystem") return sendJson(res, 200, scanEcosystem());
+    // Écosystème : configurable UNIQUEMENT par l'organisation par défaut.
+    if (path === "/api/ecosystem") {
+      const def = await getDefaultOrgId();
+      if (def && user.activeOrganizationId !== def) return sendJson(res, 403, { error: "réservé à l'organisation par défaut" });
+      return sendJson(res, 200, scanEcosystem());
+    }
     if (path === "/api/models" && req.method === "GET") return sendJson(res, 200, { models: listModels() });
     const agentModelMatch = path.match(/^\/api\/agents\/([^/]+)\/model$/);
     if (agentModelMatch && req.method === "POST") {
@@ -1076,23 +1410,101 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 400, { error: String((e && e.message) || e) });
       }
     }
+    // --- Redémarrage des instances opencode (admin uniquement) ---------------
+    const opencodeRestartUserMatch = path.match(/^\/api\/opencode\/restart-user\/([^/]+)$/);
+    if (opencodeRestartUserMatch && req.method === "POST") {
+      if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
+      const username = decodeURIComponent(opencodeRestartUserMatch[1]);
+      if (!/^[a-zA-Z0-9_-]+$/.test(username)) {
+        return sendJson(res, 400, { error: "username invalide (uniquement [a-zA-Z0-9_-])" });
+      }
+      const unit = `opencode@${username}.service`;
+      if (!opencodeUnitExists(unit)) return sendJson(res, 404, { error: `service inconnu : ${unit}` });
+      try {
+        execFileSync("systemctl", ["restart", unit], { encoding: "utf8", timeout: 60000 });
+        return sendJson(res, 200, { ok: true, service: unit });
+      } catch (e) {
+        const err = String((e && e.stderr) || (e && e.message) || e).slice(0, 500);
+        return sendJson(res, 500, { ok: false, error: `redémarrage de ${unit} impossible : ${err}` });
+      }
+    }
+    if (path === "/api/opencode/restart-all" && req.method === "POST") {
+      if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
+      let units;
+      try {
+        units = listOpencodeUnits();
+      } catch (e) {
+        return sendJson(res, 500, { ok: false, error: `liste des services impossible : ${String((e && e.message) || e).slice(0, 500)}` });
+      }
+      if (!units.length) return sendJson(res, 200, { ok: true, restarted: [], failed: [], notice: "aucune instance opencode trouvée" });
+      const restarted = [];
+      const failed = [];
+      for (const unit of units) {
+        try {
+          execFileSync("systemctl", ["restart", unit], { encoding: "utf8", timeout: 60000 });
+          restarted.push(unit);
+        } catch (e) {
+          const err = String((e && e.stderr) || (e && e.message) || e).slice(0, 300);
+          failed.push({ unit, error: err });
+        }
+      }
+      return sendJson(res, 200, { ok: true, restarted, failed });
+    }
     if (path === "/api/config") return sendJson(res, 200, { refreshSeconds: REFRESH_S, sessionBaseUrl: SESSION_BASE_URL });
-    if (path === "/api/stats") return sendJson(res, 200, await registryStats());
+    if (path === "/api/stats") return sendJson(res, 200, await registryStats(url, user.activeOrganizationId, user.ownerScope, user.projectAccess));
 
     if (path === "/api/workspaces" && req.method === "GET") {
       return sendJson(res, 200, await pilot.listWorkspaces());
     }
+    // --- Workspaces Coder : opérations CRUD (admin) -------------------------
+    const wsShowMatch = path.match(/^\/api\/workspaces\/([^/]+)$/);
+    if (wsShowMatch && req.method === "GET") {
+      if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
+      try { return sendJson(res, 200, await pilot.showWorkspace(decodeURIComponent(wsShowMatch[1]), user.activeOrganizationId || "onirtech")); }
+      catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e).slice(0, 500) }); }
+    }
+    const wsStartMatch = path.match(/^\/api\/workspaces\/([^/]+)\/start$/);
+    if (wsStartMatch && req.method === "POST") {
+      if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
+      try { return sendJson(res, 200, await pilot.startWorkspace(decodeURIComponent(wsStartMatch[1]), user.activeOrganizationId || "onirtech")); }
+      catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e).slice(0, 500) }); }
+    }
+    const wsStopMatch = path.match(/^\/api\/workspaces\/([^/]+)\/stop$/);
+    if (wsStopMatch && req.method === "POST") {
+      if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
+      try { return sendJson(res, 200, await pilot.stopWorkspace(decodeURIComponent(wsStopMatch[1]), user.activeOrganizationId || "onirtech")); }
+      catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e).slice(0, 500) }); }
+    }
+    const wsRestartMatch = path.match(/^\/api\/workspaces\/([^/]+)\/restart$/);
+    if (wsRestartMatch && req.method === "POST") {
+      if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
+      try { return sendJson(res, 200, await pilot.restartWorkspace(decodeURIComponent(wsRestartMatch[1]), user.activeOrganizationId || "onirtech")); }
+      catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e).slice(0, 500) }); }
+    }
+    const wsDelMatch = path.match(/^\/api\/workspaces\/([^/]+)$/);
+    if (wsDelMatch && req.method === "DELETE") {
+      if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
+      try { return sendJson(res, 200, await pilot.deleteWorkspace(decodeURIComponent(wsDelMatch[1]), user.activeOrganizationId || "onirtech")); }
+      catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e).slice(0, 500) }); }
+    }
     if (path === "/api/projects" && req.method === "GET") {
-      return sendJson(res, 200, await pilot.listProjects());
+      const r = await pilot.listProjects();
+      const all = (r && r.projects) || [];
+      // Isolation : ne renvoie que les projets de l'organisation active.
+      const projects = all.filter((p) => (!user.activeOrganizationId || (p.organizationId || "onirtech") === user.activeOrganizationId) && (user.projectAccess === null || user.projectAccess.includes(p.id)));
+      return sendJson(res, 200, { projects });
     }
     // --- Repos (ADR 09) : dépôts physiques rattachables à 1..N projets ------
     if (path === "/api/repos" && req.method === "GET") {
       const projectId = url.searchParams.get("project") || "";
-      return sendJson(res, 200, await pilot.listRepos(projectId || undefined));
+      const r = await pilot.listRepos(projectId || undefined);
+      const all = (r && r.repos) || [];
+      const repos = all.filter((rp) => (!user.activeOrganizationId || (rp.organizationId || "onirtech") === user.activeOrganizationId));
+      return sendJson(res, 200, { repos });
     }
     if (path === "/api/repos" && req.method === "POST") {
       const b = await readBody(req);
-      try { return sendJson(res, 200, await pilot.registerRepo({ ...b, createdBy: user.username })); }
+      try { return sendJson(res, 200, await pilot.registerRepo({ ...b, organizationId: b.organizationId || user.activeOrganizationId || user.organizationId, createdBy: user.username })); }
       catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
     }
     const repoDelMatch = path.match(/^\/api\/repos\/([^/]+)$/);
@@ -1103,7 +1515,7 @@ const server = createServer(async (req, res) => {
     const repoLinkMatch = path.match(/^\/api\/projects\/([^/]+)\/repos\/([^/]+)$/);
     if (repoLinkMatch && req.method === "PUT") {
       const b = await readBody(req).catch(() => ({}));
-      try { return sendJson(res, 200, await pilot.linkRepoToProject({ projectId: repoLinkMatch[1], repoId: repoLinkMatch[2], role: (b && b.role) || undefined })); }
+      try { return sendJson(res, 200, await pilot.linkRepoToProject({ projectId: repoLinkMatch[1], repoId: repoLinkMatch[2], role: (b && b.role) || undefined, gitTokenId: (b && b.gitTokenId) || undefined })); }
       catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
     }
     if (repoLinkMatch && req.method === "DELETE") {
@@ -1133,7 +1545,7 @@ const server = createServer(async (req, res) => {
             projectId: b.projectId, repoId: b.repoId, by: user.username,
           }));
         }
-        return sendJson(res, 201, await pilot.registerDoc({ ...b, createdBy: user.username }));
+        return sendJson(res, 201, await pilot.registerDoc({ ...b, organizationId: b.organizationId || user.activeOrganizationId || user.organizationId, createdBy: user.username }));
       }
       catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
     }
@@ -1163,15 +1575,109 @@ const server = createServer(async (req, res) => {
     }
     if (path === "/api/projects" && req.method === "POST") {
       const b = await readBody(req);
-      return sendJson(res, 200, await pilot.createProject({ ...b, createdBy: user.username }));
+      return sendJson(res, 200, await pilot.createProject({ ...b, organizationId: b.organizationId || user.activeOrganizationId || user.organizationId, createdBy: user.username }));
     }
     const projDelMatch = path.match(/^\/api\/projects\/([^/]+)$/);
     if (projDelMatch && req.method === "DELETE") {
       return sendJson(res, 200, await pilot.deleteProject(projDelMatch[1]));
     }
+    // --- Organisations (v0.9.47) : tenant de premier niveau (nom + description)
+    if (path === "/api/orgs" && req.method === "GET") {
+      return sendJson(res, 200, { organizations: await pilot.listOrganizations() });
+    }
+    if (path === "/api/orgs" && req.method === "POST") {
+      if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
+      const b = await readBody(req);
+      try { return sendJson(res, 200, await pilot.registerOrganization({ id: b.id, name: b.name, description: b.description, isDefault: !!b.isDefault, coderUrl: b.coderUrl, coderToken: b.coderToken, coderTemplate: b.coderTemplate, gitToken: b.gitToken, by: user.username })); }
+      catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    const orgDelMatch = path.match(/^\/api\/orgs\/([^/]+)$/);
+    if (orgDelMatch && req.method === "DELETE") {
+      if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
+      try { return sendJson(res, 200, await pilot.deleteOrganization(orgDelMatch[1])); }
+      catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    const orgDefaultMatch = path.match(/^\/api\/orgs\/([^/]+)\/default$/);
+    if (orgDefaultMatch && req.method === "POST") {
+      if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
+      try { return sendJson(res, 200, await pilot.setDefaultOrganization(orgDefaultMatch[1])); }
+      catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    // --- Tokens git multiples par organisation (v0.10) -----------------------
+    const orgGitTokenListMatch = path.match(/^\/api\/orgs\/([^/]+)\/git-tokens$/);
+    if (orgGitTokenListMatch && req.method === "GET") {
+      if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
+      try { return sendJson(res, 200, { org: orgGitTokenListMatch[1], tokens: await pilot.listOrgGitTokens(orgGitTokenListMatch[1]) }); }
+      catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    if (orgGitTokenListMatch && req.method === "POST") {
+      if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
+      const b = await readBody(req);
+      if (!b.name || !b.token) return sendJson(res, 400, { error: "name (libellé) et token requis" });
+      try { return sendJson(res, 200, await pilot.addOrgGitToken({ org: orgGitTokenListMatch[1], name: b.name, token: b.token, by: user.username })); }
+      catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    const orgGitTokenDelMatch = path.match(/^\/api\/orgs\/([^/]+)\/git-tokens\/([^/]+)$/);
+    if (orgGitTokenDelMatch && req.method === "DELETE") {
+      if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
+      try { return sendJson(res, 200, await pilot.deleteOrgGitToken({ org: orgGitTokenDelMatch[1], id: orgGitTokenDelMatch[2] })); }
+      catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    // Crée un workspace Coder pour l'organisation (+ clone git optionnel + masquage).
+    if (path === "/api/workspaces" && req.method === "POST") {
+      if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
+      const b = await readBody(req);
+      if (!b.name) return sendJson(res, 400, { error: "name (nom du workspace) requis" });
+      try {
+        const args = [
+          "/root/.config/opencode/scripts/workspace-create.mjs",
+          "--org", b.org || user.activeOrganizationId || "onirtech",
+          "--name", String(b.name),
+          ...(b.owner ? ["--owner", String(b.owner)] : []),
+          ...(b.template ? ["--template", String(b.template)] : []),
+          ...(b.clone ? ["--clone", String(b.clone)] : []),
+          ...(b.repo ? ["--repo", String(b.repo)] : []),
+          ...((Array.isArray(b.params) ? b.params : []).flatMap((p) => ["--param", String(p)])),
+        ];
+        const out = execFileSync("node", args, { encoding: "utf8", timeout: 900000 });
+        return sendJson(res, 200, JSON.parse(out));
+      } catch (e) { return sendJson(res, 500, { error: String((e && e.stdout) || (e && e.stderr) || (e && e.message) || e).slice(0, 800) }); }
+    }
+    // Masque le token git d'un dépôt DANS un workspace Coder (retire le token de
+    // l'URL du remote + installe un credential helper qui lit le token 0600).
+    const gitSetupMatch = path.match(/^\/api\/workspaces\/([^/]+)\/git-setup$/);
+    if (gitSetupMatch && req.method === "POST") {
+      if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
+      const b = await readBody(req);
+      if (!b.repo) return sendJson(res, 400, { error: "repo (chemin dans le workspace) requis" });
+      try {
+        const out = execFileSync("node", [
+          "/root/.config/opencode/scripts/workspace-git-setup.mjs",
+          "--container", decodeURIComponent(gitSetupMatch[1]),
+          "--repo", String(b.repo),
+          ...(b.remote ? ["--remote", String(b.remote)] : []),
+          ...(b.token ? ["--token", String(b.token)] : []),
+        ], { encoding: "utf8", timeout: 120000 });
+        return sendJson(res, 200, JSON.parse(out));
+      } catch (e) { return sendJson(res, 500, { error: String((e && e.stderr) || (e && e.message) || e).slice(0, 500) }); }
+    }
+    // Provisionne un workspace Coder pour un repo (ADR 09) : crée le workspace
+    // via workspace-create.mjs (clone du remote + masquage du token), dérive le
+    // repoDir hôte depuis le volume du conteneur, puis enregistre workspace +
+    // repoDir sur le repo. Tokens Coder/git demandés si l'organisation n'en a pas.
+    const repoProvMatch = path.match(/^\/api\/repos\/([^/]+)\/provision$/);
+    if (repoProvMatch && req.method === "POST") {
+      if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
+      const b = await readBody(req);
+      try {
+        return sendJson(res, 200, await provisionRepoWorkspace({ repoId: decodeURIComponent(repoProvMatch[1]), org: user.activeOrganizationId || user.organizationId || "onirtech", body: b, username: user.username }));
+      } catch (e) {
+        return sendJson(res, e.status || 400, { error: String(e.message || e), code: e.code || "provision-failed" });
+      }
+    }
     if (path === "/api/tasks" && req.method === "POST") {
       const b = await readBody(req);
-      return sendJson(res, 200, await pilot.createTask(b));
+      return sendJson(res, 200, await pilot.createTask({ ...b, createdBy: user.username, organizationId: b.organizationId || user.activeOrganizationId || user.organizationId }));
     }
     if (path === "/api/scope-conflict" && req.method === "POST") {
       const b = await readBody(req);
@@ -1211,7 +1717,7 @@ const server = createServer(async (req, res) => {
     const artView = path.match(/^\/api\/tasks\/([^/]+)\/artifacts\/([^/]+)\/view$/);
     if (artView) return viewArtifact(res, artView[1], artView[2]);
     if (path === "/api/archives") return sendJson(res, 200, await registryArchives());
-    if (path === "/api/tasks") return sendJson(res, 200, await registryTasks(url));
+    if (path === "/api/tasks") return sendJson(res, 200, await registryTasks(url, user.activeOrganizationId, user.ownerScope, user.projectAccess));
     if (path.startsWith("/api/tasks/")) {
       const taskId = path.split("/")[3];
       if (!taskId) return sendJson(res, 400, { error: "taskId manquant" });
@@ -1309,18 +1815,27 @@ const server = createServer(async (req, res) => {
     if (path === "/api/metrics/recette" && req.method === "GET") return sendJson(res, 200, await metrics.recette(registry()));
     if (path === "/api/recettes" && req.method === "GET") {
       const project = url.searchParams.get("project");
+      const conds = [];
+      const params = [];
+      if (project) { params.push(project); conds.push(`r.project = $${params.length}`); }
+      if (user.activeOrganizationId) { params.push(user.activeOrganizationId); conds.push(`(r.organization_id = $${params.length})`); }
+      if (user.ownerScope) { params.push(user.ownerScope); conds.push(`r.created_by = $${params.length}`); }
+      if (user.projectAccess !== null && user.projectAccess !== undefined) {
+        if (!user.projectAccess.length) conds.push("1 = 0");
+        else { params.push(user.projectAccess); conds.push(`r.project = ANY($${params.length})`); }
+      }
       const rows = (await registry().query(
         `SELECT r.*,
            (SELECT COUNT(*) FROM recette_tasks rt WHERE rt.recette_id = r.recette_id) AS tasks_count,
            (SELECT COUNT(*) FROM recette_items i WHERE i.recette_id = r.recette_id) AS items_count,
            (SELECT COUNT(*) FROM recette_documents d WHERE d.recette_id = r.recette_id) AS documents_count
          FROM recettes r
-         ${project ? "WHERE EXISTS (SELECT 1 FROM recette_projects rp WHERE rp.recette_id = r.recette_id AND rp.project = $1)" : ""}
+         ${conds.length ? "WHERE " + conds.join(" AND ") : ""}
          ORDER BY r.created_at DESC`,
-        project ? [project] : [],
+        params,
       )).rows;
-      const pmap = await recetteProjectsByIds(rows.map((x) => x.recette_id));
-      for (const row of rows) row.projects = pmap[row.recette_id] || (row.project ? [row.project] : []);
+      const reposMap = await reposByProjectIds([...new Set(rows.map((x) => x.project).filter(Boolean))]);
+      for (const row of rows) row.repos = reposMap[row.project] || [];
       return sendJson(res, 200, { recettes: rows });
     }
     // Candidats : tâches NON encore couvertes par une recette (recette_status != done, non présentes dans recette_tasks).
@@ -1344,7 +1859,7 @@ const server = createServer(async (req, res) => {
     }
     if (path === "/api/recettes" && req.method === "POST") {
       const b = await readBody(req);
-      return sendJson(res, 200, await pilot.createRecette({ project: b.project, projects: b.projects, title: b.title, description: b.description, taskIds: b.taskIds, documents: b.documents, docIds: b.docIds, by: user.username }));
+      return sendJson(res, 200, await pilot.createRecette({ project: b.project, title: b.title, description: b.description, taskIds: b.taskIds, documents: b.documents, docIds: b.docIds, by: user.username, organizationId: b.organizationId || user.activeOrganizationId || user.organizationId }));
     }
     const recetteAction = path.match(/^\/api\/recettes\/([^/]+)\/(session|finish)$/);
     if (recetteAction && req.method === "POST") {
@@ -1354,7 +1869,7 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 200, await pilot.launchRecetteSession({ recetteId: recetteAction[1], force: !!(sb && sb.force) }));
       }
       const b = await readBody(req);
-      return sendJson(res, 200, await pilot.finishRecette({ recetteId: recetteAction[1], items: b.items, by: user.username }));
+      return sendJson(res, 200, await pilot.finishRecette({ recetteId: recetteAction[1], items: b.items, by: user.username, launchMode: b.launchMode }));
     }
     const recetteTaskAdd = path.match(/^\/api\/recettes\/([^/]+)\/tasks$/);
     if (recetteTaskAdd && req.method === "POST") {
@@ -1368,17 +1883,6 @@ const server = createServer(async (req, res) => {
     const recetteItemDel = path.match(/^\/api\/recettes\/([^/]+)\/items\/([0-9]+)$/);
     if (recetteItemDel && req.method === "DELETE") {
       return sendJson(res, 200, await pilot.removeRecetteItem({ recetteId: recetteItemDel[1], itemId: Number(recetteItemDel[2]) }));
-    }
-    const recetteProjAdd = path.match(/^\/api\/recettes\/([^/]+)\/projects$/);
-    if (recetteProjAdd && req.method === "POST") {
-      const b = await readBody(req);
-      const r = await pilot.addRecetteProject({ recetteId: recetteProjAdd[1], project: b.project, by: user.username });
-      return sendJson(res, 200, r);
-    }
-    const recetteProjDel = path.match(/^\/api\/recettes\/([^/]+)\/projects\/([^/]+)$/);
-    if (recetteProjDel && req.method === "DELETE") {
-      const r = await pilot.removeRecetteProject({ recetteId: recetteProjDel[1], project: decodeURIComponent(recetteProjDel[2]), by: user.username });
-      return sendJson(res, 200, r);
     }
     const recetteDocView = path.match(/^\/api\/recettes\/([^/]+)\/documents\/([0-9]+)\/view$/);
     if (recetteDocView && req.method === "GET") {
@@ -1405,7 +1909,7 @@ const server = createServer(async (req, res) => {
       )).rows[0];
       if (!r) return sendJson(res, 404, { error: "recette inconnue" });
       const items = mapRecetteItems((await registry().query(
-        "SELECT id, project, content, classification, discussion, scope, title, acceptance, exec_order, vigilance, status, created_task_id, created_at FROM recette_items WHERE recette_id = $1 ORDER BY id ASC",
+        "SELECT id, project, content, classification, discussion, scope, title, acceptance, exec_order, vigilance, test_intent, doc_intent, status, created_task_id, created_at FROM recette_items WHERE recette_id = $1 ORDER BY id ASC",
         [r.recette_id],
       )).rows);
       const tasks = (await registry().query(
@@ -1417,11 +1921,33 @@ const server = createServer(async (req, res) => {
          FROM recette_documents d LEFT JOIN artifacts a ON a.artifact_id = d.artifact_id
          WHERE d.recette_id = $1 ORDER BY d.id ASC`, [r.recette_id],
       )).rows;
-      const projs = (await registry().query("SELECT project FROM recette_projects WHERE recette_id = $1 ORDER BY project", [r.recette_id])).rows.map((x) => x.project);
-      return sendJson(res, 200, { recette: { ...r, projects: projs.length ? projs : (r.project ? [r.project] : []), tasks, items, documents: docs } });
+      return sendJson(res, 200, { recette: { ...r, repos: await reposOfProject(r.project), tasks, items, documents: docs } });
+    }
+    // --- Batches d'orchestration (v0.9.0) : sessions / statut -----------------
+    if (path === "/api/batches" && req.method === "GET") {
+      const project = url.searchParams.get("project");
+      return sendJson(res, 200, { batches: await pilot.listBatches(project) });
+    }
+    const batchGetMatch = path.match(/^\/api\/batches\/([^/]+)$/);
+    if (batchGetMatch && req.method === "GET") {
+      const batch = await pilot.getBatchDetail(batchGetMatch[1]);
+      if (!batch) return sendJson(res, 404, { error: "batch inconnu" });
+      return sendJson(res, 200, { batch });
+    }
+    // Lance (ou reprend) la SESSION D'ORCHESTRATION UNIQUE d'un batch (mode session).
+    const batchSessionMatch = path.match(/^\/api\/batches\/([^/]+)\/session$/);
+    if (batchSessionMatch && req.method === "POST") {
+      let sb = {};
+      try { sb = await readBody(req); } catch {}
+      return sendJson(res, 200, await pilot.launchBatchSession({ batchId: batchSessionMatch[1], force: !!(sb && sb.force) }));
+    }
+    const batchStatusMatch = path.match(/^\/api\/batches\/([^/]+)\/status$/);
+    if (batchStatusMatch && req.method === "POST") {
+      const b = await readBody(req);
+      return sendJson(res, 200, await pilot.setBatchStatus(batchStatusMatch[1], b.status));
     }
     // --- Tests E2E (v0.9.0) : entités de 1er niveau, indépendantes des tâches
-    if (path === "/api/e2e-tests" && req.method === "GET") return sendJson(res, 200, await registryE2ETests(url));
+    if (path === "/api/e2e-tests" && req.method === "GET") return sendJson(res, 200, await registryE2ETests(url, user.activeOrganizationId, user.ownerScope, user.projectAccess));
     // Statut d'un job E2E asynchrone (worker détaché) : en cours / terminé.
     const e2eJobMatch = path.match(/^\/api\/e2e\/jobs\/([^/]+)$/);
     if (e2eJobMatch && req.method === "GET") {
@@ -1436,7 +1962,7 @@ const server = createServer(async (req, res) => {
     }
     if (path === "/api/e2e-tests" && req.method === "POST") {
       const b = await readBody(req);
-      return handleE2ECreate(res, b);
+      return handleE2ECreate(res, b, user);
     }
     const e2eDetailMatch = path.match(/^\/api\/e2e-tests\/([^/]+)$/);
     if (e2eDetailMatch && req.method === "GET") return registryE2ETestDetail(res, e2eDetailMatch[1]);

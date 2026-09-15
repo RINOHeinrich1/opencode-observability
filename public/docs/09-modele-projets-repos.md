@@ -93,8 +93,12 @@ Projet ──────── N:N ──────── Repo
 ## 3. Ce qui change / ce qui ne change pas
 
 **Ne change pas (reste au niveau projet)**
-- `tasks.project`, `recettes.project` (+ `recette_projects`), `e2e_test_projects`
-  (`coveredProjects`), filtres UI « projet » : tout cela reste **projet**.
+- `tasks.project`, `recettes.project`, `e2e_test_projects` (`coveredProjects`),
+  filtres UI « projet » : tout cela reste **projet**.
+- **Recette (v0.9.34)** : 1 recette = **1 projet unique** (`recettes.project`).
+  Sa portée réelle = les **repos transverses du projet** (`project_repos`),
+  jamais des projets supplémentaires. La table `recette_projects` (multi-projets)
+  est **légacy** : conservée pour l'historique, plus lue ni écrite.
 
 **Change / est introduit**
 - Nouvelle table `repos` + table d'association `project_repos` (N:N).

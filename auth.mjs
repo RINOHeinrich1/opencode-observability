@@ -1,5 +1,5 @@
 // auth.mjs — Session courant (cookie) : parse + résolution de l'utilisateur.
-import { getSession, getUserById } from "./panel-db.mjs";
+import { getSession, getUserById, listUserOrganizations, setSessionOrganization, listUserProjects } from "./panel-db.mjs";
 
 const COOKIE_NAME = "orchestrator_session";
 
@@ -29,7 +29,32 @@ export async function currentUser(req) {
   // Rôle effectif : admin (is_admin rétrocompat) > supervisor > user.
   let role = u.role && ["admin", "supervisor", "user"].includes(u.role) ? u.role : "user";
   if (u.is_admin) role = "admin";
-  return { id: u.id, username: u.username, is_admin: role === "admin", role, isSupervisor: role === "supervisor", isReadOnly: role === "supervisor" || role === "user" };
+  // Appartenance N:N + organisation ACTIVE (stockée dans la session).
+  let organizations = await listUserOrganizations(u.id);
+  if (!organizations.length && u.organization_id) organizations = [u.organization_id];
+  let activeOrganizationId = s.active_organization_id || null;
+  if (activeOrganizationId && !organizations.includes(activeOrganizationId)) activeOrganizationId = null;
+  // Auto-sélection si une seule organisation (pas d'écran de choix nécessaire).
+  if (!activeOrganizationId && organizations.length === 1) {
+    activeOrganizationId = organizations[0];
+    try { await setSessionOrganization(token, activeOrganizationId); } catch {}
+  }
+  return {
+    id: u.id, username: u.username, is_admin: role === "admin", role,
+    organizationId: u.organization_id || "onirtech",
+    organizations, activeOrganizationId,
+    isSupervisor: role === "supervisor", isUser: role === "user",
+    // Périmètre propriétaire : un rôle `user` ne voit QUE ses propres créations
+    // (created_by = son username) dans l'organisation active. `supervisor`/`admin`
+    // voient toutes les données de l'organisation (ownerScope = null).
+    ownerScope: role === "user" ? u.username : null,
+    // Accès par PROJET : `admin` = tous les projets (null) ; les autres = liste
+    // explicite (aucun par défaut).
+    projectAccess: role === "admin" ? null : await listUserProjects(u.id),
+    // Lecture seule STRICTE : uniquement le superviseur. Un `user` peut écrire
+    // (créer/agir) mais ne voit/écrit que ses propres créations.
+    isReadOnly: role === "supervisor",
+  };
 }
 
 // Helpers ACL (admin = tout ; supervisor/user = lecture seule).
@@ -37,7 +62,10 @@ export const canWrite = (user) => !!(user && user.is_admin);
 export const isReadOnly = (user) => !!(user && !user.is_admin);
 
 export function cookieHeader(token) {
-  return `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${process.env.PANEL_SESSION_TTL_H || 24 * 3600}`;
+  // Domaine partagé (ex. .madatalk.fr) pour que le cookie du panneau soit envoyé
+  // aux sous-domaines (ex. dev.madatalk.fr → auth_request opencode). Optionnel.
+  const domain = process.env.PANEL_COOKIE_DOMAIN ? `; Domain=${process.env.PANEL_COOKIE_DOMAIN}` : "";
+  return `${COOKIE_NAME}=${token}; Path=/${domain}; HttpOnly; SameSite=Lax; Max-Age=${process.env.PANEL_SESSION_TTL_H || 24 * 3600}`;
 }
 
 export function clearCookieHeader() {

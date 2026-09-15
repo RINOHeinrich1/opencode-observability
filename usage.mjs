@@ -8,6 +8,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 const OPENCODE_BIN = process.env.OPENCODE_BIN || "/root/.opencode/bin/opencode";
+// Instance opencode ciblée (données isolées par utilisateur) — lue à l'exécution
+// (le .env du panneau est chargé après les imports ES).
+function ocEnv() { const d = process.env.OPENCODE_DATA_HOME; return d ? { ...process.env, XDG_DATA_HOME: d } : process.env; }
 
 const _exportCache = new Map();
 
@@ -21,7 +24,7 @@ function computeSessionUsage(sessionId) {
   let j;
   try {
     fd = openSync(tmp, "w");
-    execFileSync(OPENCODE_BIN, ["export", sessionId], { stdio: ["ignore", fd, "ignore"], timeout: 60000 });
+    execFileSync(OPENCODE_BIN, ["export", sessionId], { stdio: ["ignore", fd, "ignore"], timeout: 60000, env: ocEnv() });
     closeSync(fd);
     fd = -1;
     j = JSON.parse(readFileSync(tmp, "utf8"));

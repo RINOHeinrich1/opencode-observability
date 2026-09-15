@@ -343,6 +343,21 @@ h3 { margin: 18px 0 8px; font-size: 14px; color: var(--muted); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
 button.restore-btn { background: var(--green); }
 
+/* Formulaire de modale (création d'utilisateur) */
+.modal-form { display: flex; flex-direction: column; gap: 12px; margin-top: 6px; }
+.modal-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.modal-form input, .modal-form select {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 10px; font-size: 13px;
+}
+.uc-proj-block { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.uc-proj-label { color: var(--muted); }
+.uc-proj-list {
+  display: flex; flex-direction: column; gap: 6px; max-height: 200px; overflow: auto;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
+}
+.uc-proj-list .filter-check { margin-left: 0; }
+
 /* Modale large (écosystème) + corps scrollable avec retour à la ligne */
 .modal-wide { max-width: 760px; }
 .eco-modal-body {

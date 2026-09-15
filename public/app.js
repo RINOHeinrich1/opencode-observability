@@ -787,32 +787,13 @@ async function renderUsers() {
   let projects = [];
   try { projects = ((await api('/api/projects')).projects || []); } catch {}
   const roleOpts = (sel) => `<select class="role-sel" data-user="${esc(sel.id)}">${['admin', 'supervisor', 'user'].map((rl) => `<option value="${rl}" ${sel.role === rl ? 'selected' : ''}>${rl === 'admin' ? 'admin' : rl === 'supervisor' ? 'superviseur' : 'utilisateur'}</option>`).join('')}</select>`;
-  const projOpts = projects.map((p) => `<option value="${esc(p.id)}">${esc(p.name || p.id)}</option>`).join('');
   document.getElementById('pane-users').innerHTML = `
     <h2>Utilisateurs <span class="muted-sm">— organisation ${esc(currentOrg)}</span></h2>
     <p class="muted-sm">Rôles : <strong>admin</strong> (écriture, tous les projets de l'organisation) · <strong>superviseur</strong> (lecture seule, tous les projets) · <strong>utilisateur</strong> (peut créer/agir, ne voit que <em>ses propres créations</em>). L'accès aux <strong>projets</strong> est explicite (aucun par défaut ; l'admin a tous les projets).</p>
-    <div class="user-form">
-      <input id="new-username" placeholder="nom d'utilisateur">
-      <input id="new-password" type="password" placeholder="mot de passe">
-      <select id="new-role"><option value="user">utilisateur</option><option value="supervisor">superviseur</option><option value="admin">admin</option></select>
-      <select id="new-org">${ORGANIZATIONS.map((o) => `<option value="${esc(o.id)}" ${o.id === currentOrg ? 'selected' : ''}>${esc(o.name || o.id)}</option>`).join('')}</select>
-      <select id="new-projects" multiple title="Projets accessibles (Ctrl/Cmd pour multi)" style="min-width:160px">${projOpts}</select>
-      <button id="add-user">Ajouter</button>
-    </div>
+    <div class="eco-restart-bar"><button class="launch-btn" id="add-user-btn">Ajouter un utilisateur</button><span id="users-msg" class="muted-sm"></span></div>
     <table><thead><tr><th>Utilisateur</th><th>Rôle</th><th>Organisations</th><th>Projets</th><th>opencode</th><th>Créé le</th><th></th></tr></thead>
-    <tbody>${users.map((u) => `<tr><td>${esc(u.username)}</td><td>${roleOpts(u)}</td><td><button class="ghost tiny" data-user-orgs="${u.id}" data-user-name="${esc(u.username)}">Gérer</button></td><td><button class="ghost tiny" data-user-projects="${u.id}" data-user-name="${esc(u.username)}">Gérer</button></td><td><button class="ghost tiny" data-user-oc="${u.id}" data-user-name="${esc(u.username)}">Accès</button></td><td class="code">${esc((u.created_at || '').replace('T', ' ').slice(0, 19))}</td>    <td><div class="icon-actions"><button class="ghost tiny" data-oc-restart="${esc(u.username)}" title="Redémarrer l'instance opencode@${esc(u.username)}.service">Redémarrer</button><button class="danger" data-del="${u.id}">Supprimer</button></div></td></tr>`).join('')}</tbody></table>
-    <div id="users-msg" class="error"></div>`;
-  document.getElementById('add-user').addEventListener('click', async () => {
-    const username = document.getElementById('new-username').value;
-    const password = document.getElementById('new-password').value;
-    const role = document.getElementById('new-role').value;
-    const organizationId = document.getElementById('new-org').value;
-    const projectIds = [...document.getElementById('new-projects').selectedOptions].map((o) => o.value);
-    const rr = await fetch('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password, role, organizationId, projectIds }) });
-    const msg = document.getElementById('users-msg');
-    if (rr.ok) { msg.textContent = ''; renderUsers(); }
-    else msg.textContent = (await rr.json()).error || 'Erreur';
-  });
+    <tbody>${users.map((u) => `<tr><td>${esc(u.username)}</td><td>${roleOpts(u)}</td><td><button class="ghost tiny" data-user-orgs="${u.id}" data-user-name="${esc(u.username)}">Gérer</button></td><td><button class="ghost tiny" data-user-projects="${u.id}" data-user-name="${esc(u.username)}">Gérer</button></td><td><button class="ghost tiny" data-user-oc="${u.id}" data-user-name="${esc(u.username)}">Accès</button></td><td class="code">${esc((u.created_at || '').replace('T', ' ').slice(0, 19))}</td>    <td><div class="icon-actions"><button class="ghost tiny" data-oc-restart="${esc(u.username)}" title="Redémarrer l'instance opencode@${esc(u.username)}.service">Redémarrer</button><button class="danger" data-del="${u.id}">Supprimer</button></div></td></tr>`).join('')}</tbody></table>`;
+  document.getElementById('add-user-btn').addEventListener('click', () => userCreateModal());
   document.querySelectorAll('#pane-users [data-del]').forEach((b) => b.addEventListener('click', async () => {
     await fetch(`/api/users/${b.dataset.del}`, { method: 'DELETE' });
     renderUsers();
@@ -827,6 +808,61 @@ async function renderUsers() {
   document.querySelectorAll('#pane-users [data-user-projects]').forEach((b) => b.addEventListener('click', () => userProjectsModal(Number(b.dataset.userProjects), b.dataset.userName)));
   document.querySelectorAll('#pane-users [data-user-oc]').forEach((b) => b.addEventListener('click', () => userOpencodeModal(Number(b.dataset.userOc), b.dataset.userName)));
   document.querySelectorAll('#pane-users [data-oc-restart]').forEach((b) => b.addEventListener('click', () => restartOpencodeSession(b.dataset.ocRestart)));
+}
+
+// Modale de création d'utilisateur (multi-sélection projets).
+async function userCreateModal() {
+  let projects = [];
+  try { projects = ((await api('/api/projects')).projects || []); } catch {}
+  const orgOpts = ORGANIZATIONS.map((o) => `<option value="${esc(o.id)}" ${o.id === currentOrg ? 'selected' : ''}>${esc(o.name || o.id)}</option>`).join('');
+  showModal(`
+    <div class="modal">
+      <h2>Créer un utilisateur</h2>
+      <div class="modal-form">
+        <label>Utilisateur
+          <input id="uc-username" placeholder="nom d'utilisateur" autocomplete="off" autofocus>
+        </label>
+        <label>Mot de passe
+          <input id="uc-password" type="password" placeholder="mot de passe">
+        </label>
+        <label>Rôle
+          <select id="uc-role">
+            <option value="user">utilisateur</option>
+            <option value="supervisor">superviseur</option>
+            <option value="admin">admin</option>
+          </select>
+        </label>
+        <label>Organisation
+          <select id="uc-org">${orgOpts}</select>
+        </label>
+        <div class="uc-proj-block">
+          <span class="uc-proj-label">Projets accessibles</span>
+          <p class="muted-sm">Aucun par défaut. Les administrateurs ont accès à tous les projets de l'organisation.</p>
+          <div class="uc-proj-list">
+            ${projects.map((p) => `<label class="filter-check"><input type="checkbox" class="uc-proj" value="${esc(p.id)}"> ${esc(p.name || p.id)} <code class="muted-sm">${esc(p.id)}</code></label>`).join('') || '<p class="muted-sm">Aucun projet dans cette organisation.</p>'}
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="ghost" id="modal-cancel">Annuler</button>
+        <button class="launch-btn" id="uc-create">Créer</button>
+      </div>
+      <div id="uc-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('uc-create').onclick = async () => {
+    const username = document.getElementById('uc-username').value.trim();
+    const password = document.getElementById('uc-password').value;
+    const role = document.getElementById('uc-role').value;
+    const organizationId = document.getElementById('uc-org').value;
+    const projectIds = [...document.querySelectorAll('#modal-backdrop .uc-proj:checked')].map((c) => c.value);
+    const m = document.getElementById('uc-msg');
+    if (!username) { m.textContent = 'Le nom d\'utilisateur est requis.'; m.className = 'msg error'; return; }
+    try {
+      await api('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password, role, organizationId, projectIds }) });
+      closeModal(); renderUsers();
+    } catch (e) { m.textContent = e.message || String(e); m.className = 'msg error'; }
+  };
 }
 
 // Redémarrage de l'instance systemd opencode@<user>.service d'un utilisateur (admin).

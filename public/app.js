@@ -3029,10 +3029,11 @@ async function renderWorkspaces() {
     return `<span class="badge ${cls}">${esc(s)}</span>`;
   };
   const projectsList = (w) => (w.projects || []).filter((p) => p.isDir).map((p) => `<code class="chip-repo">${esc(p.name)}</code>`).join(' ');
+  const ideBadge = (w) => w.ideUrl ? `<a class="badge running ws-ide" href="${esc(w.ideUrl)}" target="_blank" rel="noopener" title="Ouvrir l'IDE web Coder">IDE</a>` : '';
   document.getElementById('pane-workspaces').innerHTML = `
     <h2>Workspaces Coder <span class="muted-sm">— ${wsList.length} workspace(s)</span></h2>
     <div class="eco-restart-bar"><button class="launch-btn" id="ws-create-btn">Créer un workspace</button><span id="ws-msg" class="muted-sm"></span></div>
-    <table><thead><tr><th>Workspace</th><th>Propriétaire</th><th>Statut</th><th>Conteneur</th><th>Volume</th><th>Projets</th><th>Actions</th></tr></thead>
+    <table><thead><tr><th>Workspace</th><th>Propriétaire</th><th>Statut</th><th>IDE</th><th>Conteneur</th><th>Volume</th><th>Projets</th><th>Actions</th></tr></thead>
     <tbody>${wsList.map((w) => {
       const busy = !!(w.transitioning);
       const running = isRunning(w);
@@ -3040,11 +3041,12 @@ async function renderWorkspaces() {
       <td><strong>${esc(w.name)}</strong></td>
       <td>${esc(w.owner || '—')}</td>
       <td>${statusBadge(w)}</td>
+      <td>${running ? ideBadge(w) : '<span class="muted-sm">—</span>'}</td>
       <td><code class="muted-sm">${esc(w.container || '—')}</code></td>
       <td><code class="muted-sm">${esc((w.volume || '').slice(0, 30))}</code></td>
       <td>${projectsList(w) || '<span class="muted-sm">—</span>'}</td>
       <td class="icon-actions">
-        <button class="ghost tiny" data-ws-detail="${esc(w.name)}" title="Détails du workspace">Détail</button>
+        <button class="ghost tiny" data-ws-detail="${esc(w.name)}" data-ws-ide="${esc(w.ideUrl || '')}" title="Détails du workspace">Détail</button>
         ${running
           ? `<button class="ghost tiny" data-ws-stop="${esc(w.name)}" ${busy ? 'disabled' : ''} title="Arrêter le workspace">Stop</button>
              <button class="ghost tiny" data-ws-restart="${esc(w.name)}" ${busy ? 'disabled' : ''} title="Redémarrer le workspace">Restart</button>`
@@ -3055,7 +3057,7 @@ async function renderWorkspaces() {
     }).join('')}</tbody></table>`;
   // Événements
   document.getElementById('ws-create-btn').addEventListener('click', () => workspaceCreateModal());
-  document.querySelectorAll('#pane-workspaces [data-ws-detail]').forEach((b) => b.addEventListener('click', () => workspaceDetailModal(b.dataset.wsDetail)));
+  document.querySelectorAll('#pane-workspaces [data-ws-detail]').forEach((b) => b.addEventListener('click', () => workspaceDetailModal(b.dataset.wsDetail, b.dataset.wsIde || null)));
   document.querySelectorAll('#pane-workspaces [data-ws-start]').forEach((b) => b.addEventListener('click', (ev) => workspaceAction(b.dataset.wsStart, 'start', ev.currentTarget)));
   document.querySelectorAll('#pane-workspaces [data-ws-stop]').forEach((b) => b.addEventListener('click', (ev) => workspaceAction(b.dataset.wsStop, 'stop', ev.currentTarget)));
   document.querySelectorAll('#pane-workspaces [data-ws-restart]').forEach((b) => b.addEventListener('click', (ev) => workspaceAction(b.dataset.wsRestart, 'restart', ev.currentTarget)));
@@ -3125,13 +3127,14 @@ function followWorkspaces(name) {
   }, 3000);
 }
 
-async function workspaceDetailModal(name) {
+async function workspaceDetailModal(name, ideUrl) {
   let detail = null, error = null;
   try { detail = await api(`/api/workspaces/${encodeURIComponent(name)}`); } catch (e) { error = e.message || String(e); }
   const output = detail ? (detail.output || '') : error || 'Aucune donnée';
+  const ideBtn = ideUrl ? `<a class="badge running ws-ide" href="${esc(ideUrl)}" target="_blank" rel="noopener" style="margin-left:8px">Ouvrir l'IDE</a>` : '';
   showModal(`
     <div class="modal">
-      <h2>Workspace — ${esc(name)}</h2>
+      <h2>Workspace — ${esc(name)}${ideBtn}</h2>
       <pre class="modal-pre">${esc(output)}</pre>
       <div class="modal-actions"><button class="ghost" onclick="closeModal()">Fermer</button></div>
     </div>`);

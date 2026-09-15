@@ -5,6 +5,21 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## 2026-09-15 · Panneau — accès direct à l'IDE web Coder depuis les Workspaces (v0.9.58)
+
+Depuis la page **Workspaces**, un badge **IDE** permet d'ouvrir **directement le
+VS Code web Coder** (app `code-server`) du workspace dans un nouvel onglet :
+
+- **URL construite serveur** (`pilot.listWorkspaces`) : `{coder_url}/@{owner}/{name}/apps/{slug}/`
+  — le `slug` est extrait des `apps` de la découverte Coder (`coder list
+  --output json`) ; champ `ideUrl` exposé par workspace.
+- **Table** : badge « IDE » cliquable dans la colonne IDE (workspaces `running`
+  uniquement, « — » sinon).
+- **Modale de détail** (`coder show`) : bouton « Ouvrir l'IDE » en tête de modale
+  pour les workspaces démarrés.
+- Aucune authentification supplémentaire : le navigateur de l'utilisateur doit
+  déjà être connecté au serveur Coder (session Coder).
+
 ## 2026-09-15 · Panneau — gestion CRUD des Workspaces Coder (v0.9.57)
 
 Page dédiée **Workspaces** (onglet réservé aux admins) sur le panneau :

@@ -56,7 +56,14 @@ export async function listWorkspaces(org) {
         const key = `${ownerName}/${String(w.name).toLowerCase()}`;
         const match = byName.get(key.toLowerCase()) || [...byName.entries()].find(([k]) => k.toLowerCase().endsWith(`/${String(w.name).toLowerCase()}`))?.[1];
         const st = match ? stateOf(match) : null;
-        return { ...w, ...(st ? { coderStatus: st.label, coderTransition: st.transition, coderBuildStatus: st.buildStatus, jobStatus: st.job, transitioning: st.transitioning } : {}) };
+        // URL de l'IDE web Coder (code-server / vscode) — ouverte dans un nouvel onglet.
+        const ideUrl = (() => {
+          if (!match) return null;
+          const resources = (match.latest_build || {}).resources || [];
+          for (const r of resources) for (const a of r.agents || []) for (const app of a.apps || []) if (app.slug) return `${cfg.url}/@${match.owner_name}/${match.name}/apps/${app.slug}/`;
+          return null;
+        })();
+        return { ...w, ...(st ? { coderStatus: st.label, coderTransition: st.transition, coderBuildStatus: st.buildStatus, jobStatus: st.job, transitioning: st.transitioning } : {}), ideUrl: ideUrl || undefined };
       });
     }
   } catch { /* enrichissement best-effort : on garde la découverte Docker */ }

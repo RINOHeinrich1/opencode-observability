@@ -50,6 +50,17 @@ button.ws-busy {
 }
 button.ghost.ws-busy .ws-spinner { border-color: var(--border); border-top-color: var(--text); }
 @keyframes ws-spin { to { transform: rotate(360deg); } }
+
+/* Lien IDE web Coder (badge cliquable, nouvel onglet) */
+.ws-ide {
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ws-ide::before { content: '▶'; font-size: 9px; }
+.ws-ide:hover { opacity: 0.85; }
 nav {
   display: flex; gap: 4px; padding: 8px 20px; border-bottom: 1px solid var(--border);
   background: var(--panel); flex-wrap: wrap;

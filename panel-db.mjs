@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS users (
   is_admin      INTEGER NOT NULL DEFAULT 0,
   role          TEXT NOT NULL DEFAULT 'user',
   organization_id TEXT,
+  notify_email  TEXT,
   created_at    TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sessions (
@@ -62,6 +63,9 @@ async function ensureReady() {
       // Multi-organisation (v0.9.47) : chaque utilisateur appartient à une org.
       await pool().query("ALTER TABLE users ADD COLUMN IF NOT EXISTS organization_id TEXT");
       await pool().query("UPDATE users SET organization_id = 'onirtech' WHERE organization_id IS NULL");
+      // Email de notification par utilisateur (v0.9.65) : destinataire des emails
+      // du daemon opencode-notifier (résolu via tasks.created_by = username).
+      await pool().query("ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_email TEXT");
       // Multi-org (v0.9.49) : appartenance N:N + organisation active de session.
       await pool().query("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS active_organization_id TEXT");
       // Identité opencode par utilisateur (v0.9.57) : instance dédiée (port + mot de passe).
@@ -123,8 +127,8 @@ export async function getUserById(id) {
 }
 
 export async function listUsers() {
-  const res = await pool().query("SELECT id, username, role, is_admin, organization_id, created_at FROM users ORDER BY id");
-  return res.rows.map((r) => ({ ...r, role: normalizeRole(r), organizationId: r.organization_id ?? null }));
+  const res = await pool().query("SELECT id, username, role, is_admin, organization_id, notify_email, created_at FROM users ORDER BY id");
+  return res.rows.map((r) => ({ ...r, role: normalizeRole(r), organizationId: r.organization_id ?? null, notifyEmail: r.notify_email ?? null }));
 }
 
 // Rôle effectif : 'admin' > 'supervisor' > 'user' (is_admin rétrocompat supercede).
@@ -178,11 +182,11 @@ export async function setUserOrganizations(userId, organizationIds) {
 // Utilisateurs membres d'une organisation.
 export async function listUsersByOrganization(organizationId) {
   const res = await pool().query(
-    `SELECT u.id, u.username, u.role, u.is_admin, u.created_at
+    `SELECT u.id, u.username, u.role, u.is_admin, u.notify_email, u.created_at
      FROM users u JOIN user_organizations uo ON uo.user_id = u.id
      WHERE uo.organization_id = $1 ORDER BY u.id`, [organizationId],
   );
-  return res.rows.map((r) => ({ ...r, role: normalizeRole(r), organizationId }));
+  return res.rows.map((r) => ({ ...r, role: normalizeRole(r), organizationId, notifyEmail: r.notify_email ?? null }));
 }
 
 // --- Accès par PROJET (v0.9.52) : N:N utilisateur ⇄ projet ------------------
@@ -213,6 +217,14 @@ export async function listUsersByProject(projectId) {
 export async function updatePassword(userId, password) {
   const { salt, hash } = hashPassword(password);
   await pool().query("UPDATE users SET password_hash = $1, salt = $2 WHERE id = $3", [hash, salt, userId]);
+}
+
+// Email de NOTIFICATION d'un utilisateur (v0.9.65) : destinataire des emails du
+// daemon opencode-notifier. Vide → repli sur NOTIFY_RECIPIENTS global.
+export async function setUserNotifyEmail(userId, email) {
+  const value = email && String(email).trim() ? String(email).trim() : null;
+  await pool().query("UPDATE users SET notify_email = $1 WHERE id = $2", [value, userId]);
+  return getUserById(userId);
 }
 
 export async function deleteUser(userId) {

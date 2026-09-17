@@ -873,8 +873,8 @@ async function renderUsers() {
     <h2>Utilisateurs <span class="muted-sm">— organisation ${esc(currentOrg)}</span></h2>
     <p class="muted-sm">Rôles : <strong>admin</strong> (écriture, tous les projets de l'organisation) · <strong>superviseur</strong> (lecture seule, tous les projets) · <strong>utilisateur</strong> (peut créer/agir, ne voit que <em>ses propres créations</em>). L'accès aux <strong>projets</strong> est explicite (aucun par défaut ; l'admin a tous les projets).</p>
     <div class="eco-restart-bar"><button class="launch-btn" id="add-user-btn">Ajouter un utilisateur</button><span id="users-msg" class="muted-sm"></span></div>
-    <table><thead><tr><th>Utilisateur</th><th>Rôle</th><th>Organisations</th><th>Projets</th><th>opencode</th><th>Créé le</th><th></th></tr></thead>
-    <tbody>${users.map((u) => `<tr><td>${esc(u.username)}</td><td>${roleOpts(u)}</td><td><button class="ghost tiny" data-user-orgs="${u.id}" data-user-name="${esc(u.username)}">Gérer</button></td><td><button class="ghost tiny" data-user-projects="${u.id}" data-user-name="${esc(u.username)}">Gérer</button></td><td><button class="ghost tiny" data-user-oc="${u.id}" data-user-name="${esc(u.username)}">Accès</button></td><td class="code">${esc((u.created_at || '').replace('T', ' ').slice(0, 19))}</td>    <td><div class="icon-actions"><button class="ghost tiny" data-oc-restart="${esc(u.username)}" title="Redémarrer l'instance opencode@${esc(u.username)}.service">Redémarrer</button><button class="danger" data-del="${u.id}">Supprimer</button></div></td></tr>`).join('')}</tbody></table>`;
+    <table><thead><tr><th>Utilisateur</th><th>Rôle</th><th>Organisations</th><th>Projets</th><th>opencode</th><th>Email notif.</th><th>Créé le</th><th></th></tr></thead>
+    <tbody>${users.map((u) => `<tr><td>${esc(u.username)}</td><td>${roleOpts(u)}</td><td><button class="ghost tiny" data-user-orgs="${u.id}" data-user-name="${esc(u.username)}">Gérer</button></td><td><button class="ghost tiny" data-user-projects="${u.id}" data-user-name="${esc(u.username)}">Gérer</button></td><td><button class="ghost tiny" data-user-oc="${u.id}" data-user-name="${esc(u.username)}">Accès</button></td><td><button class="ghost tiny" data-user-email="${u.id}" data-user-name="${esc(u.username)}" data-user-email-val="${esc(u.notifyEmail || '')}" title="Configurer l'email de notification">${u.notifyEmail ? esc(u.notifyEmail) : '—'}</button></td><td class="code">${esc((u.created_at || '').replace('T', ' ').slice(0, 19))}</td>    <td><div class="icon-actions"><button class="ghost tiny" data-oc-restart="${esc(u.username)}" title="Redémarrer l'instance opencode@${esc(u.username)}.service">Redémarrer</button><button class="danger" data-del="${u.id}">Supprimer</button></div></td></tr>`).join('')}</tbody></table>`;
   document.getElementById('add-user-btn').addEventListener('click', () => userCreateModal());
   document.querySelectorAll('#pane-users [data-del]').forEach((b) => b.addEventListener('click', async () => {
     await fetch(`/api/users/${b.dataset.del}`, { method: 'DELETE' });
@@ -889,6 +889,7 @@ async function renderUsers() {
   document.querySelectorAll('#pane-users [data-user-orgs]').forEach((b) => b.addEventListener('click', () => userOrgsModal(Number(b.dataset.userOrgs), b.dataset.userName)));
   document.querySelectorAll('#pane-users [data-user-projects]').forEach((b) => b.addEventListener('click', () => userProjectsModal(Number(b.dataset.userProjects), b.dataset.userName)));
   document.querySelectorAll('#pane-users [data-user-oc]').forEach((b) => b.addEventListener('click', () => userOpencodeModal(Number(b.dataset.userOc), b.dataset.userName)));
+  document.querySelectorAll('#pane-users [data-user-email]').forEach((b) => b.addEventListener('click', () => userNotifyEmailModal(Number(b.dataset.userEmail), b.dataset.userName, b.dataset.userEmailVal)));
   document.querySelectorAll('#pane-users [data-oc-restart]').forEach((b) => b.addEventListener('click', () => restartOpencodeSession(b.dataset.ocRestart)));
 }
 
@@ -1001,9 +1002,44 @@ async function userOpencodeModal(userId, username) {
   };
 }
 
+// Modale « email de notification » d'un utilisateur (admin). Le daemon
+// opencode-notifier envoie les notifications à cette adresse (résolue via
+// tasks.created_by = username). Vide → repli sur NOTIFY_RECIPIENTS global.
+async function userNotifyEmailModal(userId, username, current) {
+  showModal(`
+    <div class="modal">
+      <h2>Email de notification — ${esc(username || userId)}</h2>
+      <p class="muted-sm">Adresse utilisée par le daemon <code>opencode-notifier</code> pour notifier cet utilisateur (statut de tâche, décision requise, incident, déploiement…). Laisse vide pour retomber sur le destinataire global.</p>
+      <label class="modal-field">Adresse email
+        <input id="une-email" type="email" placeholder="prenom.nom@exemple.com" value="${esc(current || '')}" autocomplete="off">
+      </label>
+      <div class="modal-actions">
+        <button class="ghost" id="modal-cancel">Annuler</button>
+        <button class="danger" id="une-clear">Vider</button>
+        <button class="launch-btn" id="une-save">Enregistrer</button>
+      </div>
+      <div id="une-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  const save = async (email) => {
+    const m = document.getElementById('une-msg');
+    const btn = document.getElementById('une-save');
+    const orig = btn ? btn.innerHTML : null;
+    try {
+      if (btn) setBtnBusy(btn, 'Enregistrement');
+      await api(`/api/users/${userId}/notify-email`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
+      closeModal(); renderUsers();
+    } catch (e) {
+      if (btn && orig != null) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = orig; }
+      if (m) { m.textContent = e.message || String(e); m.className = 'msg error'; }
+    }
+  };
+  document.getElementById('une-save').onclick = () => save(document.getElementById('une-email').value.trim());
+  document.getElementById('une-clear').onclick = () => save('');
+}
+
 // Modale d'accès par PROJET d'un utilisateur (admin). Aucun par défaut.
-async function userProjectsModal(userId, username) {
-  let all = [];
+async function userProjectsModal(userId, username) {  let all = [];
   try { all = ((await api('/api/projects')).projects || []); } catch {}
   let mine = [];
   try { const r = await api(`/api/users/${userId}/projects`); mine = (r && r.projects) || []; } catch {}

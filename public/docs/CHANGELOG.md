@@ -5,6 +5,23 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## 2026-09-17 · Email de notification par utilisateur (v0.9.65)
+
+Les emails du daemon `opencode-notifier` partaient tous vers une adresse globale
+(`NOTIFY_RECIPIENTS`). Chaque utilisateur peut désormais configurer **son** adresse.
+
+- **`users.notify_email`** (colonne + migration idempotente), éditable depuis
+  l'onglet **Utilisateurs** (bouton « Email notif. » → modale ; vide = repli
+  global).
+- **API** : `POST /api/users/:id/notify-email` (`setUserNotifyEmail`) ; l'email
+  est renvoyé dans la liste des utilisateurs.
+- **Résolution côté daemon** : le notifier relie `tasks.created_by` (username) à
+  `users.notify_email` (base `panel`) et envoie l'email à cette adresse ; repli
+  sur `NOTIFY_RECIPIENTS` si l'email est absent. Les notifications d'audit sont
+  rattachées à l'utilisateur via l'artefact d'audit (audit_id → tâche → créateur).
+- Voir aussi `opencode-notifier` (module `recipients.mjs`) et
+  `send-mail.mjs --to`.
+
 ## 2026-09-17 · Sessions recette/batch — verrou anti-double-lancement (v0.9.64)
 
 Sécurisation supplémentaire du bouton « Session d'orchestration » (et « Session

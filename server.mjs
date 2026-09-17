@@ -7,7 +7,7 @@ import { join, dirname, extname, normalize, basename, relative } from "node:path
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawn } from "node:child_process";
 import pg from "pg";
-import { openDb, getUserByUsername, verifyPassword, createUser, updateUserRole, updateUserOrganization, listUsers, listUserOrganizations, setUserOrganizations, listUsersByOrganization, listUserProjects, setUserProjects, listUsersByProject, getUserOpencode, setUserOpencode, listUsersOpencode, updatePassword, deleteUser, createSession, deleteSession, setSessionOrganization, pruneSessions, listArchives, archivedTaskIds, archiveTask, restoreTask, getArchive, removeArchive } from "./panel-db.mjs";
+import { openDb, getUserByUsername, verifyPassword, createUser, updateUserRole, updateUserOrganization, listUsers, listUserOrganizations, setUserOrganizations, listUsersByOrganization, listUserProjects, setUserProjects, listUsersByProject, getUserOpencode, setUserOpencode, listUsersOpencode, updatePassword, setUserNotifyEmail, deleteUser, createSession, deleteSession, setSessionOrganization, pruneSessions, listArchives, archivedTaskIds, archiveTask, restoreTask, getArchive, removeArchive } from "./panel-db.mjs";
 import { currentUser, sessionToken, cookieHeader, clearCookieHeader } from "./auth.mjs";
 import { scanEcosystem, updateAgentModel } from "./ecosystem.mjs";
 import { loadEnv } from "./env.mjs";
@@ -735,6 +735,13 @@ async function handleUserAction(req, res, user, path) {
     const u = await updateUserOrganization(id, organizationId ? String(organizationId) : null);
     if (!u) return sendJson(res, 404, { error: "utilisateur inconnu" });
     return sendJson(res, 200, { ok: true, user: { id: u.id, username: u.username, organizationId: u.organization_id || null } });
+  }
+  // Email de notification par utilisateur (v0.9.65) : destinataire des emails.
+  if (req.method === "POST" && parts[3] === "notify-email") {
+    const { email } = await readBody(req);
+    const u = await setUserNotifyEmail(id, email ? String(email) : null);
+    if (!u) return sendJson(res, 404, { error: "utilisateur inconnu" });
+    return sendJson(res, 200, { ok: true, user: { id: u.id, username: u.username, notifyEmail: u.notify_email || null } });
   }
   // Appartenance N:N : remplace la liste des organisations d'un utilisateur.
   if (req.method === "POST" && parts[3] === "organizations") {

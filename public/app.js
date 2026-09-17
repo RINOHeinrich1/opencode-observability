@@ -2218,13 +2218,18 @@ function collectE2EParams(prefix, msg) {
 
 // Ouvre la session de recette : reprend la session rattachée si elle existe
 // (jamais de doublon) ; `force = true` démarre une nouvelle session.
-async function openRecetteSession(recetteId, force) {
+async function openRecetteSession(recetteId, force, btn) {
+  const original = btn ? btn.innerHTML : null;
+  setBtnBusy(btn, 'Ouverture');
   try {
     const r = await api(`/api/recettes/${encodeURIComponent(recetteId)}/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: !!force }) });
     if (r.sessionId && /^ses_/.test(r.sessionId)) window.open(sessionHref(r.sessionId), '_blank');
     else alert(r.error || (force ? 'Impossible de lancer une nouvelle session de recette.' : 'Aucune session de recette disponible.'));
     refreshActive();
-  } catch (e) { alert('Échec de la session de recette : ' + (e.message || e)); }
+  } catch (e) {
+    if (btn && original != null) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+    alert('Échec de la session de recette : ' + (e.message || e));
+  }
 }
 
 function recetteCard(r) {
@@ -2303,12 +2308,12 @@ async function renderRecettes() {
   if (clear) clear.addEventListener('click', () => setUserFilter([]));
   document.getElementById('new-recette-btn').addEventListener('click', () => recetteCreateModal());
   document.getElementById('new-recette-btn').addEventListener('click', () => recetteCreateModal());
-  document.querySelectorAll('#pane-recettes [data-rec-session]').forEach((b) => b.addEventListener('click', () => openRecetteSession(b.dataset.recSession, false)));
+  document.querySelectorAll('#pane-recettes [data-rec-session]').forEach((b) => b.addEventListener('click', () => openRecetteSession(b.dataset.recSession, false, b)));
   document.querySelectorAll('#pane-recettes [data-rec-finish]').forEach((b) => b.addEventListener('click', () => finishRecetteModal(b.dataset.recFinish)));
   document.querySelectorAll('#pane-recettes [data-rec-items]').forEach((b) => b.addEventListener('click', () => recetteDetailItemsModal(b.dataset.recItems)));
   document.querySelectorAll('#pane-recettes [data-rec-docs]').forEach((b) => b.addEventListener('click', () => recetteDocsModal(b.dataset.recDocs)));
   document.querySelectorAll('#pane-recettes [data-rec-detail]').forEach((b) => b.addEventListener('click', () => recetteDetailModal(b.dataset.recDetail)));
-  document.querySelectorAll('#pane-recettes [data-batch-session]').forEach((b) => b.addEventListener('click', () => openBatchSession(b.dataset.batchSession)));
+  document.querySelectorAll('#pane-recettes [data-batch-session]').forEach((b) => b.addEventListener('click', () => openBatchSession(b.dataset.batchSession, b)));
   document.querySelectorAll('#pane-recettes [data-batch-detail]').forEach((b) => b.addEventListener('click', () => batchDetailModal(b.dataset.batchDetail)));
 }
 
@@ -2331,13 +2336,18 @@ function batchCard(b) {
   </article>`;
 }
 
-async function openBatchSession(batchId) {
+async function openBatchSession(batchId, btn) {
+  const original = btn ? btn.innerHTML : null;
+  setBtnBusy(btn, 'Ouverture');
   try {
     const r = await api(`/api/batches/${encodeURIComponent(batchId)}/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: false }) });
     if (r.sessionId && /^ses_/.test(r.sessionId)) window.open(sessionHref(r.sessionId), '_blank');
     else alert(r.error || 'Impossible de lancer la session d\'orchestration du batch.');
     refreshActive();
-  } catch (e) { alert('Échec : ' + (e.message || e)); }
+  } catch (e) {
+    if (btn && original != null) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+    alert('Échec : ' + (e.message || e));
+  }
 }
 
 async function batchDetailModal(batchId) {
@@ -2813,10 +2823,15 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
     root.querySelectorAll('[data-item-cancel]').forEach((b) => b.addEventListener('click', renderItems));
     root.querySelectorAll('[data-item-del]').forEach((b) => b.addEventListener('click', async () => {
       if (!confirm('Supprimer définitivement cet élément de recette ?')) return;
+      const original = b.innerHTML;
+      setBtnBusy(b, 'Suppression');
       try {
         await api(`/api/recettes/${encodeURIComponent(recetteId)}/items/${b.dataset.itemDel}`, { method: 'DELETE' });
         await reloadItems();
-      } catch (e) { alert('Échec de la suppression : ' + (e.message || e)); }
+      } catch (e) {
+        b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
+        alert('Échec de la suppression : ' + (e.message || e));
+      }
     }));
     root.querySelectorAll('[data-item-save]').forEach((b) => b.addEventListener('click', async () => {
       const id = b.dataset.itemSave;
@@ -2835,10 +2850,14 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
         vigilance: form.querySelector('.fe-vigilance').value.trim() || null,
       };
       try {
-        b.disabled = true;
+        setBtnBusy(b, 'Enregistrement');
         await api(`/api/recettes/${encodeURIComponent(recetteId)}/items/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields }) });
         await reloadItems();
-      } catch (e) { msg.textContent = e.message || e; msg.className = 'msg error'; b.disabled = false; }
+      } catch (e) {
+        msg.textContent = e.message || e;
+        msg.className = 'msg error';
+        b.disabled = false; b.classList.remove('ws-busy'); b.textContent = 'Enregistrer';
+      }
     }));
   };
   const renderItems = () => {
@@ -2861,9 +2880,14 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
   };
   if (readOnly) return;
   const hasOpenEdit = () => !!document.querySelector('#finish-items .finish-item-edit');
-  document.getElementById('modal-confirm').onclick = async () => {
+  const confirmBtn = document.getElementById('modal-confirm');
+  const noTasksBtn = document.getElementById('modal-finish-notasks');
+  confirmBtn.onclick = async () => {
     const msg = document.getElementById('recette-finish-msg');
     if (hasOpenEdit()) { msg.textContent = 'Un élément est en cours d\'édition : enregistre-le ou annule-le avant de terminer.'; msg.className = 'msg error'; return; }
+    const original = confirmBtn.innerHTML;
+    setBtnBusy(confirmBtn, 'Clôture');
+    if (noTasksBtn) noTasksBtn.disabled = true;
     try {
       const payload = items.map((it) => ({ itemId: it.id, content: it.content, classification: it.classification, title: it.title, acceptance: it.acceptance, scope: it.scope, execOrder: it.execOrder }));
       const launchMode = (document.querySelector('input[name="rec-launch-mode"]:checked') || {}).value || 'batch';
@@ -2876,18 +2900,31 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
       const modeLabel = { batch: 'Batch', session: 'Session unique', manual: 'Manuel' }[launchMode] || launchMode;
       alert(`${msg.textContent}\nMode de lancement : ${modeLabel}`);
       refreshActive();
-    } catch (e) { msg.textContent = e.message || e; msg.className = 'msg error'; }
+    } catch (e) {
+      msg.textContent = e.message || e;
+      msg.className = 'msg error';
+      confirmBtn.disabled = false; confirmBtn.classList.remove('ws-busy'); confirmBtn.innerHTML = original;
+      if (noTasksBtn) noTasksBtn.disabled = false;
+    }
   };
-  document.getElementById('modal-finish-notasks').onclick = async () => {
+  noTasksBtn.onclick = async () => {
     const msg = document.getElementById('recette-finish-msg');
     if (hasOpenEdit()) { msg.textContent = 'Un élément est en cours d\'édition : enregistre-le ou annule-le avant de terminer.'; msg.className = 'msg error'; return; }
     if (!confirm('Clôturer la recette SANS générer de tâches ?\n\nLes éléments relevés restent consultables dans le détail de la recette.')) return;
+    const original = noTasksBtn.innerHTML;
+    setBtnBusy(noTasksBtn, 'Clôture');
+    if (confirmBtn) confirmBtn.disabled = true;
     try {
       await api(`/api/recettes/${encodeURIComponent(recetteId)}/finish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ createTasks: false }) });
       closeModal();
       alert('Recette terminée (aucune tâche créée).');
       refreshActive();
-    } catch (e) { msg.textContent = e.message || e; msg.className = 'msg error'; }
+    } catch (e) {
+      msg.textContent = e.message || e;
+      msg.className = 'msg error';
+      noTasksBtn.disabled = false; noTasksBtn.classList.remove('ws-busy'); noTasksBtn.innerHTML = original;
+      if (confirmBtn) confirmBtn.disabled = false;
+    }
   };
 }
 
@@ -3401,12 +3438,18 @@ async function workspaceDelete(name, trigger) {
   }
 }
 
-// Indication visuelle sur le bouton cliqué : désactivé + spinner + libellé "…".
-function setWSActionBusy(btn, action) {
+// Indication visuelle générique sur un bouton cliqué : désactivé + spinner + libellé "…".
+// Évite les double-clics (l'action peut être longue : session, clôture, suppression…).
+function setBtnBusy(btn, label) {
   if (!btn) return;
   btn.disabled = true;
   btn.classList.add('ws-busy');
-  btn.innerHTML = `<span class="ws-spinner"></span> ${esc(action)}…`;
+  btn.innerHTML = `<span class="ws-spinner"></span> ${esc(label || 'en cours')}…`;
+}
+
+// Indication visuelle sur le bouton cliqué : désactivé + spinner + libellé "…".
+function setWSActionBusy(btn, action) {
+  setBtnBusy(btn, action);
 }
 
 // Suit l'évolution du statut après une action : re-rendu périodique de la table
@@ -4311,7 +4354,7 @@ async function taskActionsModal(taskId) {
   const rework = document.getElementById('act-rework');
   if (rework) rework.onclick = () => { closeModal(); reworkTaskModal(taskId); };
   const recetteSession = document.getElementById('act-recette-session');
-  if (recetteSession) recetteSession.onclick = () => openRecetteSession(recetteSession.dataset.recId, false);
+  if (recetteSession) recetteSession.onclick = () => openRecetteSession(recetteSession.dataset.recId, false, recetteSession);
   const recetteFinish = document.getElementById('act-recette-finish');
   if (recetteFinish) recetteFinish.onclick = () => { closeModal(); finishRecetteModal(recetteFinish.dataset.recId); };
   const recetteDetail = document.getElementById('act-recette-detail');

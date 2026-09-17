@@ -5,6 +5,20 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## 2026-09-17 · Retour visuel des boutons (anti double-clic) (v0.9.61)
+
+Les actions du parcours recette ne restaient pas silencieuses pendant leur
+traitement, invitant au double-clic (création de plusieurs sessions, clôtures
+répétées…) :
+
+- Helper générique `setBtnBusy(btn, label)` : bouton **désactivé + spinner +
+  libellé « … »** (réutilise les styles `ws-busy` / `ws-spinner`).
+- Appliqué à **« Session de la recette »** (carte recette et détail de tâche),
+  **« Session d'orchestration »** des batches, **« Confirmer & terminer »** et
+  **« Terminer sans créer de tâches »** (les deux boutons de clôture sont
+  désactivés ensemble), ainsi qu'à **« Enregistrer »** et **« ✕ supprimer »** des
+  éléments. En cas d'erreur, le bouton est rétabli.
+
 ## 2026-09-17 · Sessions de recette / batch — reprise fiable (v0.9.60)
 
 Correction du bug « une nouvelle session à chaque clic sur Session de la recette » :

@@ -5,6 +5,25 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## 2026-09-17 · Recette — clôture sans tâches + édition/suppression des éléments (v0.9.59)
+
+Dans la modale **« Terminer la recette »** (onglet Recettes) :
+
+- **Terminer sans créer de tâches** : nouveau bouton qui clôt la recette (`done`)
+  **sans** `task_register` ; les éléments relevés restent consultables dans le
+  détail de la recette (utile pour une recette exploratoire ou des constats déjà
+  traités ailleurs). Le endpoint `POST /api/recettes/:id/finish` accepte
+  `createTasks: false` (`pilot.finishRecette`).
+- **Modifier / supprimer les éléments avant clôture** : chaque élément devient
+  éditable en ligne (classification, titre, contenu, critère d'acceptation,
+  scope, ordre d'exécution, vigilance) via le nouveau
+  `POST /api/recettes/:id/items/:itemId` (`pilot.updateRecetteItem` →
+  `recette_item_update`), et supprimable (`recette_item_delete`). Les corrections
+  sont persistées en base avant la clôture ; un élément en cours d'édition doit
+  être enregistré ou annulé avant de terminer.
+- **MCP task-orchestrator** : `recette_item_update` accepte désormais `content`
+  (l'édition du contenu d'un élément était jusqu'ici impossible).
+
 ## 2026-09-15 · Panneau — accès direct à l'IDE web Coder depuis les Workspaces (v0.9.58)
 
 Depuis la page **Workspaces**, un badge **IDE** permet d'ouvrir **directement le

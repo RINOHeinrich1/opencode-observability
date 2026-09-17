@@ -694,6 +694,12 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 }
 .finish-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .finish-item { align-items: flex-start; padding: 8px 0; }
+.finish-item-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.finish-item-edit { background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin: 6px 0; }
+.finish-field { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; }
+.finish-field > span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+.finish-field select, .finish-field input, .finish-field textarea { width: 100%; box-sizing: border-box; }
+.finish-item-edit .recette-task { width: 100%; }
 @media (max-width: 640px) {
   .modal-finish { width: 100%; max-height: 94vh; padding: 14px; }
 }

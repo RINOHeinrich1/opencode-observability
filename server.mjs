@@ -152,6 +152,40 @@ function latestStatusSubquery() {
   return "(SELECT status FROM executions e WHERE e.task_id = t.id ORDER BY attempt DESC LIMIT 1)";
 }
 
+// Renvoie les workspaces accessibles et leurs projets attachés selon l'organisation
+// active et/ou la liste des projets assignés. Admin sans contrainte = null.
+async function workspaceAccess(projectAccess, organizationId) {
+  // Aucune contrainte (admin sans org active) → pas de filtre.
+  if (projectAccess === null && !organizationId) return null;
+  const conds = ["r.workspace IS NOT NULL"];
+  const params = [];
+  if (projectAccess !== null) {
+    params.push(projectAccess);
+    conds.push(`pr.project_id = ANY($${params.length})`);
+  }
+  if (organizationId) {
+    params.push(organizationId);
+    conds.push(`r.organization_id = $${params.length}`);
+  }
+  // LEFT JOIN pour récupérer tous les workspaces de l'org (même sans projet)
+  // tout en listant les project_id attachés quand ils existent.
+  const rows = (await registry().query(
+    `SELECT DISTINCT r.workspace, pr.project_id FROM repos r
+     LEFT JOIN project_repos pr ON pr.repo_id = r.id
+     WHERE ${conds.join(" AND ")}`,
+    params,
+  )).rows;
+  const allowedNames = new Set(rows.map((row) => row.workspace));
+  const attachedProjects = new Map();
+  for (const row of rows) {
+    if (!row.project_id) continue;
+    const set = attachedProjects.get(row.workspace) || new Set();
+    set.add(row.project_id);
+    attachedProjects.set(row.workspace, set);
+  }
+  return { allowedNames, attachedProjects };
+}
+
 async function registryStats(url, forcedOrg, ownerScope, projectAccess) {
   const archived = await archivedTaskIds();
   const db = registry();
@@ -861,6 +895,7 @@ function mapE2ETestRow(r) {
     version: r.version,
     firstSeenAt: r.first_seen_at,
     updatedAt: r.updated_at,
+    createdBy: r.created_by || null,
   };
 }
 
@@ -920,7 +955,7 @@ async function e2eProjectsByTestIds(ids) {
   return map;
 }
 
-async function registryE2ETests(url, forcedOrg, ownerScope) {
+async function registryE2ETests(url, forcedOrg, ownerScope, projectAccess) {
   const db = registry();
   const project = url.searchParams.get("project");
   const status = url.searchParams.get("status");
@@ -952,7 +987,7 @@ async function registryE2ETests(url, forcedOrg, ownerScope) {
   let rows = [];
   try {
     rows = (await db.query(
-      `SELECT t.id, t.project, t.spec_file, t.scenario, t.title, t.description, t.status, t.version, t.meta, t.first_seen_at, t.updated_at,
+      `SELECT t.id, t.project, t.spec_file, t.scenario, t.title, t.description, t.status, t.version, t.meta, t.first_seen_at, t.updated_at, t.created_by,
               (SELECT COUNT(*) FROM task_e2e te WHERE te.e2e_test_id = t.id)::int AS task_count,
               (SELECT x.status FROM e2e_executions x WHERE x.e2e_test_id = t.id ORDER BY x.created_at DESC LIMIT 1) AS last_status,
               (SELECT x.origin FROM e2e_executions x WHERE x.e2e_test_id = t.id ORDER BY x.created_at DESC LIMIT 1) AS last_origin,
@@ -1398,6 +1433,7 @@ const server = createServer(async (req, res) => {
     if (path === "/api/models" && req.method === "GET") return sendJson(res, 200, { models: listModels() });
     const agentModelMatch = path.match(/^\/api\/agents\/([^/]+)\/model$/);
     if (agentModelMatch && req.method === "POST") {
+      if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
       const b = await readBody(req);
       const model = String(b.model || "").trim();
       if (!model || model.length > 200 || !model.includes("/")) {
@@ -1454,13 +1490,47 @@ const server = createServer(async (req, res) => {
     if (path === "/api/stats") return sendJson(res, 200, await registryStats(url, user.activeOrganizationId, user.ownerScope, user.projectAccess));
 
     if (path === "/api/workspaces" && req.method === "GET") {
-      return sendJson(res, 200, await pilot.listWorkspaces());
+      const r = await pilot.listWorkspaces(user.activeOrganizationId || undefined);
+      let ws = (r && r.workspaces) || [];
+      // Filtrage par accès PROJET / ORGANISATION : la source de vérité est la
+      // table repos (+ project_repos pour les utilisateurs). L'admin sans org
+      // active voit tout ; sinon il est limité à son organisation.
+      // On en profite pour enrichir chaque workspace avec ses VRAIS projets
+      // attachés (ceux des repos dont le workspace correspond).
+      const access = await workspaceAccess(user.projectAccess, user.activeOrganizationId);
+      if (access) {
+        ws = ws.filter((w) => access.allowedNames.has(w.name));
+        for (const w of ws) {
+          const set = access.attachedProjects.get(w.name);
+          w.attachedProjects = set ? [...set].sort() : [];
+        }
+      } else {
+        // Admin sans org active : on enrichit quand même avec tous les projets attachés.
+        const rows = (await registry().query(
+          "SELECT DISTINCT r.workspace, pr.project_id FROM repos r LEFT JOIN project_repos pr ON pr.repo_id = r.id WHERE r.workspace IS NOT NULL",
+        )).rows;
+        const map = new Map();
+        for (const row of rows) {
+          const set = map.get(row.workspace) || new Set();
+          set.add(row.project_id);
+          map.set(row.workspace, set);
+        }
+        for (const w of ws) {
+          const set = map.get(w.name);
+          w.attachedProjects = set ? [...set].sort() : [];
+        }
+      }
+      return sendJson(res, 200, { count: ws.length, workspaces: ws });
     }
     // --- Workspaces Coder : opérations CRUD (admin) -------------------------
     const wsShowMatch = path.match(/^\/api\/workspaces\/([^/]+)$/);
     if (wsShowMatch && req.method === "GET") {
-      if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
-      try { return sendJson(res, 200, await pilot.showWorkspace(decodeURIComponent(wsShowMatch[1]), user.activeOrganizationId || "onirtech")); }
+      const name = decodeURIComponent(wsShowMatch[1]);
+      // Lecture seule : un utilisateur peut voir le détail si le workspace
+      // correspond à un de ses projets assignés / à son organisation (admin = tous).
+      const access = await workspaceAccess(user.projectAccess, user.activeOrganizationId);
+      if (access && !access.allowedNames.has(name)) return sendJson(res, 403, { error: "réservé aux administrateurs" });
+      try { return sendJson(res, 200, await pilot.showWorkspace(name, user.activeOrganizationId || "onirtech")); }
       catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e).slice(0, 500) }); }
     }
     const wsStartMatch = path.match(/^\/api\/workspaces\/([^/]+)\/start$/);
@@ -1869,7 +1939,7 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 200, await pilot.launchRecetteSession({ recetteId: recetteAction[1], force: !!(sb && sb.force) }));
       }
       const b = await readBody(req);
-      return sendJson(res, 200, await pilot.finishRecette({ recetteId: recetteAction[1], items: b.items, by: user.username, launchMode: b.launchMode }));
+      return sendJson(res, 200, await pilot.finishRecette({ recetteId: recetteAction[1], items: b.items, by: user.username, launchMode: b.launchMode, createTasks: b.createTasks !== false }));
     }
     const recetteTaskAdd = path.match(/^\/api\/recettes\/([^/]+)\/tasks$/);
     if (recetteTaskAdd && req.method === "POST") {
@@ -1883,6 +1953,11 @@ const server = createServer(async (req, res) => {
     const recetteItemDel = path.match(/^\/api\/recettes\/([^/]+)\/items\/([0-9]+)$/);
     if (recetteItemDel && req.method === "DELETE") {
       return sendJson(res, 200, await pilot.removeRecetteItem({ recetteId: recetteItemDel[1], itemId: Number(recetteItemDel[2]) }));
+    }
+    const recetteItemEdit = path.match(/^\/api\/recettes\/([^/]+)\/items\/([0-9]+)$/);
+    if (recetteItemEdit && (req.method === "PATCH" || req.method === "POST")) {
+      const b = await readBody(req);
+      return sendJson(res, 200, await pilot.updateRecetteItem({ recetteId: recetteItemEdit[1], itemId: Number(recetteItemEdit[2]), fields: b.fields || b }));
     }
     const recetteDocView = path.match(/^\/api\/recettes\/([^/]+)\/documents\/([0-9]+)\/view$/);
     if (recetteDocView && req.method === "GET") {

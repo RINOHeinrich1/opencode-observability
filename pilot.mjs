@@ -581,18 +581,16 @@ export async function launchRecetteSession({ recetteId, force = false }) {
   const dir = gitPath || null;
 
   // REPRISE : dès qu'une session est rattachée à la recette, on la REPREND —
-  // on n'en relance JAMAIS automatiquement une nouvelle. L'ancienne détection
-  // par `opencode session list` (répertoire) dépendait du cwd du serveur au
-  // moment du lancement : en cas de faux négatif, chaque clic créait une
-  // nouvelle session (doublons). Pour repartir de zéro : `force = true`.
-  // Si le projet n'a pas de répertoire (gitPath null), la session stockée est
-  // dans un contexte inconnu (souvent un fantôme du cwd panneau) — on la
-  // ignore et on en crée une nouvelle dans le projet global d'opencode.
+  // on n'en relance JAMAIS automatiquement une nouvelle. On vérifie l'existence
+  // de la session d'abord globalement, puis dans le répertoire du projet. Une
+  // session stockée dans un autre cwd (fantôme du panneau) est ainsi quand même
+  // retrouvée. Pour repartir de zéro : `force = true`.
   if (!force && rec.sessionId && /^ses_/.test(rec.sessionId)) {
-    if (dir && sessionExists(rec.sessionId, dir)) {
+    const existsGlobally = sessionExists(rec.sessionId);
+    const existsInDir = dir && sessionExists(rec.sessionId, dir);
+    if (existsGlobally || existsInDir) {
       return { recetteId, sessionId: rec.sessionId, resumed: true };
     }
-    // gitPath null ou session disparue → on crée une nouvelle session.
   }
   // ADR-12 : documents de référence du projet couvert (adr-tech, specs,
   // gherkin) — lus en contexte par l'agent de recette pour confronter le constat.
@@ -882,13 +880,37 @@ export async function removeRecetteItem({ recetteId, itemId }) {
   return { ok: true };
 }
 
+// Modifie un élément de recette (édition lors de la confirmation de clôture).
+// Garde : recette encore ouverte (non `done`) — on n'édite pas une recette clôturée.
+export async function updateRecetteItem({ recetteId, itemId, fields = {} }) {
+  if (!recetteId || !itemId) throw new Error("recetteId et itemId requis");
+  const r = await taskOrchestrator("recette_get", { recetteId });
+  const rec = r && r.recette;
+  if (!rec) throw new Error(`recette inconnue : ${recetteId}`);
+  if (rec.status === "done") throw new Error("recette clôturée : élément non modifiable");
+  const allowed = ["content", "classification", "discussion", "scope", "project", "title", "acceptance", "execOrder", "vigilance"];
+  const payload = { itemId: Number(itemId) };
+  for (const k of allowed) if (fields[k] !== undefined) payload[k] = fields[k];
+  const res = await taskOrchestrator("recette_item_update", payload);
+  return { ok: true, item: res && res.item };
+}
+
 // Clôt la recette : crée une tâche par élément confirmé (via task_register) puis confirme.
-export async function finishRecette({ recetteId, items, by, launchMode = "batch" }) {
+// `createTasks: false` clôt la recette SANS générer de tâche (les éléments relevés
+// restent consultables dans le détail) — les corrections éventuelles des éléments
+// ont déjà été persistées via updateRecetteItem.
+export async function finishRecette({ recetteId, items, by, launchMode = "batch", createTasks = true }) {
   if (!recetteId) throw new Error("recetteId requis");
   const r = await taskOrchestrator("recette_get", { recetteId });
   const rec = r && r.recette;
   if (!rec) throw new Error(`recette inconnue : ${recetteId}`);
   if (rec.status !== "in_progress") throw new Error(`recette non en cours (statut ${rec.status})`);
+
+  // Clôture SANS création de tâches : on confirme simplement la recette.
+  if (createTasks === false) {
+    const confirmed = await taskOrchestrator("recette_confirm", { recetteId, confirmedBy: by || "human" });
+    return { ok: true, recetteId, created: [], batch: null, createTasks: false, recette: confirmed.recette };
+  }
 
   const created = [];
   const CLASS_LABEL = { rework: "Rework", bug: "Bug", improvement: "Improvement", feature: "Feature" };

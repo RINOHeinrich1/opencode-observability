@@ -46,6 +46,16 @@ via sa propre table, pas une décision — v0.7.5).
   de **nouvelles tâches** via `task_register` (typées, `recette_class`,
   **liées** à la tâche initiale via `task_links`, scope transmis) → recette
   `done`. La tâche initiale reste `done` et **intacte**.
+- **Modification / suppression des éléments à la clôture** (v0.9.59) : dans la
+  modale « Terminer la recette », chaque élément est **éditable** (classification,
+  titre, contenu, critère d'acceptation, scope, ordre d'exécution, vigilance) et
+  **supprimable** avant confirmation ; les corrections sont persistées
+  (`recette_item_update` / `recette_item_delete`). Un élément en cours d'édition
+  doit être enregistré ou annulé avant de terminer.
+- **Clôture sans génération de tâches** (v0.9.59) : le bouton **« Terminer sans
+  créer de tâches »** clôt la recette (`done`) **sans** `task_register` ; les
+  éléments relevés restent consultables dans le détail de la recette. Utile pour
+  une recette exploratoire ou des constats déjà traités ailleurs.
 - **Création de tâche** : on peut lier des **tâches associées** (v0.6.0) avec une
   **nature de liaison** (« c'est là que le package a été créé ») — exploitées par
   atomic-plan (commits, plans, docs).

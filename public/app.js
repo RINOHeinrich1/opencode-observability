@@ -9,9 +9,16 @@ let taskFilter = '';     // tâche sélectionnée comme filtre ('' = aucune)
 let SESSION_BASE_URL = 'https://dev.madatalk.fr'; // base des liens de session opencode
 let groupRecetteEnabled = localStorage.getItem('panel_group_recette') === '1'; // persistant (onglets + rechargement)
 let groupParallelEnabled = localStorage.getItem('panel_group_parallel') === '1'; // grouper par ordre/parallèle
+let groupUserEnabled = localStorage.getItem('panel_group_user') === '1'; // grouper par utilisateur (créateur)
 let tasksProjectFilter = localStorage.getItem('panel_task_project') || ''; // filtre projet de l'onglet Tâches (persistant re-rendu)
 let tasksStatusFilter = (() => { try { const v = JSON.parse(localStorage.getItem('panel_task_status') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })(); // statuts affichés (multi-valeurs, persistant re-rendu)
 const persistTasksStatus = () => localStorage.setItem('panel_task_status', JSON.stringify(tasksStatusFilter));
+let tasksUserFilter = (() => { try { const v = JSON.parse(localStorage.getItem('panel_task_users') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })(); // créateurs sélectionnés (multi-valeurs)
+const persistTasksUsers = () => localStorage.setItem('panel_task_users', JSON.stringify(tasksUserFilter));
+let recettesUserFilter = (() => { try { const v = JSON.parse(localStorage.getItem('panel_recette_users') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })();
+const persistRecettesUsers = () => localStorage.setItem('panel_recette_users', JSON.stringify(recettesUserFilter));
+let e2eUserFilter = (() => { try { const v = JSON.parse(localStorage.getItem('panel_e2e_users') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })();
+const persistE2EUsers = () => localStorage.setItem('panel_e2e_users', JSON.stringify(e2eUserFilter));
 let tasksNeedRecette = localStorage.getItem('panel_task_recette') === '1'; // pré-filtre « À recetter » (recette_status != done)
 let tasksActifOnly = localStorage.getItem('panel_task_actif') === '1';      // pré-filtre « Actif » (statut != done)
 let tasksDateFrom = localStorage.getItem('panel_task_date_from') || '';      // filtre date de création — borne basse (YYYY-MM-DD)
@@ -108,7 +115,6 @@ function renderNav() {
   const activeIsDefault = (ORGANIZATIONS.find((o) => o.id === currentOrg) || {}).isDefault === true;
   const buttons = tabs
     .filter(([t]) => t !== 'users' || IS_ADMIN)
-    .filter(([t]) => t !== 'workspaces' || IS_ADMIN)
     .filter(([t]) => t !== 'ecosystem' || activeIsDefault)
     .map(([t, label]) => `<button data-tab="${t}">${esc(label)}</button>`)
     .join('');
@@ -385,7 +391,14 @@ async function renderTasks() {
         <select id="f-status-add" title="Ajouter un statut à afficher"><option value="">+ Ajouter…</option></select>
         <button type="button" class="ghost tagfilter-clear" id="f-status-clear" hidden>tout afficher</button>
       </div>
+      <div class="status-tagfilter" id="user-tagfilter" title="Afficher les tâches des utilisateurs sélectionnés (multi)">
+        <span class="tagfilter-label">Créateurs :</span>
+        <span class="tagfilter-tags" id="f-user-tags"></span>
+        <select id="f-user-add" title="Ajouter un créateur à filtrer"><option value="">+ Ajouter…</option></select>
+        <button type="button" class="ghost tagfilter-clear" id="f-user-clear" hidden>tout afficher</button>
+      </div>
       <label class="muted filter-check"><input type="checkbox" id="f-group-recette" ${groupRecetteEnabled ? 'checked' : ''}> Grouper par recette</label>
+      <label class="muted filter-check"><input type="checkbox" id="f-group-user" ${groupUserEnabled ? 'checked' : ''}> Grouper par utilisateur</label>
       <label class="muted filter-check" id="f-group-parallel-wrap" hidden><input type="checkbox" id="f-group-parallel" ${groupParallelEnabled ? 'checked' : ''}> Grouper par tâches parallèles</label>
       <label class="muted filter-check" title="Tâches dont la recette n'est pas faite"><input type="checkbox" id="f-filter-recette" ${tasksNeedRecette ? 'checked' : ''}> À recetter</label>
       <label class="muted filter-check" title="Tâches dont le statut n'est pas « done »"><input type="checkbox" id="f-filter-actif" ${tasksActifOnly ? 'checked' : ''}> Actif</label>
@@ -398,7 +411,7 @@ async function renderTasks() {
       </span>
       <button id="new-task-btn" class="launch-btn">+ Nouvelle tâche</button>
     </div>
-    <table><thead><tr><th></th><th>ID</th><th>Projet</th><th>Type</th><th>Priorité</th><th>Statut</th><th>Recette</th><th>E2E</th><th>Demande</th><th>Session</th><th>Actions</th></tr></thead>
+    <table><thead><tr><th></th><th>ID</th><th>Projet</th><th>Type</th><th>Priorité</th><th>Statut</th><th>Recette</th><th>E2E</th><th>Demande</th><th>Session</th><th>Créée par</th><th>Actions</th></tr></thead>
     <tbody id="tasks-body"></tbody></table>`;
   const statuses = [...new Set(tasks.map((t) => t.status || 'queued'))];
   const projectSel = document.getElementById('f-project');
@@ -427,11 +440,31 @@ async function renderTasks() {
     renderStatusUI();
     apply();
   };
+  // Filtre créateur MULTI-VALEURS (même mécanisme que les statuts).
+  const userTagsBox = document.getElementById('f-user-tags');
+  const userSelAdd = document.getElementById('f-user-add');
+  const userClear = document.getElementById('f-user-clear');
+  const allCreators = [...new Set([...tasks.map((t) => t.created_by || '—').filter(Boolean), ...tasksUserFilter])];
+  const renderUserUI = () => {
+    userTagsBox.innerHTML = tasksUserFilter.length
+      ? tasksUserFilter.map((u) => `<span class="status-chip"><span class="chip-txt">${esc(u)}</span><button type="button" class="chip-x" data-user="${esc(u)}" title="Retirer « ${esc(u)} »">×</button></span>`).join('')
+      : '<span class="tagfilter-empty">tous les créateurs</span>';
+    userSelAdd.innerHTML = `<option value="">+ Ajouter…</option>` + allCreators.filter((u) => !tasksUserFilter.includes(u)).map((u) => `<option>${esc(u)}</option>`).join('');
+    userClear.hidden = !tasksUserFilter.length;
+  };
+  renderUserUI();
+  const setUserFilter = (next) => {
+    tasksUserFilter = [...new Set(next)];
+    persistTasksUsers();
+    renderUserUI();
+    apply();
+  };
   document.getElementById('new-task-btn').addEventListener('click', () => taskCreateModal());
   const apply = () => {
     const p = currentProject || (document.getElementById('f-project')?.value || '');
     const st = tasksStatusFilter;
     const groupRecette = document.getElementById('f-group-recette').checked;
+    const groupUser = document.getElementById('f-group-user').checked;
     const groupParallel = document.getElementById('f-group-parallel').checked;
     const parallelWrap = document.getElementById('f-group-parallel-wrap');
     if (parallelWrap) parallelWrap.hidden = !groupRecette;
@@ -440,20 +473,23 @@ async function renderTasks() {
     const dateFrom = document.getElementById('f-date-from').value; // YYYY-MM-DD
     const dateTo = document.getElementById('f-date-to').value;
     const dayOf = (t) => (t.created_at || '').slice(0, 10); // partie date ISO
+    const uf = tasksUserFilter;
     const rows = tasks.filter((t) =>
       (!p || t.project === p)
       && (!currentOrg || (t.organization_id || 'onirtech') === currentOrg)
       && (!st.length || st.includes(t.status || 'queued'))
+      && (!uf.length || uf.includes(t.created_by || '—'))
       && (!needRecette || (t.recette_status || 'pending') !== 'done')
       && (!actifOnly || (t.status || 'queued') !== 'done')
       && (!dateFrom || dayOf(t) >= dateFrom)
       && (!dateTo || dayOf(t) <= dateTo));
 
     // Une ligne de tâche (avec ses plans en sous-lignes).
-    const rowHtml = (t, recetteParent) => {
+    const rowHtml = (t, recetteParent, userGroup) => {
       const subs = plansByTask[t.id] || [];
       const toggle = subs.length ? `<button class="tree-toggle" data-toggle="${esc(t.id)}">▸</button>` : '';
       const recetteAttr = recetteParent ? ` data-recette-child="${esc(recetteParent)}"` : '';
+      const userAttr = userGroup ? ` data-user-child="${esc(userGroup)}"` : '';
       const recetteBadgeExtra = t.recette_class
         ? ` <span class="badge ${RECETTE_CLS_BADGE[t.recette_class] || 'queued'}" title="Issue de la recette (${RECETTE_CLS_LABEL[t.recette_class]})">recette</span>`
         : '';
@@ -463,7 +499,7 @@ async function renderTasks() {
       const vigBadge = t.recette_vigilance
         ? ` <span class="badge danger vig-badge" title="Point de vigilance / écart sémantique : ${esc(t.recette_vigilance)}">⚠ vigilance</span>`
         : '';
-      const parent = `<tr class="task-row"${recetteAttr}>
+      const parent = `<tr class="task-row"${recetteAttr}${userAttr}>
         <td>${toggle}</td>
         <td class="code">${esc(t.id)}</td>
         <td>${esc(t.project)}</td>
@@ -474,12 +510,13 @@ async function renderTasks() {
         <td>${e2eBadgeCell(t)}</td>
         <td><span title="${esc(t.request || '')}"><strong>${esc((t.title && t.title.trim()) ? t.title : (t.request || '').slice(0, 60))}</strong></span>${(t.title && t.title.trim()) && t.request ? `<span class="muted-sm"> — ${esc(t.request.slice(0, 40))}</span>` : ''}</td>
         <td>${sessionLink(t.session_id)}</td>
+        <td>${esc(t.created_by || '—')}</td>
         <td>${detailsButtons(t)}</td>
       </tr>`;
       const children = subs.map((s) => `
-        <tr class="subtask-row" data-child="${esc(t.id)}" hidden>
+        <tr class="subtask-row" data-child="${esc(t.id)}"${recetteAttr}${userAttr} hidden>
           <td></td>
-          <td colspan="9">
+          <td colspan="11">
             <div class="subtask">
               <span class="tree-branch">↳</span>
               <code>${esc(s.planId)}</code>
@@ -495,15 +532,15 @@ async function renderTasks() {
       return parent + children;
     };
 
-    let html;
-    if (groupRecette) {
-      // Regroupe les tâches issues d'une recette sous leur recette source (titre si disponible).
+    // Groupement par recette (factorisé pour être réutilisé à l'intérieur d'un groupe utilisateur).
+    const renderRecetteGroups = (list, userGroup) => {
       const bySource = {};
       const others = [];
-      for (const t of rows) {
+      for (const t of list) {
         if (t.recette_source) (bySource[t.recette_source] = bySource[t.recette_source] || []).push(t);
         else others.push(t);
       }
+      const recetteKey = (sourceId) => userGroup ? `${userGroup}:${sourceId}` : sourceId;
       const groupHtml = (sourceId, list) => {
         const sorted = [...list].sort((a, b) => (a.recette_order ?? 999) - (b.recette_order ?? 999) || String(a.id).localeCompare(String(b.id)));
         const title = sorted[0] && sorted[0].recette_source_title;
@@ -511,32 +548,54 @@ async function renderTasks() {
           ? 'Autres tâches'
           : (title ? `Recette — ${esc(title)}` : `Recette de ${esc(sourceId)}`);
         const cls = [...new Set(sorted.map((x) => x.recette_class).filter(Boolean))];
-        const head = `<tr class="recette-group-head"><td colspan="12">
-          <button class="tree-toggle" data-recette-toggle="${esc(sourceId)}">▸</button>
+        const rKey = recetteKey(sourceId);
+        const userAttr = userGroup ? ` data-user-child="${esc(userGroup)}"` : '';
+        const head = `<tr class="recette-group-head"${userAttr}><td colspan="12">
+          <button class="tree-toggle" data-recette-toggle="${esc(rKey)}">▸</button>
           <span class="code">${label}</span>
           <span class="muted-sm">— ${sorted.length} tâche(s)${cls.length ? ' · ' + cls.map((c) => RECETTE_CLS_LABEL[c]).join(' / ') : ''}</span>
         </td></tr>`;
         const members = () => {
-          if (!groupParallel) return sorted.map((t) => rowHtml(t, sourceId)).join('');
+          if (!groupParallel) return sorted.map((t) => rowHtml(t, rKey, userGroup)).join('');
           // Sous-groupes par ordre d'exécution (même ordre = parallèle).
           const byOrder = {};
           sorted.forEach((t) => { const o = t.recette_order ?? 999; (byOrder[o] = byOrder[o] || []).push(t); });
           return Object.keys(byOrder).sort((a, b) => Number(a) - Number(b)).map((o) => {
             const l = byOrder[o];
             const isParallel = l.length > 1;
-            const subHead = `<tr class="recette-order-row" data-recette-child="${esc(sourceId)}"><td colspan="12">
+            const subHead = `<tr class="recette-order-row" data-recette-child="${esc(rKey)}"${userAttr}><td colspan="12">
               <span class="tree-branch">↳</span> <strong>Ordre ${o === '999' ? '— (non défini)' : esc(o)}</strong>${isParallel ? ` <span class="muted-sm">(${l.length} exécutables en parallèle)</span>` : ''}
             </td></tr>`;
-            return subHead + l.map((t) => rowHtml(t, sourceId)).join('');
+            return subHead + l.map((t) => rowHtml(t, rKey, userGroup)).join('');
           }).join('');
         };
         return head + members();
       };
       const groups = Object.entries(bySource).sort((a, b) => b[0].localeCompare(a[0])).map(([s, l]) => groupHtml(s, l)).join('');
       const othersHtml = others.length ? groupHtml('(sans recette)', others) : '';
-      html = (groups + othersHtml) || '<tr><td colspan="12" class="muted">Aucune tâche</td></tr>';
+      return (groups + othersHtml) || '<tr><td colspan="12" class="muted">Aucune tâche</td></tr>';
+    };
+
+    let html;
+    if (groupUser) {
+      const byUser = {};
+      for (const t of rows) {
+        const u = t.created_by || '(sans utilisateur)';
+        (byUser[u] = byUser[u] || []).push(t);
+      }
+      html = Object.entries(byUser).sort(([a], [b]) => String(a).localeCompare(String(b))).map(([user, list]) => {
+        const head = `<tr class="recette-group-head"><td colspan="12">
+          <button class="tree-toggle" data-user-toggle="${esc(user)}">▸</button>
+          <span class="code">${esc(user)}</span>
+          <span class="muted-sm">— ${list.length} tâche(s)</span>
+        </td></tr>`;
+        const body = groupRecette ? renderRecetteGroups(list, user) : list.map((t) => rowHtml(t, null, user)).join('') || '<tr><td colspan="12" class="muted">Aucune tâche</td></tr>';
+        return head + body;
+      }).join('');
+    } else if (groupRecette) {
+      html = renderRecetteGroups(rows, null);
     } else {
-      html = rows.map((t) => rowHtml(t, null)).join('') || '<tr><td colspan="12" class="muted">Aucune tâche</td></tr>';
+      html = rows.map((t) => rowHtml(t, null, null)).join('') || '<tr><td colspan="12" class="muted">Aucune tâche</td></tr>';
     }
 
     document.getElementById('tasks-body').innerHTML = html;
@@ -553,6 +612,13 @@ async function renderTasks() {
     document.querySelectorAll('#tasks-body [data-recette-toggle]').forEach((b) => b.addEventListener('click', () => {
       const src = b.dataset.recetteToggle;
       const children = document.querySelectorAll(`#tasks-body [data-recette-child="${src}"]`);
+      const expanded = b.textContent === '▾';
+      children.forEach((c) => { c.hidden = expanded; });
+      b.textContent = expanded ? '▸' : '▾';
+    }));
+    document.querySelectorAll('#tasks-body [data-user-toggle]').forEach((b) => b.addEventListener('click', () => {
+      const user = b.dataset.userToggle;
+      const children = document.querySelectorAll(`#tasks-body [data-user-child="${user}"]`);
       const expanded = b.textContent === '▾';
       children.forEach((c) => { c.hidden = expanded; });
       b.textContent = expanded ? '▸' : '▾';
@@ -574,6 +640,16 @@ async function renderTasks() {
     if (x) setStatusFilter(tasksStatusFilter.filter((s) => s !== x.dataset.status));
   });
   statusClear.addEventListener('click', () => setStatusFilter([]));
+  userSelAdd.addEventListener('change', () => {
+    const v = userSelAdd.value;
+    if (v && !tasksUserFilter.includes(v)) setUserFilter([...tasksUserFilter, v]);
+    userSelAdd.value = '';
+  });
+  userTagsBox.addEventListener('click', (e) => {
+    const x = e.target.closest('.chip-x');
+    if (x) setUserFilter(tasksUserFilter.filter((u) => u !== x.dataset.user));
+  });
+  userClear.addEventListener('click', () => setUserFilter([]));
   const needRecetteBox = document.getElementById('f-filter-recette');
   if (needRecetteBox) needRecetteBox.addEventListener('change', () => {
     tasksNeedRecette = needRecetteBox.checked;
@@ -614,6 +690,12 @@ async function renderTasks() {
     groupRecetteEnabled = document.getElementById('f-group-recette').checked;
     localStorage.setItem('panel_group_recette', groupRecetteEnabled ? '1' : '0');
     if (!groupRecetteEnabled) { groupParallelEnabled = false; document.getElementById('f-group-parallel').checked = false; }
+    apply();
+  });
+  const userBox = document.getElementById('f-group-user');
+  if (userBox) userBox.addEventListener('change', () => {
+    groupUserEnabled = userBox.checked;
+    localStorage.setItem('panel_group_user', groupUserEnabled ? '1' : '0');
     apply();
   });
   const parallelBox = document.getElementById('f-group-parallel');
@@ -1183,12 +1265,30 @@ async function renderE2ETests() {
     api('/api/e2e-tests' + e2eQuery()),
     api('/api/projects').catch(() => ({ projects: [] })),
   ]);
-  const tests = data.tests || [];
+  let tests = data.tests || [];
   const projects = [...new Set([
     ...((projsRes.projects || []).map((p) => p.id).filter(Boolean)),
     ...tests.map((t) => t.project).filter(Boolean),
   ])].sort();
   if (e2eFilterProject && !projects.includes(e2eFilterProject)) projects.push(e2eFilterProject);
+  const allCreators = [...new Set([...tests.map((t) => t.createdBy || '—').filter(Boolean), ...e2eUserFilter])];
+  const renderUserUI = () => {
+    const box = document.getElementById('e2e-user-tags');
+    const sel = document.getElementById('e2e-user-add');
+    const clear = document.getElementById('e2e-user-clear');
+    if (!box) return;
+    box.innerHTML = e2eUserFilter.length
+      ? e2eUserFilter.map((u) => `<span class="status-chip"><span class="chip-txt">${esc(u)}</span><button type="button" class="chip-x" data-user="${esc(u)}" title="Retirer « ${esc(u)} »">×</button></span>`).join('')
+      : '<span class="tagfilter-empty">tous les créateurs</span>';
+    sel.innerHTML = `<option value="">+ Ajouter…</option>` + allCreators.filter((u) => !e2eUserFilter.includes(u)).map((u) => `<option>${esc(u)}</option>`).join('');
+    clear.hidden = !e2eUserFilter.length;
+  };
+  const setUserFilter = (next) => {
+    e2eUserFilter = [...new Set(next)];
+    persistE2EUsers();
+    refreshActive();
+  };
+  tests = tests.filter((t) => !e2eUserFilter.length || e2eUserFilter.includes(t.createdBy || '—'));
   document.getElementById('pane-e2etests').innerHTML = `
     <h2>Tests E2E <span class="muted-sm">— entités de 1er niveau</span></h2>
     <p class="muted-sm">Un test Playwright est enregistré indépendamment des tâches ; les exécutions lui appartiennent (origine tâche / recette / CI / manuelle).</p>
@@ -1197,11 +1297,18 @@ async function renderE2ETests() {
       ${currentProject ? '' : `<select id="e2e-f-project" title="Filtrer par projet couvert"><option value="">Tous les projets</option>${projects.map((p) => `<option value="${esc(p)}" ${e2eFilterProject === p ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>`}
       <select id="e2e-f-status" title="Filtrer par statut du test"><option value="">Tous les statuts</option>${E2E_STATUS_OPTIONS}</select>
       <input id="e2e-f-search" placeholder="recherche (titre / scénario / spec)…" value="${esc(e2eFilterSearch)}">
+      <div class="status-tagfilter" id="e2e-user-tagfilter" title="Afficher les tests des utilisateurs sélectionnés (multi)">
+        <span class="tagfilter-label">Créateurs :</span>
+        <span class="tagfilter-tags" id="e2e-user-tags"></span>
+        <select id="e2e-user-add" title="Ajouter un créateur à filtrer"><option value="">+ Ajouter…</option></select>
+        <button type="button" class="ghost tagfilter-clear" id="e2e-user-clear" hidden>tout afficher</button>
+      </div>
       <button id="agent-session-btn" class="ghost" title="Ouvrir l'agent de test — reprendre une session existante ou en ouvrir une nouvelle (sans forcément créer un test)">Session test-agent</button>
       <button id="new-e2e-btn" class="launch-btn">+ Nouveau test</button>
     </div>
-    <table><thead><tr><th>Titre / Comportement</th><th>Projet</th><th>Repos traversés</th><th>Scénario</th><th>Statut</th><th>Dernier run</th><th>Actions</th></tr></thead>
-    <tbody>${tests.map(e2eTableRow).join('') || `<tr><td colspan="7" class="muted">${taskFilter ? 'Aucun test E2E associé à la tâche <code>' + esc(taskFilter) + '</code>.' : (e2eFilterStatus ? 'Aucun test E2E ' + esc((E2E_TEST_STATUS_LABEL[e2eFilterStatus] || e2eFilterStatus)) + ' (changez le filtre de statut).' : 'Aucun test E2E enregistré.')}</td></tr>`}</tbody></table>`;
+    <table><thead><tr><th>Titre / Comportement</th><th>Projet</th><th>Repos traversés</th><th>Scénario</th><th>Statut</th><th>Dernier run</th><th>Créé par</th><th>Actions</th></tr></thead>
+    <tbody>${tests.map(e2eTableRow).join('') || `<tr><td colspan="8" class="muted">${taskFilter ? 'Aucun test E2E associé à la tâche <code>' + esc(taskFilter) + '</code>.' : (e2eFilterStatus ? 'Aucun test E2E ' + esc((E2E_TEST_STATUS_LABEL[e2eFilterStatus] || e2eFilterStatus)) + ' (changez le filtre de statut).' : 'Aucun test E2E enregistré.')}</td></tr>`}</tbody></table>`;
+  renderUserUI();
   bindTaskFilter();
   const e2eProjSel = document.getElementById('e2e-f-project');
   if (e2eProjSel) e2eProjSel.addEventListener('change', (ev) => { e2eFilterProject = ev.target.value; refreshActive(); });
@@ -1210,6 +1317,19 @@ async function renderE2ETests() {
   statusSel.addEventListener('change', (ev) => { e2eFilterStatus = ev.target.value; refreshActive(); });
   const searchInp = document.getElementById('e2e-f-search');
   searchInp.addEventListener('change', () => { e2eFilterSearch = searchInp.value; refreshActive(); });
+  const e2eUserSel = document.getElementById('e2e-user-add');
+  if (e2eUserSel) e2eUserSel.addEventListener('change', () => {
+    const v = e2eUserSel.value;
+    if (v && !e2eUserFilter.includes(v)) setUserFilter([...e2eUserFilter, v]);
+    e2eUserSel.value = '';
+  });
+  const e2eUserTags = document.getElementById('e2e-user-tags');
+  if (e2eUserTags) e2eUserTags.addEventListener('click', (e) => {
+    const x = e.target.closest('.chip-x');
+    if (x) setUserFilter(e2eUserFilter.filter((u) => u !== x.dataset.user));
+  });
+  const e2eUserClear = document.getElementById('e2e-user-clear');
+  if (e2eUserClear) e2eUserClear.addEventListener('click', () => setUserFilter([]));
   document.getElementById('new-e2e-btn').addEventListener('click', () => e2eCreateModal());
   document.getElementById('agent-session-btn').addEventListener('click', () => agentSessionModal());
   document.querySelectorAll('#pane-e2etests [data-e2e-detail]').forEach((b) => b.addEventListener('click', () => e2eDetailModal(b.dataset.e2eDetail)));
@@ -1229,6 +1349,7 @@ function e2eTableRow(t) {
     <td class="muted-sm">${esc(t.scenario || '—')}</td>
     <td>${e2eTestStatusBadge(t.status)}</td>
     <td>${lastRun}</td>
+    <td>${esc(t.createdBy || '—')}</td>
     <td>${IS_ADMIN
       ? `<div class="icon-actions">
           <button class="icon-btn" data-e2e-detail="${esc(t.e2eTestId)}" title="Voir le détail du test (exécutions, vidéo, rapport)">Détail</button>
@@ -2116,6 +2237,7 @@ function recetteCard(r) {
       <div class="project-kv"><span class="lbl">Tâches couvertes</span><span>${r.tasks_count || 0}</span></div>
       <div class="project-kv"><span class="lbl">Éléments</span><span>${r.items_count || 0}</span></div>
       ${r.confirmed_at ? `<div class="project-kv"><span class="lbl">Confirmée</span><span class="muted-sm">${esc((r.confirmed_at || '').replace('T', ' ').slice(0, 16))}</span></div>` : ''}
+      <div class="project-kv"><span class="lbl">Créée par</span><span>${esc(r.created_by || '—')}</span></div>
     </div>
     <div class="project-card-actions">
       <button class="ghost" data-rec-docs="${esc(r.recette_id)}">Documents (${r.documents_count || 0})</button>
@@ -2131,14 +2253,55 @@ async function renderRecettes() {
     api('/api/recettes' + (currentProject ? `?project=${encodeURIComponent(currentProject)}` : '')),
     api('/api/batches' + (currentProject ? `?project=${encodeURIComponent(currentProject)}` : '')).catch(() => ({ batches: [] })),
   ]);
-  const recs = data.recettes || [];
+  let recs = data.recettes || [];
   const batches = (bdata.batches || []).filter((b) => b.status === 'active');
+  const allCreators = [...new Set([...recs.map((r) => r.created_by || '—').filter(Boolean), ...recettesUserFilter])];
+  const renderUserUI = () => {
+    const box = document.getElementById('rec-user-tags');
+    const sel = document.getElementById('rec-user-add');
+    const clear = document.getElementById('rec-user-clear');
+    if (!box) return;
+    box.innerHTML = recettesUserFilter.length
+      ? recettesUserFilter.map((u) => `<span class="status-chip"><span class="chip-txt">${esc(u)}</span><button type="button" class="chip-x" data-user="${esc(u)}" title="Retirer « ${esc(u)} »">×</button></span>`).join('')
+      : '<span class="tagfilter-empty">tous les créateurs</span>';
+    sel.innerHTML = `<option value="">+ Ajouter…</option>` + allCreators.filter((u) => !recettesUserFilter.includes(u)).map((u) => `<option>${esc(u)}</option>`).join('');
+    clear.hidden = !recettesUserFilter.length;
+  };
+  const setUserFilter = (next) => {
+    recettesUserFilter = [...new Set(next)];
+    persistRecettesUsers();
+    refreshActive();
+  };
+  recs = recs.filter((r) => !recettesUserFilter.length || recettesUserFilter.includes(r.created_by || '—'));
   document.getElementById('pane-recettes').innerHTML = `
     <h2>Recettes</h2>
     <p class="muted-sm">Opérations de vérification — chaque recette couvre UN projet (produit) et 0..N tâches de ce projet ; les repos transverses du projet sont sa portée réelle. Titre et session dédiée.</p>
     ${batches.length ? `<div class="actions-section"><h3>Batches d'orchestration actifs <span class="muted-sm">(${batches.length})</span></h3><div class="project-cards">${batches.map(batchCard).join('')}</div></div>` : ''}
-    <div class="filters"><button id="new-recette-btn" class="launch-btn">+ Nouvelle recette</button></div>
+    <div class="filters">
+      <div class="status-tagfilter" id="rec-user-tagfilter" title="Afficher les recettes des utilisateurs sélectionnés (multi)">
+        <span class="tagfilter-label">Créateurs :</span>
+        <span class="tagfilter-tags" id="rec-user-tags"></span>
+        <select id="rec-user-add" title="Ajouter un créateur à filtrer"><option value="">+ Ajouter…</option></select>
+        <button type="button" class="ghost tagfilter-clear" id="rec-user-clear" hidden>tout afficher</button>
+      </div>
+      <button id="new-recette-btn" class="launch-btn">+ Nouvelle recette</button>
+    </div>
     <div class="project-cards">${recs.map(recetteCard).join('') || '<p class="muted">Aucune recette.</p>'}</div>`;
+  renderUserUI();
+  const sel = document.getElementById('rec-user-add');
+  if (sel) sel.addEventListener('change', () => {
+    const v = sel.value;
+    if (v && !recettesUserFilter.includes(v)) setUserFilter([...recettesUserFilter, v]);
+    sel.value = '';
+  });
+  const box = document.getElementById('rec-user-tags');
+  if (box) box.addEventListener('click', (e) => {
+    const x = e.target.closest('.chip-x');
+    if (x) setUserFilter(recettesUserFilter.filter((u) => u !== x.dataset.user));
+  });
+  const clear = document.getElementById('rec-user-clear');
+  if (clear) clear.addEventListener('click', () => setUserFilter([]));
+  document.getElementById('new-recette-btn').addEventListener('click', () => recetteCreateModal());
   document.getElementById('new-recette-btn').addEventListener('click', () => recetteCreateModal());
   document.querySelectorAll('#pane-recettes [data-rec-session]').forEach((b) => b.addEventListener('click', () => openRecetteSession(b.dataset.recSession, false)));
   document.querySelectorAll('#pane-recettes [data-rec-finish]').forEach((b) => b.addEventListener('click', () => finishRecetteModal(b.dataset.recFinish)));
@@ -2539,17 +2702,20 @@ async function recetteCreateModal() {
 
 // Modal de recette (items) : 'finish' = clôture avec confirmation (in_progress) ;
 // 'detail' = lecture seule (recette terminée) — même présentation, sans action de clôture.
+// En mode 'finish', chaque élément est modifiable/supprimable avant clôture, et la
+// recette peut être terminée AVEC ou SANS génération de tâches.
 async function recetteItemsModal(recetteId, mode = 'finish') {
   const readOnly = mode === 'detail';
+  const CLASS_OPTS = ['rework', 'bug', 'improvement', 'feature'];
   let d;
   try { d = await api(`/api/recettes/${encodeURIComponent(recetteId)}`); } catch (e) { alert('Impossible de charger la recette : ' + (e.message || e)); return; }
   const rec = d.recette || {};
-  const items = rec.items || [];
+  let items = rec.items || [];
   const itemCard = (it) => {
     const full = it.content || '';
     const truncated = full.length > 120;
     const show = truncated ? full.slice(0, 120) + '…' : full;
-    return `<div class="recette-item finish-item">
+    return `<div class="recette-item finish-item" data-item-id="${it.id}">
       <span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span>
       ${it.project ? `<code class="chip-project">${esc(it.project)}</code>` : ''}
       <div class="recette-task">
@@ -2565,14 +2731,41 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
         ${it.vigilance ? `<p class="muted-sm warn"><strong>⚠ Point de vigilance :</strong> ${esc(it.vigilance)}</p>` : ''}
         ${it.scope && it.scope.length ? `<p class="muted-sm"><strong>Scope :</strong> ${esc(it.scope.join(', '))}</p>` : ''}
       </div>
+      ${!readOnly && it.status !== 'task_created' ? `<div class="finish-item-actions">
+        <button type="button" class="ghost" data-item-edit="${it.id}" title="Modifier cet élément">✎ modifier</button>
+        <button type="button" class="ghost rec-item-del" data-item-del="${it.id}" title="Supprimer cet élément">✕ supprimer</button>
+      </div>` : ''}
     </div>`;
   };
+  const editForm = (it) => `<div class="recette-item finish-item finish-item-edit" data-item-id="${it.id}">
+    <div class="recette-task">
+      <div class="finish-field"><span>Classification</span>
+        <select class="fe-classification">${CLASS_OPTS.map((c) => `<option value="${c}" ${it.classification === c ? 'selected' : ''}>${RECETTE_CLS_LABEL[c]}</option>`).join('')}</select></div>
+      <div class="finish-field"><span>Titre court (titre de la tâche créée)</span>
+        <input class="fe-title" value="${esc(it.title || '')}"></div>
+      <div class="finish-field"><span>Contenu (remarque / demande / constat)</span>
+        <textarea class="fe-content modal-textarea" rows="3">${esc(it.content || '')}</textarea></div>
+      <div class="finish-field"><span>Critère d'acceptation</span>
+        <textarea class="fe-acceptance modal-textarea" rows="2">${esc(it.acceptance || '')}</textarea></div>
+      <div class="finish-field"><span>Scope (chemins, séparés par des virgules)</span>
+        <input class="fe-scope" value="${esc((it.scope || []).join(', '))}" placeholder="ex: src/features/x, src/shared/y"></div>
+      <div class="finish-field"><span>Ordre d'exécution (même n° = parallèle)</span>
+        <input class="fe-execorder" type="number" min="0" value="${it.execOrder != null ? esc(it.execOrder) : ''}"></div>
+      <div class="finish-field"><span>Point de vigilance / écart sémantique</span>
+        <textarea class="fe-vigilance modal-textarea" rows="2">${esc(it.vigilance || '')}</textarea></div>
+      <div class="finish-item-actions">
+        <button type="button" class="approve" data-item-save="${it.id}">Enregistrer</button>
+        <button type="button" class="ghost" data-item-cancel="${it.id}">Annuler</button>
+      </div>
+      <div class="msg" data-item-msg="${it.id}"></div>
+    </div>
+  </div>`;
   const intro = readOnly
     ? (items.length
       ? '<p>Éléments relevés lors de la recette (lecture seule) :</p>'
       : '<p class="muted-sm">Aucun élément relevé.</p>')
     : (items.length
-      ? '<p>Éléments relevés — ils seront transformés en <strong>nouvelles tâches</strong> (titre + demande + critère d\'acceptation) :</p>'
+      ? '<p>Éléments relevés — tu peux les <strong>modifier</strong> ou les <strong>supprimer</strong> avant de clôturer. À la confirmation, ils sont transformés en <strong>nouvelles tâches</strong> (titre + demande + critère d\'acceptation) — ou termine la recette sans créer de tâche.</p>'
       : '<p class="muted-sm">Aucun élément relevé : la recette sera clôturée sans créer de tâche.</p>');
   const launchModeBlock = readOnly ? '' : `
     <fieldset class="pilot-fieldset" style="margin-top:12px">
@@ -2586,36 +2779,95 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
       <div class="finish-head"><h2 style="margin:0">${readOnly ? 'Détail de la recette' : 'Terminer la recette'}</h2>
         <button class="ghost" id="finish-fullscreen" title="Plein écran">⛶</button></div>
       <p class="muted">${esc(rec.title || recetteId)} — ${recetteScopeChips(rec)}${readOnly && rec.confirmed_at ? ` · clôturée le ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}</p>
-      ${intro}
-      ${items.length ? `<div class="recette-list">${items.map(itemCard).join('')}</div>` : ''}
+      <div id="finish-intro">${intro}</div>
+      <div class="recette-list" id="finish-items"></div>
       ${launchModeBlock}
       <div class="modal-actions">
         ${readOnly
           ? '<button class="ghost" id="modal-cancel">Fermer</button>'
-          : '<button class="ghost" id="modal-cancel">Annuler</button><button class="approve" id="modal-confirm">Confirmer & terminer</button>'}
+          : `<button class="ghost" id="modal-cancel">Annuler</button>
+             <button class="ghost" id="modal-finish-notasks" title="Clôturer la recette sans générer de tâches">Terminer sans créer de tâches</button>
+             <button class="approve" id="modal-confirm">Confirmer & terminer</button>`}
       </div>
       <div id="recette-finish-msg" class="msg"></div>
     </div>`);
   const finishModal = document.getElementById('finish-modal');
+  const itemsBox = () => document.getElementById('finish-items');
+  const bindItems = (root = itemsBox()) => {
+    root.querySelectorAll('.finish-more').forEach((b) => b.addEventListener('click', () => {
+      const p = b.parentElement.querySelector('.finish-desc');
+      const full = p.dataset.full || '';
+      const collapsed = p.textContent.endsWith('…');
+      p.textContent = collapsed ? full : (full.slice(0, 120) + '…');
+      b.textContent = collapsed ? 'Réduire' : 'Voir en entier';
+    }));
+    if (readOnly) return;
+    root.querySelectorAll('[data-item-edit]').forEach((b) => b.addEventListener('click', () => {
+      const it = items.find((x) => String(x.id) === b.dataset.itemEdit);
+      if (!it) return;
+      const card = root.querySelector(`[data-item-id="${b.dataset.itemEdit}"]`);
+      if (!card) return;
+      card.outerHTML = editForm(it);
+      bindItems(itemsBox().querySelector(`[data-item-id="${b.dataset.itemEdit}"]`));
+    }));
+    root.querySelectorAll('[data-item-cancel]').forEach((b) => b.addEventListener('click', renderItems));
+    root.querySelectorAll('[data-item-del]').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('Supprimer définitivement cet élément de recette ?')) return;
+      try {
+        await api(`/api/recettes/${encodeURIComponent(recetteId)}/items/${b.dataset.itemDel}`, { method: 'DELETE' });
+        await reloadItems();
+      } catch (e) { alert('Échec de la suppression : ' + (e.message || e)); }
+    }));
+    root.querySelectorAll('[data-item-save]').forEach((b) => b.addEventListener('click', async () => {
+      const id = b.dataset.itemSave;
+      const form = root.querySelector(`[data-item-id="${id}"]`);
+      const msg = form.querySelector(`[data-item-msg="${id}"]`);
+      const content = form.querySelector('.fe-content').value.trim();
+      if (!content) { msg.textContent = 'Le contenu est requis.'; msg.className = 'msg error'; return; }
+      const execRaw = form.querySelector('.fe-execorder').value.trim();
+      const fields = {
+        content,
+        classification: form.querySelector('.fe-classification').value,
+        title: form.querySelector('.fe-title').value.trim() || null,
+        acceptance: form.querySelector('.fe-acceptance').value.trim() || null,
+        scope: form.querySelector('.fe-scope').value.split(',').map((s) => s.trim()).filter(Boolean),
+        execOrder: execRaw === '' ? null : Number(execRaw),
+        vigilance: form.querySelector('.fe-vigilance').value.trim() || null,
+      };
+      try {
+        b.disabled = true;
+        await api(`/api/recettes/${encodeURIComponent(recetteId)}/items/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields }) });
+        await reloadItems();
+      } catch (e) { msg.textContent = e.message || e; msg.className = 'msg error'; b.disabled = false; }
+    }));
+  };
+  const renderItems = () => {
+    const box = itemsBox();
+    box.innerHTML = items.length ? items.map(itemCard).join('') : '<p class="muted-sm">Aucun élément relevé.</p>';
+    bindItems(box);
+  };
+  const reloadItems = async () => {
+    try {
+      const dd = await api(`/api/recettes/${encodeURIComponent(recetteId)}`);
+      items = (dd.recette && dd.recette.items) || [];
+    } catch { /* conserve l'état courant */ }
+    renderItems();
+  };
+  renderItems();
   document.getElementById('modal-cancel').onclick = closeModal;
   document.getElementById('finish-fullscreen').onclick = () => {
     const fs = finishModal.classList.toggle('finish-full');
     document.getElementById('finish-fullscreen').textContent = fs ? '⤢ rétrécir' : '⛶ plein écran';
   };
-  finishModal.querySelectorAll('.finish-more').forEach((b) => b.addEventListener('click', () => {
-    const p = b.parentElement.querySelector('.finish-desc');
-    const full = p.dataset.full || '';
-    const collapsed = p.textContent.endsWith('…');
-    p.textContent = collapsed ? full : (full.slice(0, 120) + '…');
-    b.textContent = collapsed ? 'Réduire' : 'Voir en entier';
-  }));
   if (readOnly) return;
+  const hasOpenEdit = () => !!document.querySelector('#finish-items .finish-item-edit');
   document.getElementById('modal-confirm').onclick = async () => {
     const msg = document.getElementById('recette-finish-msg');
+    if (hasOpenEdit()) { msg.textContent = 'Un élément est en cours d\'édition : enregistre-le ou annule-le avant de terminer.'; msg.className = 'msg error'; return; }
     try {
-      const payload = items.map((it) => ({ itemId: it.id, content: it.content, classification: it.classification, title: it.title, acceptance: it.acceptance, scope: it.scope }));
+      const payload = items.map((it) => ({ itemId: it.id, content: it.content, classification: it.classification, title: it.title, acceptance: it.acceptance, scope: it.scope, execOrder: it.execOrder }));
       const launchMode = (document.querySelector('input[name="rec-launch-mode"]:checked') || {}).value || 'batch';
-      const r = await api(`/api/recettes/${encodeURIComponent(recetteId)}/finish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: payload, launchMode }) });
+      const r = await api(`/api/recettes/${encodeURIComponent(recetteId)}/finish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: payload, launchMode, createTasks: true }) });
       msg.textContent = r.created && r.created.length
         ? 'Tâches créées : ' + r.created.map((c) => `${c.taskId} (${RECETTE_CLS_LABEL[c.classification]})`).join(', ')
         : 'Recette terminée (aucune tâche créée).';
@@ -2623,6 +2875,17 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
       closeModal();
       const modeLabel = { batch: 'Batch', session: 'Session unique', manual: 'Manuel' }[launchMode] || launchMode;
       alert(`${msg.textContent}\nMode de lancement : ${modeLabel}`);
+      refreshActive();
+    } catch (e) { msg.textContent = e.message || e; msg.className = 'msg error'; }
+  };
+  document.getElementById('modal-finish-notasks').onclick = async () => {
+    const msg = document.getElementById('recette-finish-msg');
+    if (hasOpenEdit()) { msg.textContent = 'Un élément est en cours d\'édition : enregistre-le ou annule-le avant de terminer.'; msg.className = 'msg error'; return; }
+    if (!confirm('Clôturer la recette SANS générer de tâches ?\n\nLes éléments relevés restent consultables dans le détail de la recette.')) return;
+    try {
+      await api(`/api/recettes/${encodeURIComponent(recetteId)}/finish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ createTasks: false }) });
+      closeModal();
+      alert('Recette terminée (aucune tâche créée).');
       refreshActive();
     } catch (e) { msg.textContent = e.message || e; msg.className = 'msg error'; }
   };
@@ -2987,7 +3250,7 @@ function agentCard(a) {
   const modelRow = `<div class="eco-model-row">
     <span class="muted-sm">Modèle</span>
     <code class="muted-sm">${esc(a.model || '—')}</code>
-    <button class="ghost eco-model-btn" data-edit-model="${esc(a.name)}" data-model="${esc(a.model || '')}">Modifier</button>
+    ${IS_ADMIN ? `<button class="ghost eco-model-btn" data-edit-model="${esc(a.name)}" data-model="${esc(a.model || '')}">Modifier</button>` : ''}
   </div>`;
   return `<article class="eco-card">
     <div class="eco-card-head"><strong>${esc(a.name)}</strong>${meta}</div>
@@ -3064,12 +3327,14 @@ async function renderWorkspaces() {
     const cls = ['starting', 'stopping', 'restarting', 'deleting', 'pending', 'building'].includes(s) ? 'queued' : s;
     return `<span class="badge ${cls}">${esc(s)}</span>`;
   };
-  const projectsList = (w) => (w.projects || []).filter((p) => p.isDir).map((p) => `<code class="chip-repo">${esc(p.name)}</code>`).join(' ');
+  const attachedProjectsList = (w) => (w.attachedProjects || []).length
+    ? w.attachedProjects.map((p) => `<code class="chip-repo">${esc(p)}</code>`).join(' ')
+    : '<span class="muted-sm">—</span>';
   const ideBadge = (w) => w.ideUrl ? `<a class="badge running ws-ide" href="${esc(w.ideUrl)}" target="_blank" rel="noopener" title="Ouvrir l'IDE web Coder">IDE</a>` : '';
   document.getElementById('pane-workspaces').innerHTML = `
     <h2>Workspaces Coder <span class="muted-sm">— ${wsList.length} workspace(s)</span></h2>
-    <div class="eco-restart-bar"><button class="launch-btn" id="ws-create-btn">Créer un workspace</button><span id="ws-msg" class="muted-sm"></span></div>
-    <table><thead><tr><th>Workspace</th><th>Propriétaire</th><th>Statut</th><th>IDE</th><th>Conteneur</th><th>Volume</th><th>Projets</th><th>Actions</th></tr></thead>
+    ${IS_ADMIN ? `<div class="eco-restart-bar"><button class="launch-btn" id="ws-create-btn">Créer un workspace</button><span id="ws-msg" class="muted-sm"></span></div>` : ''}
+    <table><thead><tr><th>Workspace</th><th>Propriétaire</th><th>Statut</th><th>IDE</th><th>Conteneur</th><th>Volume</th><th>Projets</th>${IS_ADMIN ? '<th>Actions</th>' : ''}</tr></thead>
     <tbody>${wsList.map((w) => {
       const busy = !!(w.transitioning);
       const running = isRunning(w);
@@ -3080,19 +3345,20 @@ async function renderWorkspaces() {
       <td>${running ? ideBadge(w) : '<span class="muted-sm">—</span>'}</td>
       <td><code class="muted-sm">${esc(w.container || '—')}</code></td>
       <td><code class="muted-sm">${esc((w.volume || '').slice(0, 30))}</code></td>
-      <td>${projectsList(w) || '<span class="muted-sm">—</span>'}</td>
-      <td class="icon-actions">
+      <td>${attachedProjectsList(w)}</td>
+      ${IS_ADMIN ? `<td class="icon-actions">
         <button class="ghost tiny" data-ws-detail="${esc(w.name)}" data-ws-ide="${esc(w.ideUrl || '')}" title="Détails du workspace">Détail</button>
         ${running
           ? `<button class="ghost tiny" data-ws-stop="${esc(w.name)}" ${busy ? 'disabled' : ''} title="Arrêter le workspace">Stop</button>
              <button class="ghost tiny" data-ws-restart="${esc(w.name)}" ${busy ? 'disabled' : ''} title="Redémarrer le workspace">Restart</button>`
           : `<button class="ghost tiny" data-ws-start="${esc(w.name)}" ${busy ? 'disabled' : ''} title="Démarrer le workspace">Start</button>`}
         <button class="danger tiny" data-ws-delete="${esc(w.name)}" ${busy ? 'disabled' : ''} title="Supprimer le workspace">Supprimer</button>
-      </td>
+      </td>` : ''}
     </tr>`;
     }).join('')}</tbody></table>`;
   // Événements
-  document.getElementById('ws-create-btn').addEventListener('click', () => workspaceCreateModal());
+  const createBtn = document.getElementById('ws-create-btn');
+  if (createBtn) createBtn.addEventListener('click', () => workspaceCreateModal());
   document.querySelectorAll('#pane-workspaces [data-ws-detail]').forEach((b) => b.addEventListener('click', () => workspaceDetailModal(b.dataset.wsDetail, b.dataset.wsIde || null)));
   document.querySelectorAll('#pane-workspaces [data-ws-start]').forEach((b) => b.addEventListener('click', (ev) => workspaceAction(b.dataset.wsStart, 'start', ev.currentTarget)));
   document.querySelectorAll('#pane-workspaces [data-ws-stop]').forEach((b) => b.addEventListener('click', (ev) => workspaceAction(b.dataset.wsStop, 'stop', ev.currentTarget)));

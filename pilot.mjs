@@ -103,8 +103,18 @@ export async function openCoderIde({ org, targetUrl }) {
   try { coderOrigin = new URL(cfg.url).origin; } catch { return { ok: false, error: "URL Coder d'organisation invalide" }; }
   if (target.origin !== coderOrigin) return { ok: false, error: "URL hors du serveur Coder de l'organisation" };
   const domain = process.env.PANEL_COOKIE_DOMAIN ? `; Domain=${process.env.PANEL_COOKIE_DOMAIN}` : "";
-  const cookie = `coder_session_token=${cfg.token}; Path=/${domain}; HttpOnly; Secure; SameSite=Lax; Max-Age=43200`;
-  return { ok: true, location: target.href, cookie };
+  const attrs = `${domain}; HttpOnly; Secure; SameSite=Lax; Max-Age=43200`;
+  // Deux cookies de même nom :
+  //  - Path=/     : couverture générale ;
+  //  - Path=<app> : chemin PLUS LONG que le Path=/ (le navigateur trie par
+  //    longueur de chemin décroissante) → prioritaire pour les requêtes de
+  //    l'app. Indispensable si le navigateur porte déjà un `coder_session_token`
+  //    obsolète (ex. ancien cookie host-only de ide.madatalk.fr) : sans cela,
+  //    Coder lit le cookie obsolète en premier et renvoie vers /login.
+  const cookies = [`coder_session_token=${cfg.token}; Path=/${attrs}`];
+  const appMatch = target.pathname.match(/^(\/@[^/]+\/[^/]+\/apps\/[^/]+)/);
+  if (appMatch) cookies.push(`coder_session_token=${cfg.token}; Path=${appMatch[1]}${attrs}`);
+  return { ok: true, location: target.href, cookies };
 }
 
 // Lance une commande coder en ARRIÈRE-PLAN (non bloquant) : répond immédiatement

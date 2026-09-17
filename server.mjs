@@ -102,7 +102,7 @@ function serveFile(res, rel) {
     res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
     return res.end("Not found");
   }
-  res.writeHead(200, { "Content-Type": MIME[extname(file).toLowerCase()] || "application/octet-stream" });
+  res.writeHead(200, { "Content-Type": MIME[extname(file).toLowerCase()] || "application/octet-stream", "Cache-Control": "no-cache" });
   res.end(readFileSync(file));
 }
 
@@ -1571,7 +1571,7 @@ const server = createServer(async (req, res) => {
       }
       const r = await pilot.openCoderIde({ org: user.activeOrganizationId || "onirtech", targetUrl: target });
       if (!r.ok) return sendJson(res, 400, { error: r.error });
-      res.writeHead(302, { "Set-Cookie": r.cookie, Location: r.location });
+      res.writeHead(302, { "Set-Cookie": r.cookies, Location: r.location });
       return res.end();
     }
     if (path === "/api/projects" && req.method === "GET") {

@@ -5,6 +5,23 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## 2026-09-17 · IDE Coder — correctif cookie de session obsolète + cache (v0.9.63)
+
+L'ouverture de l'IDE échouait encore pour certains utilisateurs (redirection
+`/login`) alors que le cookie de session était bien posé :
+
+- **Cause** : Coder lit le **premier** cookie `coder_session_token`. Un cookie
+  **host-only obsolète** sur `ide.madatalk.fr` (Path=/) pouvait être envoyé avant
+  le nôtre (même nom, même chemin, mais plus ancien) → Coder lisait le cookie
+  périmé → `/login`. Vérifié : `STALE; VALID` échoue, `VALID; STALE` réussit.
+- **Correctif** : le endpoint pose **deux** cookies `coder_session_token` — un
+  `Path=/` (couverture) et un `Path=/@owner/name/apps/<app>` (chemin **plus
+  long**). Le navigateur trie les cookies par longueur de chemin décroissante :
+  le nôtre est donc prioritaire pour les requêtes de l'app, même en présence d'un
+  cookie obsolète. Vérifié (jar avec cookie obsolète + cookie valide → app OK).
+- **Cache** : `serveFile` renvoie désormais `Cache-Control: no-cache` — évite de
+  servir un `app.js` obsolète (ancien lien IDE direct) après un correctif.
+
 ## 2026-09-17 · Workspaces — ouverture de l'IDE Coder sans compte Coder (v0.9.62)
 
 L'IDE web Coder n'était ouvrable que par le propriétaire (Rino) : les autres

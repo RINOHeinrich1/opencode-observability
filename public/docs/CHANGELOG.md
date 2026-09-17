@@ -5,6 +5,17 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## 2026-09-17 · Sessions recette/batch — verrou anti-double-lancement (v0.9.64)
+
+Sécurisation supplémentaire du bouton « Session d'orchestration » (et « Session
+de la recette ») : un **verrou mémoire par entité** (`withLaunchLock`) sérialise
+les lancements. Si deux appels arrivent en même temps (double-clic, deux onglets),
+le second **attend** la fin du premier puis **relit** la session rattachée →
+reprise au lieu d'une seconde session opencode. La lecture de l'entité est faite
+**à l'intérieur** du verrou, donc l'état persisté est toujours vu. Vérifié :
+appels concurrents sur une recette/batch déjà pourvus → `resumed: true` pour les
+deux, aucune création.
+
 ## 2026-09-17 · IDE Coder — correctif cookie de session obsolète + cache (v0.9.63)
 
 L'ouverture de l'IDE échouait encore pour certains utilisateurs (redirection

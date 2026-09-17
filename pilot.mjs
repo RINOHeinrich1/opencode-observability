@@ -391,6 +391,27 @@ async function sessionAlive(sessionId, dir) {
   return !!(dir && sessionExists(sessionId, dir));
 }
 
+// Verrou d'unicité par clé (recette/batch) : sérialise les lancements de session
+// pour une même entité. Un double-clic (ou deux appels concurrents) attend la fin
+// du premier lancement puis RÉ-ÉVALUE la session rattachée (relecture dans le
+// corps verrouillé) → reprise au lieu d'une seconde session. Le panneau est un
+// process unique (pm2 fork) : un verrou mémoire suffit.
+const launchLocks = new Map();
+async function withLaunchLock(key, fn) {
+  while (launchLocks.has(key)) {
+    try { await launchLocks.get(key); } catch { /* ignoré : on retente */ }
+  }
+  let release;
+  const p = new Promise((resolve) => { release = resolve; });
+  launchLocks.set(key, p);
+  try {
+    return await fn();
+  } finally {
+    launchLocks.delete(key);
+    release();
+  }
+}
+
 // Lancement d'une tâche : garde atomique anti double-lancement + session orchestrateur.
 // Le worktree/branche sont gérés en interne par l'orchestrateur (pas de sélection ici).
 export async function launchTask({ taskId, kind = "launch" }) {
@@ -643,37 +664,39 @@ export async function createRecette({ project, title, description, taskIds, docu
 // `force = true` : ignore la session rattachée et en démarre une nouvelle.
 export async function launchRecetteSession({ recetteId, force = false }) {
   if (!recetteId) throw new Error("recetteId requis");
-  const r = await taskOrchestrator("recette_get", { recetteId });
-  const rec = r && r.recette;
-  if (!rec) throw new Error(`recette inconnue : ${recetteId}`);
+  return withLaunchLock(`recette:${recetteId}`, async () => {
+    const r = await taskOrchestrator("recette_get", { recetteId });
+    const rec = r && r.recette;
+    if (!rec) throw new Error(`recette inconnue : ${recetteId}`);
 
-  const proj = rec.project;
-  const dir = await projectAnchorDir(proj);
+    const proj = rec.project;
+    const dir = await projectAnchorDir(proj);
 
-  // REPRISE : dès qu'une session est rattachée à la recette, on la REPREND —
-  // on n'en relance JAMAIS automatiquement une nouvelle. L'existence est
-  // vérifiée PAR IDENTIFIANT auprès du serveur opencode (fiable même si la
-  // session vit dans un autre projet opencode). Pour repartir de zéro :
-  // `force = true`.
-  if (!force && rec.sessionId && /^ses_/.test(rec.sessionId)) {
-    if (await sessionAlive(rec.sessionId, dir)) {
-      return { recetteId, sessionId: rec.sessionId, resumed: true };
+    // REPRISE : dès qu'une session est rattachée à la recette, on la REPREND —
+    // on n'en relance JAMAIS automatiquement une nouvelle. L'existence est
+    // vérifiée PAR IDENTIFIANT auprès du serveur opencode (fiable même si la
+    // session vit dans un autre projet opencode). Pour repartir de zéro :
+    // `force = true`.
+    if (!force && rec.sessionId && /^ses_/.test(rec.sessionId)) {
+      if (await sessionAlive(rec.sessionId, dir)) {
+        return { recetteId, sessionId: rec.sessionId, resumed: true };
+      }
     }
-  }
-  // ADR-12 : documents de référence du projet couvert (adr-tech, specs,
-  // gherkin) — lus en contexte par l'agent de recette pour confronter le constat.
-  let recDocs = [];
-  try {
-    const rd = await taskOrchestrator("doc_list", { projectId: proj, includeRepoDocs: true });
-    recDocs = (rd && rd.docs) || [];
-  } catch {}
-  const prompt = buildRecettePrompt({ project: proj, repos: rec.repos || [], title: rec.title, taskIds: rec.tasks || [], docs: recDocs });
-  const { sessionId } = await launchSession({ dir, agent: "agent-recette", prompt, title: `Recette ${rec.title || proj}` });
-  if (!sessionId || !/^ses_/.test(sessionId)) {
-    throw new Error("échec de lancement de la session de recette (agent-recette indisponible ?)");
-  }
-  await taskOrchestrator("recette_session_set", { recetteId, sessionId });
-  return { recetteId, sessionId, resumed: false };
+    // ADR-12 : documents de référence du projet couvert (adr-tech, specs,
+    // gherkin) — lus en contexte par l'agent de recette pour confronter le constat.
+    let recDocs = [];
+    try {
+      const rd = await taskOrchestrator("doc_list", { projectId: proj, includeRepoDocs: true });
+      recDocs = (rd && rd.docs) || [];
+    } catch {}
+    const prompt = buildRecettePrompt({ project: proj, repos: rec.repos || [], title: rec.title, taskIds: rec.tasks || [], docs: recDocs });
+    const { sessionId } = await launchSession({ dir, agent: "agent-recette", prompt, title: `Recette ${rec.title || proj}` });
+    if (!sessionId || !/^ses_/.test(sessionId)) {
+      throw new Error("échec de lancement de la session de recette (agent-recette indisponible ?)");
+    }
+    await taskOrchestrator("recette_session_set", { recetteId, sessionId });
+    return { recetteId, sessionId, resumed: false };
+  });
 }
 
 // Lance la SESSION D'ORCHESTRATION UNIQUE d'un batch en mode `session`.
@@ -682,35 +705,37 @@ export async function launchRecetteSession({ recetteId, force = false }) {
 // rattachée, on la REPREND (sauf `force = true`).
 export async function launchBatchSession({ batchId, force = false }) {
   if (!batchId) throw new Error("batchId requis");
-  const r = await taskOrchestrator("batch_get", { batchId });
-  const batch = r && r.batch;
-  if (!batch) throw new Error(`batch inconnu : ${batchId}`);
+  return withLaunchLock(`batch:${batchId}`, async () => {
+    const r = await taskOrchestrator("batch_get", { batchId });
+    const batch = r && r.batch;
+    if (!batch) throw new Error(`batch inconnu : ${batchId}`);
 
-  if (!force && batch.sessionId && /^ses_/.test(batch.sessionId)) {
-    const anchor = await projectAnchorDir(batch.project);
-    if (await sessionAlive(batch.sessionId, anchor)) {
-      return { batchId, sessionId: batch.sessionId, resumed: true };
+    if (!force && batch.sessionId && /^ses_/.test(batch.sessionId)) {
+      const anchor = await projectAnchorDir(batch.project);
+      if (await sessionAlive(batch.sessionId, anchor)) {
+        return { batchId, sessionId: batch.sessionId, resumed: true };
+      }
     }
-  }
 
-  // Ancrage : répertoire du projet (gitPath ou repoDir d'un repo lié) + détail
-  // des tâches pour le prompt.
-  const dir = await projectAnchorDir(batch.project);
-  const tasksDetail = [];
-  for (const taskId of batch.tasks || []) {
-    try {
-      const t = await taskOrchestrator("task_get", { taskId });
-      const task = t && t.task;
-      tasksDetail.push({ id: taskId, title: task && task.title, request: task && task.request, status: (t && t.executions && t.executions[0] && t.executions[0].status) || "queued" });
-    } catch { tasksDetail.push({ id: taskId, status: "?" }); }
-  }
-  const prompt = buildBatchSessionPrompt({ batch, tasksDetail });
-  const { sessionId } = await launchSession({ dir, agent: "orchestrator", prompt, title: `Batch ${batch.batchId} — ${(batch.title || "").slice(0, 50)}` });
-  if (!sessionId || !/^ses_/.test(sessionId)) {
-    throw new Error("échec de lancement de la session d'orchestration du batch (orchestrator indisponible ?)");
-  }
-  await taskOrchestrator("batch_set_session", { batchId, sessionId });
-  return { batchId, sessionId, resumed: false };
+    // Ancrage : répertoire du projet (gitPath ou repoDir d'un repo lié) + détail
+    // des tâches pour le prompt.
+    const dir = await projectAnchorDir(batch.project);
+    const tasksDetail = [];
+    for (const taskId of batch.tasks || []) {
+      try {
+        const t = await taskOrchestrator("task_get", { taskId });
+        const task = t && t.task;
+        tasksDetail.push({ id: taskId, title: task && task.title, request: task && task.request, status: (t && t.executions && t.executions[0] && t.executions[0].status) || "queued" });
+      } catch { tasksDetail.push({ id: taskId, status: "?" }); }
+    }
+    const prompt = buildBatchSessionPrompt({ batch, tasksDetail });
+    const { sessionId } = await launchSession({ dir, agent: "orchestrator", prompt, title: `Batch ${batch.batchId} — ${(batch.title || "").slice(0, 50)}` });
+    if (!sessionId || !/^ses_/.test(sessionId)) {
+      throw new Error("échec de lancement de la session d'orchestration du batch (orchestrator indisponible ?)");
+    }
+    await taskOrchestrator("batch_set_session", { batchId, sessionId });
+    return { batchId, sessionId, resumed: false };
+  });
 }
 
 // Lecture des batches (délégation MCP) — pour le panneau.

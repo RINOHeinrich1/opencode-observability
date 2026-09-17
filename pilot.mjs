@@ -88,6 +88,25 @@ export async function showWorkspace(name, org) {
   return { output: out };
 }
 
+// Ouvre l'IDE web Coder d'un workspace SANS authentification Coder côté
+// utilisateur : le panneau dépose le cookie de session Coder (token
+// d'organisation, renouvelé automatiquement chaque semaine) sur le domaine
+// partagé, puis redirige vers l'app. Coder accepte un token d'API comme valeur
+// du cookie `coder_session_token` (vérifié : l'app répond au lieu de rediriger
+// vers /login). Évite le partage de workspace Coder (non supporté pour l'IDE web).
+export async function openCoderIde({ org, targetUrl }) {
+  const cfg = await getOrganizationCoderConfig(org || "onirtech");
+  if (!cfg || !cfg.url || !cfg.token) return { ok: false, error: "configuration Coder incomplète (URL ou token manquant)" };
+  let target;
+  try { target = new URL(String(targetUrl || "")); } catch { return { ok: false, error: "URL Coder invalide" }; }
+  let coderOrigin;
+  try { coderOrigin = new URL(cfg.url).origin; } catch { return { ok: false, error: "URL Coder d'organisation invalide" }; }
+  if (target.origin !== coderOrigin) return { ok: false, error: "URL hors du serveur Coder de l'organisation" };
+  const domain = process.env.PANEL_COOKIE_DOMAIN ? `; Domain=${process.env.PANEL_COOKIE_DOMAIN}` : "";
+  const cookie = `coder_session_token=${cfg.token}; Path=/${domain}; HttpOnly; Secure; SameSite=Lax; Max-Age=43200`;
+  return { ok: true, location: target.href, cookie };
+}
+
 // Lance une commande coder en ARRIÈRE-PLAN (non bloquant) : répond immédiatement
 // avec {queued:true}, le statut évolue ensuite dans la liste (polling).
 function coderActionAsync(org, args) {

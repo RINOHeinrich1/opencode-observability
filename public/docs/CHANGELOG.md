@@ -5,6 +5,26 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## 2026-09-17 · Workspaces — ouverture de l'IDE Coder sans compte Coder (v0.9.62)
+
+L'IDE web Coder n'était ouvrable que par le propriétaire (Rino) : les autres
+utilisateurs tombaient sur `/login` (pas de compte Coder, partage de workspace
+non supporté pour l'IDE web).
+
+- **Nouveau endpoint `GET /api/coder/ide?url=<ideUrl>`** (auth panneau requise) :
+  valide que l'URL appartient bien au serveur Coder de l'organisation, pose le
+  cookie de session Coder sur le domaine partagé puis redirige (302).
+- **Cookie `coder_session_token`** = token d'API Coder de l'organisation (celui
+  déjà renouvelé chaque semaine par `coder-token-rotate.mjs`), `Domain` =
+  `PANEL_COOKIE_DOMAIN` (`.madatalk.fr`), `HttpOnly; Secure; SameSite=Lax`,
+  `Max-Age` 12 h. Coder accepte un token d'API comme valeur de ce cookie
+  (vérifié : l'app répond au lieu de rediriger vers `/login`).
+- **Liens IDE** (badge de la liste + bouton « Ouvrir l'IDE » du détail) passent
+  désormais par ce endpoint : ouverture directe, sans authentification Coder ni
+  paramétrage de partage.
+- **Contrôle d'accès** : un utilisateur restreint à ses projets ne peut ouvrir
+  que les workspaces de ses projets ; les admins voient tous les workspaces.
+
 ## 2026-09-17 · Retour visuel des boutons (anti double-clic) (v0.9.61)
 
 Les actions du parcours recette ne restaient pas silencieuses pendant leur

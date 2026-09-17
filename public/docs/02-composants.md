@@ -122,6 +122,10 @@ Git.
 - Les agents **lisent** le code via `workspace_resolve` (chemin hôte) et **exécutent**
   via `workspace_exec` en **non-root** (utilisateur `coder`, uid 1000).
 - **Jamais** d'exécution du code projet sur l'hôte.
+- **Ouverture de l'IDE web** depuis le panneau sans compte Coder : le lien passe
+  par `GET /api/coder/ide?url=…`, qui pose le cookie de session Coder (token
+  d'organisation renouvelé automatiquement) sur le domaine partagé puis redirige.
+  Évite le partage de workspace Coder (non supporté pour l'IDE web).
 
 ## 7. Git & CI/CD
 

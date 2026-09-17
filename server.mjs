@@ -1557,6 +1557,23 @@ const server = createServer(async (req, res) => {
       try { return sendJson(res, 200, await pilot.deleteWorkspace(decodeURIComponent(wsDelMatch[1]), user.activeOrganizationId || "onirtech")); }
       catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e).slice(0, 500) }); }
     }
+    // Ouvre l'IDE web Coder d'un workspace SANS authentification Coder côté
+    // utilisateur : pose le cookie de session Coder (token d'organisation,
+    // renouvelé automatiquement) sur le domaine partagé, puis redirige vers l'app.
+    if (path === "/api/coder/ide" && req.method === "GET") {
+      const target = url.searchParams.get("url") || "";
+      // Utilisateur restreint : n'ouvre que les workspaces de ses projets.
+      if (user.projectAccess !== null && user.projectAccess !== undefined) {
+        const access = await workspaceAccess(user.projectAccess, user.activeOrganizationId);
+        let wsName = "";
+        try { const m = new URL(target).pathname.match(/^\/@[^/]+\/([^/]+)\//); wsName = m ? decodeURIComponent(m[1]) : ""; } catch {}
+        if (access && (!wsName || !access.allowedNames.has(wsName))) return sendJson(res, 403, { error: "workspace non autorisé" });
+      }
+      const r = await pilot.openCoderIde({ org: user.activeOrganizationId || "onirtech", targetUrl: target });
+      if (!r.ok) return sendJson(res, 400, { error: r.error });
+      res.writeHead(302, { "Set-Cookie": r.cookie, Location: r.location });
+      return res.end();
+    }
     if (path === "/api/projects" && req.method === "GET") {
       const r = await pilot.listProjects();
       const all = (r && r.projects) || [];

@@ -3367,7 +3367,7 @@ async function renderWorkspaces() {
   const attachedProjectsList = (w) => (w.attachedProjects || []).length
     ? w.attachedProjects.map((p) => `<code class="chip-repo">${esc(p)}</code>`).join(' ')
     : '<span class="muted-sm">—</span>';
-  const ideBadge = (w) => w.ideUrl ? `<a class="badge running ws-ide" href="${esc(w.ideUrl)}" target="_blank" rel="noopener" title="Ouvrir l'IDE web Coder">IDE</a>` : '';
+  const ideBadge = (w) => w.ideUrl ? `<a class="badge running ws-ide" href="/api/coder/ide?url=${encodeURIComponent(w.ideUrl)}" target="_blank" rel="noopener" title="Ouvrir l'IDE web Coder (session Coder posée automatiquement)">IDE</a>` : '';
   document.getElementById('pane-workspaces').innerHTML = `
     <h2>Workspaces Coder <span class="muted-sm">— ${wsList.length} workspace(s)</span></h2>
     ${IS_ADMIN ? `<div class="eco-restart-bar"><button class="launch-btn" id="ws-create-btn">Créer un workspace</button><span id="ws-msg" class="muted-sm"></span></div>` : ''}
@@ -3476,7 +3476,7 @@ async function workspaceDetailModal(name, ideUrl) {
   let detail = null, error = null;
   try { detail = await api(`/api/workspaces/${encodeURIComponent(name)}`); } catch (e) { error = e.message || String(e); }
   const output = detail ? (detail.output || '') : error || 'Aucune donnée';
-  const ideBtn = ideUrl ? `<a class="badge running ws-ide" href="${esc(ideUrl)}" target="_blank" rel="noopener" style="margin-left:8px">Ouvrir l'IDE</a>` : '';
+  const ideBtn = ideUrl ? `<a class="badge running ws-ide" href="/api/coder/ide?url=${encodeURIComponent(ideUrl)}" target="_blank" rel="noopener" style="margin-left:8px">Ouvrir l'IDE</a>` : '';
   showModal(`
     <div class="modal">
       <h2>Workspace — ${esc(name)}${ideBtn}</h2>

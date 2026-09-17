@@ -83,6 +83,39 @@ export function sessionExists(sessionId, dir) {
   return listSessions(dir).some((s) => s.id === sessionId);
 }
 
+/**
+ * Existence d'une session VÉRIFIÉE PAR IDENTIFIANT auprès du serveur opencode
+ * attaché (`GET /session/:id`, basic auth). Indispensable : `opencode session
+ * list` est SCOPÉ par répertoire/projet et ne voit donc PAS une session créée
+ * dans un autre projet opencode (ex. `global`, directory `/`) — d'où des reprises
+ * qui échouaient et recréaient une session à chaque clic.
+ *
+ * Retour : `true` (200 — la session existe), `false` (404/410 — disparue),
+ * `null` (indéterminé : serveur injoignable / auth) → l'appelant peut alors
+ * retomber sur `sessionExists`.
+ */
+export async function sessionExistsById(sessionId) {
+  if (!sessionId || !/^ses_/.test(sessionId)) return false;
+  const user = process.env.OPENCODE_SERVER_USERNAME || "opencode";
+  const pass = process.env.OPENCODE_SERVER_PASSWORD || "";
+  const auth = "Basic " + Buffer.from(`${user}:${pass}`).toString("base64");
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 5000);
+  try {
+    const res = await fetch(`${ocServerUrl()}/session/${encodeURIComponent(sessionId)}`, {
+      headers: { Authorization: auth },
+      signal: ctrl.signal,
+    });
+    if (res.status === 200) return true;
+    if (res.status === 404 || res.status === 410) return false;
+    return null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Résout le sessionId via le titre demandé (fallback en cas d'échec de capture du
 // flux). NE retourne JAMAIS une session arbitraire (`sessions[0]`) : cela risquait
 // de rattacher une recette/tâche/test à un ID sans rapport (ghost), cassant le

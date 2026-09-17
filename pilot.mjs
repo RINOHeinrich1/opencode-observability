@@ -5,7 +5,8 @@
 // sessions opencode est délégué au bridge `session-bridge.mjs` (Plan C).
 
 import { taskOrchestrator, coderWorkspaces } from "./mcp-client.mjs";
-import { launchSession, injectMessage, buildLaunchPrompt, buildReworkPrompt, buildRecettePrompt, buildTestPrompt, buildFreeTestPrompt, buildBatchSessionPrompt, listSessions, killSession, sessionExists } from "./session-bridge.mjs";
+import { launchSession, injectMessage, buildLaunchPrompt, buildReworkPrompt, buildRecettePrompt, buildTestPrompt, buildFreeTestPrompt, buildBatchSessionPrompt, listSessions, killSession, sessionExists, sessionExistsById } from "./session-bridge.mjs";
+import { existsSync } from "node:fs";
 
 // Décision n°7 : agents contraints par type de tâche.
 export function agentsForType(type, auditTarget) {
@@ -320,6 +321,47 @@ async function projectGitPath(projectId) {
   return p ? p.gitPath : null;
 }
 
+// Répertoire d'ANCRAGE d'une session opencode pour un projet : le `gitPath` du
+// projet s'il est renseigné, sinon le `repoDir` d'un repo lié (ADR 09). Sans ce
+// repli, un projet enregistré uniquement via des repos (gitPath null, ex.
+// myxmax) lançait ses sessions sans `--dir` → projet opencode « global »
+// (directory `/`), d'où des reprises impossibles.
+// NB : `repo_list({ projectId })` renvoie TOUS les repos (enrichis du rôle pour
+// ce projet) — on croise donc avec `project.repos` (association N:N réelle).
+async function projectAnchorDir(projectId) {
+  const gitPath = await projectGitPath(projectId);
+  if (gitPath && existsSync(gitPath)) return gitPath;
+  if (!projectId) return null;
+  try {
+    const pr = await listProjects();
+    const project = ((pr && pr.projects) || []).find((x) => x.id === projectId);
+    const repoIds = (project && project.repos) || [];
+    if (!repoIds.length) return null;
+    const rr = await taskOrchestrator("repo_list", {});
+    const byId = new Map(((rr && rr.repos) || []).map((x) => [x.id, x]));
+    // Priorité au repo homonyme du projet (convention myxmax ↔ repo myxmax),
+    // puis aux autres repos liés, dans l'ordre d'association.
+    const ordered = [projectId, ...repoIds.filter((id) => id !== projectId)];
+    for (const id of ordered) {
+      const repo = byId.get(id);
+      const dir = repo && (repo.repoDir || repo.gitPath);
+      if (dir && existsSync(dir)) return dir;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// Vrai si la session existe encore : vérification par identifiant auprès du
+// serveur opencode (fiable, indépendante du projet). Repli sur `opencode session
+// list` scopé par répertoire uniquement si le serveur est injoignable.
+async function sessionAlive(sessionId, dir) {
+  const exists = await sessionExistsById(sessionId);
+  if (exists !== null) return exists;
+  return !!(dir && sessionExists(sessionId, dir));
+}
+
 // Lancement d'une tâche : garde atomique anti double-lancement + session orchestrateur.
 // Le worktree/branche sont gérés en interne par l'orchestrateur (pas de sélection ici).
 export async function launchTask({ taskId, kind = "launch" }) {
@@ -577,18 +619,15 @@ export async function launchRecetteSession({ recetteId, force = false }) {
   if (!rec) throw new Error(`recette inconnue : ${recetteId}`);
 
   const proj = rec.project;
-  const gitPath = await projectGitPath(proj);
-  const dir = gitPath || null;
+  const dir = await projectAnchorDir(proj);
 
   // REPRISE : dès qu'une session est rattachée à la recette, on la REPREND —
-  // on n'en relance JAMAIS automatiquement une nouvelle. On vérifie l'existence
-  // de la session d'abord globalement, puis dans le répertoire du projet. Une
-  // session stockée dans un autre cwd (fantôme du panneau) est ainsi quand même
-  // retrouvée. Pour repartir de zéro : `force = true`.
+  // on n'en relance JAMAIS automatiquement une nouvelle. L'existence est
+  // vérifiée PAR IDENTIFIANT auprès du serveur opencode (fiable même si la
+  // session vit dans un autre projet opencode). Pour repartir de zéro :
+  // `force = true`.
   if (!force && rec.sessionId && /^ses_/.test(rec.sessionId)) {
-    const existsGlobally = sessionExists(rec.sessionId);
-    const existsInDir = dir && sessionExists(rec.sessionId, dir);
-    if (existsGlobally || existsInDir) {
+    if (await sessionAlive(rec.sessionId, dir)) {
       return { recetteId, sessionId: rec.sessionId, resumed: true };
     }
   }
@@ -619,15 +658,15 @@ export async function launchBatchSession({ batchId, force = false }) {
   if (!batch) throw new Error(`batch inconnu : ${batchId}`);
 
   if (!force && batch.sessionId && /^ses_/.test(batch.sessionId)) {
-    const gitPath = await projectGitPath(batch.project);
-    if (gitPath && sessionExists(batch.sessionId, gitPath)) {
+    const anchor = await projectAnchorDir(batch.project);
+    if (await sessionAlive(batch.sessionId, anchor)) {
       return { batchId, sessionId: batch.sessionId, resumed: true };
     }
   }
 
-  // Ancrage : checkout (gitPath) du projet + détail des tâches pour le prompt.
-  const gitPath = await projectGitPath(batch.project);
-  const dir = gitPath || null;
+  // Ancrage : répertoire du projet (gitPath ou repoDir d'un repo lié) + détail
+  // des tâches pour le prompt.
+  const dir = await projectAnchorDir(batch.project);
   const tasksDetail = [];
   for (const taskId of batch.tasks || []) {
     try {

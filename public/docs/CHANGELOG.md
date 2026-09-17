@@ -5,6 +5,26 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## 2026-09-17 · Sessions de recette / batch — reprise fiable (v0.9.60)
+
+Correction du bug « une nouvelle session à chaque clic sur Session de la recette » :
+
+- **Cause** : la session était ancrée sur `projects.gitPath` (champ legacy) — `null`
+  pour un projet enregistré uniquement via des repos liés (ex. `myxmax`) → aucune
+  option `--dir` → session créée dans le projet opencode **`global`** (`directory
+  "/"`). La reprise s'appuyait sur `opencode session list`, **scopé par
+  répertoire/projet**, qui ne voit jamais une session d'un autre projet → `false`
+  → nouvelle session à chaque clic.
+- **Ancrage déterministe** : `projectAnchorDir` résout le répertoire via le
+  `gitPath` du projet, sinon le `repoDir` d'un repo lié (ADR 09, en croisant
+  `project.repos` — `repo_list` renvoyant tous les repos).
+- **Vérification par identifiant** : `sessionExistsById` interroge le serveur
+  opencode (`GET /session/:id`, basic auth) — fiable indépendamment du projet ;
+  repli sur `session list` si le serveur est injoignable. Appliqué à
+  `launchRecetteSession` et `launchBatchSession`.
+- Résultat : la reprise fonctionne pour toute recette/batch, y compris les
+  sessions existantes créées dans `global` et les projets sans `gitPath`.
+
 ## 2026-09-17 · Recette — clôture sans tâches + édition/suppression des éléments (v0.9.59)
 
 Dans la modale **« Terminer la recette »** (onglet Recettes) :

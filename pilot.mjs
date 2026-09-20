@@ -590,6 +590,38 @@ export async function docGet(docId) {
   return (r && r.doc) || null;
 }
 
+// Pièces jointes d'ADR (item 122) : rattacher un document/fichier à une ADR.
+// 3 sources : 'registry' (targetDocId), 'import' (path stocké storage/ref-docs)
+// ou 'ref' (path référencé workspace/checkout).
+export async function addDocAttachment(args = {}) {
+  if (!args.docId) throw new Error("docId requis");
+  return taskOrchestrator("doc_attachment_add", {
+    docId: args.docId,
+    targetDocId: args.targetDocId || undefined,
+    path: args.path || undefined,
+    title: args.title || undefined,
+    kind: args.kind || undefined,
+    nature: args.nature || undefined,
+    source: args.source || undefined,
+    meta: args.meta || undefined,
+  });
+}
+
+// Retrait d'une pièce jointe d'ADR par son attachmentId stable.
+export async function removeDocAttachment(args = {}) {
+  if (!args.attachmentId) throw new Error("attachmentId requis");
+  return taskOrchestrator("doc_attachment_remove", {
+    attachmentId: args.attachmentId,
+    docId: args.docId || undefined,
+  });
+}
+
+// Lecture dédiée des pièces jointes d'une ADR (doc_attachment_list MCP).
+export async function listDocAttachments(args = {}) {
+  if (!args.docId) throw new Error("docId requis");
+  return taskOrchestrator("doc_attachment_list", { docId: args.docId });
+}
+
 const DOC_KINDS = ["adr-tech", "specs-fonctionnelles", "scenarios-gherkin"];
 
 // Import d'un fichier DOCUMENT depuis le PC de l'utilisateur : le fichier est

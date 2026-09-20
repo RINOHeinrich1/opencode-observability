@@ -3950,6 +3950,21 @@ async function projectDetailModal(projectId, tab = 'projet') {
       try { await api(`/api/docs/${encodeURIComponent(b.dataset.pdAdrDel)}`, { method: 'DELETE' }); await loadDocs(); msg('ADR supprimée.'); render(); }
       catch (err) { msg(err.message || String(err), false); }
     }));
+    // Pièces jointes d'ADR (item 122) : ajouter / retirer / voir un doc du registre.
+    panel.querySelectorAll('[data-pd-adr-att-add]').forEach((b) => b.addEventListener('click', () => {
+      adrAttachmentModal(b.dataset.pdAdrAttAdd, allDocs, async () => { await loadDocs(); msg('Pièce jointe ajoutée.'); render(); });
+    }));
+    panel.querySelectorAll('[data-pd-adr-att-del]').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('Retirer cette pièce jointe ?')) return;
+      try {
+        await api(`/api/docs/${encodeURIComponent(b.dataset.pdAdrAttDoc)}/attachments/${encodeURIComponent(b.dataset.pdAdrAttDel)}`, { method: 'DELETE' });
+        await loadDocs(); msg('Pièce jointe retirée.'); render();
+      } catch (err) { msg(err.message || String(err), false); }
+    }));
+    panel.querySelectorAll('[data-pd-adr-att-view]').forEach((b) => b.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (b.dataset.pdAdrAttView) viewRefDoc(b.dataset.pdAdrAttView);
+    }));
     const adrStatusFilter = document.getElementById('pd-adr-status-filter');
     if (adrStatusFilter) adrStatusFilter.addEventListener('change', () => { adrFilter.status = adrStatusFilter.value; render(); });
     const adrRepoFilter = document.getElementById('pd-adr-repo-filter');
@@ -4043,20 +4058,54 @@ function adrCellText(v, max = 140) {
   return `<span title="${esc(s)}">${esc(short)}</span>`;
 }
 
-// Cellule « Pièces jointes » : lit d.meta.attachments (ou d.attachments).
-// L'alimentation/CRUD des pièces jointes relève de l'item 122 (hors périmètre) :
-// lecture tolérante, affiche « — » tant que rien n'est rattaché.
+// Badge de source d'une pièce jointe d'ADR (item 122).
+function adrAttSourceBadge(source) {
+  const map = {
+    import: ['importé', 'done'],
+    ref: ['référencé', 'awaiting'],
+    registry: ['registre', 'queued'],
+  };
+  const [label, cls] = map[source] || [source || '—', 'queued'];
+  return `<span class="badge ${cls}" title="Source de la pièce jointe">${esc(label)}</span>`;
+}
+
+// Cellule « Pièces jointes » (item 122) : lit d.attachments (0..N, produit par
+// le registre). Par pièce : libellé + badge de source + téléchargement (fichier
+// importé/référencé) ou lecture du document du registre + bouton de retrait.
+// Bouton « + Joindre » toujours présent (le cas 0 pièce joint → « — »).
 function adrAttachmentsCell(d) {
-  const raw = (d && ((d.meta && d.meta.attachments) || d.attachments)) || [];
-  const list = Array.isArray(raw) ? raw : [];
-  if (!list.length) return '<span class="muted-sm">—</span>';
-  return list.map((a) => {
-    const name = typeof a === 'string' ? a : (a.name || a.filename || a.title || a.path || a.url || 'pièce');
-    const href = typeof a === 'string' ? a : (a.url || a.path || null);
-    return href
-      ? `<a href="${esc(href)}" target="_blank" rel="noopener" title="${esc(name)}">${esc(name)}</a>`
-      : `<span title="${esc(name)}">${esc(name)}</span>`;
-  }).join(', ');
+  const docId = d && d.docId;
+  const list = (d && Array.isArray(d.attachments)) ? d.attachments : [];
+  const items = list.map((a) => {
+    const name = a.title || a.path || a.targetDocId || 'pièce';
+    const badge = adrAttSourceBadge(a.source);
+    let link;
+    if (a.source === 'registry') {
+      link = `<a href="#" data-pd-adr-att-view="${esc(a.targetDocId || '')}" title="Voir le document du registre">${esc(name)}</a>`;
+    } else {
+      const href = `/api/docs/${encodeURIComponent(docId)}/attachments/${encodeURIComponent(a.attachmentId)}/download`;
+      link = `<a href="${esc(href)}" title="Télécharger ${esc(name)}">${esc(name)}</a>`;
+    }
+    const del = `<button type="button" class="ghost tiny danger-text" data-pd-adr-att-del="${esc(a.attachmentId)}" data-pd-adr-att-doc="${esc(docId)}" title="Retirer la pièce jointe">×</button>`;
+    return `<span style="display:inline-flex;gap:4px;align-items:center;margin:1px 0">${badge} ${link} ${del}</span>`;
+  });
+  const addBtn = docId
+    ? `<button type="button" class="ghost tiny" data-pd-adr-att-add="${esc(docId)}" title="Joindre un document ou un fichier">+ Joindre</button>`
+    : '';
+  const body = items.length ? items.join('<br>') : '<span class="muted-sm">—</span>';
+  return `<div style="display:flex;flex-direction:column;gap:3px">${body}<div>${addBtn}</div></div>`;
+}
+
+// Encode un ArrayBuffer en base64 par blocs (évite le dépassement du nombre
+// d'arguments de String.fromCharCode pour les fichiers > ~64 Ko).
+function arrayBufferToBase64(buf) {
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
 }
 
 // Lecture du contenu d'un document de référence (ADR-12) par docId : rendu
@@ -4239,6 +4288,84 @@ function adrFormModal(p, repos, adr, onSaved) {
         }
         await api('/api/docs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       }
+      closeModal();
+      if (typeof onSaved === 'function') await onSaved();
+    } catch (e) { msg(e.message || String(e), false); }
+  };
+}
+
+// ===========================================================================
+// Modale AJOUT d'une pièce jointe à une ADR (item 122). 3 modes :
+//  - import : fichier du PC (base64, max 2 Mo) → storage/ref-docs (source import)
+//  - ref    : chemin référencé (workspace/checkout)         (source ref)
+//  - registry : document du registre existant (targetDocId) (source registry)
+// POST /api/docs/<docId>/attachments puis onSaved().
+// ===========================================================================
+function adrAttachmentModal(docId, docs, onSaved) {
+  const options = (docs || [])
+    .filter((d) => d && d.docId && d.docId !== docId)
+    .map((d) => `<option value="${esc(d.docId)}">${esc(d.title || d.docId)} — ${esc(docKindLabel(d.kind))}</option>`)
+    .join('');
+  showModal(`
+    <div class="modal modal-wide">
+      <h2>Joindre une pièce</h2>
+      <p class="muted-sm">ADR <code>${esc(docId)}</code> — document du registre, fichier importé ou chemin référencé.</p>
+      <div class="pd-inline" style="margin:10px 0">
+        <select id="adr-att-mode">
+          <option value="upload">Importer un fichier depuis mon PC</option>
+          <option value="ref">Référencer un chemin</option>
+          <option value="registry">Document du registre</option>
+        </select>
+      </div>
+      <div id="adr-att-upload">
+        <input id="adr-att-file" type="file">
+        <label class="modal-field">Titre (optionnel)<input id="adr-att-title" placeholder="libellé de la pièce jointe"></label>
+      </div>
+      <div id="adr-att-ref" hidden>
+        <input id="adr-att-path" placeholder="chemin (ex. /home/coder/…/annexe.md)">
+        <label class="modal-field">Titre (optionnel)<input id="adr-att-title2" placeholder="libellé de la pièce jointe"></label>
+      </div>
+      <div id="adr-att-registry" hidden>
+        <label class="modal-field">Document du registre
+          <select id="adr-att-target">${options || '<option value="">Aucun autre document disponible</option>'}</select>
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button class="ghost" id="modal-cancel">Annuler</button>
+        <button class="launch-btn" id="adr-att-save">Joindre</button>
+      </div>
+      <div id="adr-att-msg" class="msg"></div>
+    </div>`);
+  const msg = (t, ok = true) => { const m = document.getElementById('adr-att-msg'); if (m) { m.textContent = t; m.className = 'msg ' + (ok ? 'ok' : 'error'); } };
+  document.getElementById('modal-cancel').onclick = closeModal;
+  const modeEl = document.getElementById('adr-att-mode');
+  const sync = () => {
+    document.getElementById('adr-att-upload').hidden = modeEl.value !== 'upload';
+    document.getElementById('adr-att-ref').hidden = modeEl.value !== 'ref';
+    document.getElementById('adr-att-registry').hidden = modeEl.value !== 'registry';
+  };
+  modeEl.addEventListener('change', sync); sync();
+  document.getElementById('adr-att-save').onclick = async () => {
+    try {
+      let body;
+      if (modeEl.value === 'upload') {
+        const f = document.getElementById('adr-att-file').files[0];
+        if (!f) throw new Error('Choisissez un fichier.');
+        if (f.size > 2 * 1024 * 1024) throw new Error('Fichier trop volumineux (max 2 Mo).');
+        const buf = await f.arrayBuffer();
+        body = { filename: f.name, dataBase64: arrayBufferToBase64(buf), title: document.getElementById('adr-att-title').value.trim() || undefined };
+      } else if (modeEl.value === 'ref') {
+        const path = document.getElementById('adr-att-path').value.trim();
+        if (!path) throw new Error('Chemin requis.');
+        body = { path, title: document.getElementById('adr-att-title2').value.trim() || undefined };
+      } else {
+        const targetDocId = document.getElementById('adr-att-target').value;
+        if (!targetDocId) throw new Error('Choisissez un document du registre.');
+        body = { targetDocId };
+      }
+      await api(`/api/docs/${encodeURIComponent(docId)}/attachments`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
       closeModal();
       if (typeof onSaved === 'function') await onSaved();
     } catch (e) { msg(e.message || String(e), false); }

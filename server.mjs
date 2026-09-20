@@ -1660,6 +1660,92 @@ const server = createServer(async (req, res) => {
       try { return sendJson(res, 200, await pilot.updateDoc({ docId: docDelMatch[1], ...b })); }
       catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
     }
+    // --- Pièces jointes d'ADR (item 122) : 0..N documents/fichiers par ADR ----
+    // Ajout : import PC (filename+dataBase64 → storage/ref-docs), document du
+    // registre (targetDocId) ou fichier référencé par chemin (path).
+    const docAttAddMatch = path.match(/^\/api\/docs\/([^/]+)\/attachments$/);
+    if (docAttAddMatch && req.method === "POST") {
+      const docId = docAttAddMatch[1];
+      const b = await readBody(req);
+      try {
+        if (b.filename && b.dataBase64) {
+          const DOC_STORAGE = join(__dirname, "storage", "ref-docs");
+          mkdirSync(DOC_STORAGE, { recursive: true });
+          const buf = Buffer.from(String(b.dataBase64), "base64");
+          if (!buf.length) return sendJson(res, 400, { error: "fichier vide" });
+          if (buf.length > 2 * 1024 * 1024) return sendJson(res, 400, { error: "fichier trop volumineux (max 2 Mo)" });
+          const safe = String(b.filename).replace(/[^\w.\-]+/g, "_").slice(-80) || "fichier";
+          const dest = join(DOC_STORAGE, `${Date.now()}-${safe}`);
+          writeFileSync(dest, buf);
+          return sendJson(res, 201, await pilot.addDocAttachment({
+            docId, source: "import", path: dest,
+            title: b.title || safe, kind: b.kind, nature: b.nature,
+          }));
+        }
+        if (b.targetDocId) {
+          return sendJson(res, 201, await pilot.addDocAttachment({
+            docId, source: "registry", targetDocId: b.targetDocId,
+            title: b.title, kind: b.kind, nature: b.nature,
+          }));
+        }
+        if (b.path) {
+          return sendJson(res, 201, await pilot.addDocAttachment({
+            docId, source: b.source === "import" ? "import" : "ref", path: b.path,
+            title: b.title, kind: b.kind, nature: b.nature,
+          }));
+        }
+        return sendJson(res, 400, { error: "pièce jointe requise : filename+dataBase64, targetDocId ou path" });
+      } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    // Retrait d'une pièce jointe (+ nettoyage du fichier importé sous storage/ref-docs).
+    const docAttDelMatch = path.match(/^\/api\/docs\/([^/]+)\/attachments\/([^/]+)$/);
+    if (docAttDelMatch && req.method === "DELETE") {
+      const docId = docAttDelMatch[1];
+      const attachmentId = docAttDelMatch[2];
+      try {
+        const doc = await pilot.docGet(docId);
+        if (!doc) return sendJson(res, 404, { error: "document inconnu" });
+        const att = (doc.attachments || []).find((a) => a.attachmentId === attachmentId);
+        if (!att) return sendJson(res, 404, { error: "pièce jointe inconnue" });
+        const r = await pilot.removeDocAttachment({ docId, attachmentId });
+        // Suppression du fichier physique UNIQUEMENT si importé sous storage/ref-docs
+        // (jamais un fichier du workspace/checkout).
+        if (att.source === "import" && att.path) {
+          const DOC_STORAGE = join(__dirname, "storage", "ref-docs");
+          const abs = normalize(att.path);
+          if (abs.startsWith(DOC_STORAGE + "/") && existsSync(abs)) {
+            try { unlinkSync(abs); } catch {}
+          }
+        }
+        return sendJson(res, 200, { ok: true, ...r });
+      } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    // Téléchargement d'une pièce jointe (fichier importé OU référencé par chemin).
+    const docAttDlMatch = path.match(/^\/api\/docs\/([^/]+)\/attachments\/([^/]+)\/download$/);
+    if (docAttDlMatch && req.method === "GET") {
+      const docId = docAttDlMatch[1];
+      const attachmentId = docAttDlMatch[2];
+      try {
+        const doc = await pilot.docGet(docId);
+        if (!doc) return sendJson(res, 404, { error: "document inconnu" });
+        const att = (doc.attachments || []).find((a) => a.attachmentId === attachmentId);
+        if (!att) return sendJson(res, 404, { error: "pièce jointe inconnue" });
+        if (att.source === "registry") return sendJson(res, 400, { error: "pièce jointe du registre : consulter le document cible" });
+        const abs = att.path;
+        if (!abs || !existsSync(abs) || statSync(abs).isDirectory()) return sendJson(res, 404, { error: "fichier introuvable au chemin : " + (abs || "—") });
+        const ext = extname(abs) || "";
+        const base = (att.title || basename(abs, ext) || "piece-jointe").replace(/[^\w.\- ]+/g, "_").trim() || "piece-jointe";
+        const filename = base.toLowerCase().endsWith(ext.toLowerCase()) ? base : base + ext;
+        const ct = MIME[ext.toLowerCase()] || "application/octet-stream";
+        res.writeHead(200, {
+          "Content-Type": ct,
+          "Content-Disposition": `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+          "Cache-Control": "no-store",
+        });
+        createReadStream(abs).pipe(res);
+        return;
+      } catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
+    }
     // Lecture du CONTENU d'un document de référence (ADR-12) par docId : lit le
     // fichier au chemin enregistré (workspace/checkout ou storage/ref-docs) et le
     // rend (markdown / feature / texte brut). Restreint aux paths enregistrés.

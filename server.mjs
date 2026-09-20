@@ -1636,7 +1636,12 @@ const server = createServer(async (req, res) => {
           // Import depuis le PC : fichier stocké côté serveur (storage/ref-docs).
           return sendJson(res, 201, await pilot.registerDocUpload({
             kind: b.kind, title: b.title, filename: b.filename, dataBase64: b.dataBase64,
-            projectId: b.projectId, repoId: b.repoId, by: user.username,
+            projectId: b.projectId, repoId: b.repoId,
+            // Champs ADR structurés + rattachements (onglet ADR) — ne pas les perdre
+            // sur le chemin d'import fichier.
+            status: b.status, context: b.context, decision: b.decision, consequences: b.consequences,
+            replacedBy: b.replacedBy, repoIds: b.repoIds, global: b.global,
+            by: user.username,
           }));
         }
         return sendJson(res, 201, await pilot.registerDoc({ ...b, organizationId: b.organizationId || user.activeOrganizationId || user.organizationId, createdBy: user.username }));
@@ -1647,6 +1652,13 @@ const server = createServer(async (req, res) => {
     if (docDelMatch && req.method === "DELETE") {
       try { return sendJson(res, 200, await pilot.deleteDoc(docDelMatch[1])); }
       catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
+    }
+    // Édition d'un document de référence (ADR-12) : champs ADR structurés +
+    // rattachements (addRepoIds / setGlobal) — requis par le CRUD de l'onglet ADR.
+    if (docDelMatch && req.method === "PUT") {
+      const b = await readBody(req);
+      try { return sendJson(res, 200, await pilot.updateDoc({ docId: docDelMatch[1], ...b })); }
+      catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
     }
     // Lecture du CONTENU d'un document de référence (ADR-12) par docId : lit le
     // fichier au chemin enregistré (workspace/checkout ou storage/ref-docs) et le

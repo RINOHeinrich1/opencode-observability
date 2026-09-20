@@ -3686,6 +3686,9 @@ async function projectDetailModal(projectId, tab = 'projet') {
   };
   await loadDocs();
 
+  // Filtres de l'onglet ADR (statut / repo), conservés le temps de la modale.
+  let adrFilter = { status: '', repo: '' };
+
   const kindOpts = `<option value="adr-tech">ADR — Architecture technique</option><option value="specs-fonctionnelles">Specs fonctionnelles</option><option value="scenarios-gherkin">Scénarios (Gherkin)</option>`;
   const repoMap = () => new Map(repos.map((r) => [r.id, r]));
 
@@ -3694,10 +3697,12 @@ async function projectDetailModal(projectId, tab = 'projet') {
     const rm = repoMap();
     const pRepos = (p.repos || []).map((rid) => rm.get(rid)).filter(Boolean);
     const pDocs = allDocs;
+    const pAdrs = allDocs.filter((d) => d.kind === 'adr-tech');
     const tabs = [
       ['projet', 'Projet'],
       ['repos', `Repos (${pRepos.length})`],
       ['docs', `Documents (${pDocs.length})`],
+      ['adr', `ADR (${pAdrs.length})`],
     ];
     showModal(`
       <div class="modal modal-wide modal-project-detail">
@@ -3715,6 +3720,7 @@ async function projectDetailModal(projectId, tab = 'projet') {
     const panel = document.getElementById('pd-panel');
     if (tab === 'projet') panel.innerHTML = projetTabHtml(p);
     else if (tab === 'repos') panel.innerHTML = reposTabHtml(p, pRepos);
+    else if (tab === 'adr') panel.innerHTML = adrTabHtml(p, pAdrs, pRepos, adrFilter);
     else panel.innerHTML = docsTabHtml(p, pDocs);
     wire();
   };
@@ -3823,6 +3829,8 @@ async function projectDetailModal(projectId, tab = 'projet') {
   // --- Wiring des actions (re-render après chaque mutation) -----------------
   const wire = () => {
     const panel = document.getElementById('pd-panel');
+    const p = projects.find((x) => x.id === projectId) || p0;
+    const pRepos = (p.repos || []).map((rid) => repoMap().get(rid)).filter(Boolean);
     // PROJET : enregistrer / supprimer.
     const pForm = document.getElementById('pd-projet-form');
     if (pForm) pForm.addEventListener('submit', async (e) => {
@@ -3928,6 +3936,24 @@ async function projectDetailModal(projectId, tab = 'projet') {
       try { await api(`/api/docs/${encodeURIComponent(b.dataset.pdDelDoc)}`, { method: 'DELETE' }); await loadDocs(); msg('Document supprimé.'); render(); }
       catch (err) { msg(err.message || String(err), false); }
     }));
+    // ADR : créer / éditer / regarder / supprimer + filtres statut/repo.
+    const adrNew = document.getElementById('pd-adr-new');
+    if (adrNew) adrNew.addEventListener('click', () => adrFormModal(p, pRepos, null, async () => { await loadDocs(); msg('ADR créée.'); render(); }));
+    panel.querySelectorAll('[data-pd-adr-edit]').forEach((b) => b.addEventListener('click', () => {
+      const adr = allDocs.find((d) => d.docId === b.dataset.pdAdrEdit);
+      if (!adr) return;
+      adrFormModal(p, pRepos, adr, async () => { await loadDocs(); msg('ADR enregistrée.'); render(); });
+    }));
+    panel.querySelectorAll('[data-pd-adr-view]').forEach((b) => b.addEventListener('click', () => viewRefDoc(b.dataset.pdAdrView)));
+    panel.querySelectorAll('[data-pd-adr-del]').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('Supprimer cette ADR ?')) return;
+      try { await api(`/api/docs/${encodeURIComponent(b.dataset.pdAdrDel)}`, { method: 'DELETE' }); await loadDocs(); msg('ADR supprimée.'); render(); }
+      catch (err) { msg(err.message || String(err), false); }
+    }));
+    const adrStatusFilter = document.getElementById('pd-adr-status-filter');
+    if (adrStatusFilter) adrStatusFilter.addEventListener('change', () => { adrFilter.status = adrStatusFilter.value; render(); });
+    const adrRepoFilter = document.getElementById('pd-adr-repo-filter');
+    if (adrRepoFilter) adrRepoFilter.addEventListener('change', () => { adrFilter.repo = adrRepoFilter.value; render(); });
   };
 
   // Édition inline d'un repo (dans l'onglet Repos) : remplace la liste par un formulaire.
@@ -3991,6 +4017,48 @@ function docKindLabelLong(kind) {
 }
 const DOC_KIND_ORDER = ['adr-tech', 'specs-fonctionnelles', 'scenarios-gherkin'];
 
+// ===========================================================================
+// Onglet ADR (ADR-12 structurée) : référentiel de statuts (miroir de
+// ADR_STATUS du registre MCP) + helpers de rendu de la table structurée.
+// ===========================================================================
+const ADR_STATUS = ['Proposé', 'Accepté', 'Déprécié', 'Remplacé'];
+
+// Badge de statut ADR (réutilise les classes .badge existantes).
+function adrStatusBadge(status) {
+  const cls = { 'Proposé': 'queued', 'Accepté': 'done', 'Déprécié': 'aborted', 'Remplacé': 'awaiting' }[status] || 'queued';
+  return `<span class="badge ${cls}" title="Statut ADR">${esc(status || '—')}</span>`;
+}
+
+// Badge « globale » : ADR rattachée à TOUS les repos du projet (isGlobal).
+function adrGlobalBadge(d) {
+  if (!d || !d.isGlobal) return '';
+  return `<span class="badge done" title="ADR globale — rattachée à tous les repos du projet">globale</span>`;
+}
+
+// Cellule texte compacte (tronquée + info-bulle complète).
+function adrCellText(v, max = 140) {
+  if (v === undefined || v === null || String(v).trim() === '') return '<span class="muted-sm">—</span>';
+  const s = String(v).replace(/\s+/g, ' ').trim();
+  const short = s.length > max ? s.slice(0, max - 1) + '…' : s;
+  return `<span title="${esc(s)}">${esc(short)}</span>`;
+}
+
+// Cellule « Pièces jointes » : lit d.meta.attachments (ou d.attachments).
+// L'alimentation/CRUD des pièces jointes relève de l'item 122 (hors périmètre) :
+// lecture tolérante, affiche « — » tant que rien n'est rattaché.
+function adrAttachmentsCell(d) {
+  const raw = (d && ((d.meta && d.meta.attachments) || d.attachments)) || [];
+  const list = Array.isArray(raw) ? raw : [];
+  if (!list.length) return '<span class="muted-sm">—</span>';
+  return list.map((a) => {
+    const name = typeof a === 'string' ? a : (a.name || a.filename || a.title || a.path || a.url || 'pièce');
+    const href = typeof a === 'string' ? a : (a.url || a.path || null);
+    return href
+      ? `<a href="${esc(href)}" target="_blank" rel="noopener" title="${esc(name)}">${esc(name)}</a>`
+      : `<span title="${esc(name)}">${esc(name)}</span>`;
+  }).join(', ');
+}
+
 // Lecture du contenu d'un document de référence (ADR-12) par docId : rendu
 // markdown / feature / texte brut. Fonctionne pour tout doc (importé OU référencé
 // par chemin dans le workspace).
@@ -4004,6 +4072,177 @@ async function viewRefDoc(docId) {
     showModal(`<div class="modal modal-wide"><h3>${kindTag}${esc(d.title || 'Document')}</h3><p class="muted-sm">${esc(d.path || '')}</p>${html}<div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div></div>`);
     document.getElementById('modal-cancel').onclick = closeModal;
   } catch (e) { alert('Lecture impossible : ' + (e.message || e)); }
+}
+
+// ===========================================================================
+// Onglet ADR — table structurée 6 colonnes (Titre, Statut, Contexte, Décision,
+// Conséquences, Pièces jointes) + Actions. Filtres statut/repo. ADR globale
+// signalée par un badge. `adrs` = docs kind=adr-tech du projet (incl. repos
+// transverses), `repos` = repos du projet, `filter` = { status, repo }.
+// ===========================================================================
+function adrTabHtml(p, adrs, repos, filter = {}) {
+  const f = filter || {};
+  const projRepoIds = (p && p.repos) ? p.repos.slice() : [];
+  const repoName = (rid) => { const r = (repos || []).find((x) => x.id === rid); return r ? (r.name || r.id) : rid; };
+  const list = adrs || [];
+  const filtered = list.filter((d) =>
+    (!f.status || (d.status || '') === f.status) &&
+    (!f.repo || (Array.isArray(d.repos) && d.repos.includes(f.repo))));
+  const statusOpts = ['', ...ADR_STATUS]
+    .map((s) => `<option value="${esc(s)}" ${f.status === s ? 'selected' : ''}>${s ? esc(s) : '— tous les statuts —'}</option>`).join('');
+  const repoOpts = ['', ...projRepoIds]
+    .map((r) => `<option value="${esc(r)}" ${f.repo === r ? 'selected' : ''}>${r ? esc(repoName(r)) : '— tous les repos —'}</option>`).join('');
+  const rows = filtered.map((d) => {
+    const targets = [];
+    if (d.isGlobal) targets.push(adrGlobalBadge(d));
+    if (Array.isArray(d.repos) && d.repos.length) targets.push(d.repos.map((rid) => `<code class="chip-repo" title="Repo rattaché">${esc(repoName(rid))}</code>`).join(' '));
+    const targetHtml = targets.length ? `<div style="margin-top:4px">${targets.join(' ')}</div>` : '';
+    return `<tr>
+      <td style="border-bottom:1px solid var(--border);padding:6px;vertical-align:top"><strong>${esc(d.title || d.docId)}</strong>${targetHtml}${d.description ? `<div class="muted-sm">${esc(d.description)}</div>` : ''}</td>
+      <td style="border-bottom:1px solid var(--border);padding:6px;vertical-align:top">${adrStatusBadge(d.status)}</td>
+      <td style="border-bottom:1px solid var(--border);padding:6px;vertical-align:top">${adrCellText(d.context)}</td>
+      <td style="border-bottom:1px solid var(--border);padding:6px;vertical-align:top">${adrCellText(d.decision)}</td>
+      <td style="border-bottom:1px solid var(--border);padding:6px;vertical-align:top">${adrCellText(d.consequences)}</td>
+      <td style="border-bottom:1px solid var(--border);padding:6px;vertical-align:top">${adrAttachmentsCell(d)}</td>
+      <td style="border-bottom:1px solid var(--border);padding:6px;vertical-align:top;white-space:nowrap">
+        <button type="button" class="ghost tiny" data-pd-adr-edit="${esc(d.docId)}" title="Éditer l'ADR">Éditer</button>
+        <button type="button" class="ghost tiny" data-pd-adr-view="${esc(d.docId)}" title="Voir le document">Regarder</button>
+        <button type="button" class="ghost tiny danger-text" data-pd-adr-del="${esc(d.docId)}" title="Supprimer l'ADR">Supprimer</button>
+      </td>
+    </tr>`;
+  }).join('');
+  return `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+      <select id="pd-adr-status-filter" title="Filtrer par statut">${statusOpts}</select>
+      <select id="pd-adr-repo-filter" title="Filtrer par repo rattaché">${repoOpts}</select>
+      <span class="muted-sm">${filtered.length} / ${list.length} ADR</span>
+      <button type="button" class="launch-btn" id="pd-adr-new" title="Créer une ADR">+ Nouvelle ADR</button>
+    </div>
+    <div style="overflow:auto;max-height:50vh;border:1px solid var(--border);border-radius:8px">
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr style="background:rgba(255,255,255,.04)">
+          <th style="text-align:left;padding:7px">Titre</th>
+          <th style="text-align:left;padding:7px">Statut</th>
+          <th style="text-align:left;padding:7px">Contexte</th>
+          <th style="text-align:left;padding:7px">Décision</th>
+          <th style="text-align:left;padding:7px">Conséquences</th>
+          <th style="text-align:left;padding:7px">Pièces jointes</th>
+          <th style="text-align:left;padding:7px">Actions</th>
+        </tr></thead>
+        <tbody>${rows || `<tr><td colspan="7" class="muted-sm" style="padding:10px">Aucune ADR pour ce projet.</td></tr>`}</tbody>
+      </table>
+    </div>`;
+}
+
+// ===========================================================================
+// Modale CRÉATION / ÉDITION d'une ADR (kind=adr-tech) rattachée au projet.
+// - création : POST /api/docs (import fichier OU chemin) + repoIds 1..N ou global
+// - édition  : PUT /api/docs/:id (champs ADR + addRepoIds + setGlobal)
+// Le retrait d'un repo précis n'est pas exposé par l'interface registre (additif).
+// ===========================================================================
+function adrFormModal(p, repos, adr, onSaved) {
+  const isEdit = !!(adr && adr.docId);
+  const projRepos = repos || [];
+  const currentRepos = (adr && Array.isArray(adr.repos)) ? adr.repos : [];
+  const curStatus = (adr && adr.status) || 'Proposé';
+  const statusOpts = ADR_STATUS.map((s) => `<option value="${esc(s)}" ${curStatus === s ? 'selected' : ''}>${esc(s)}</option>`).join('');
+  const repoChecks = projRepos.length
+    ? projRepos.map((r) => {
+        const checked = currentRepos.includes(r.id) ? 'checked' : '';
+        return `<label style="display:inline-flex;gap:4px;align-items:center;margin:2px 10px 2px 0"><input type="checkbox" class="pd-adr-repo" value="${esc(r.id)}" ${checked}> ${esc(r.name || r.id)}</label>`;
+      }).join('')
+    : '<span class="muted-sm">Aucun repo associé à ce projet.</span>';
+  const globalChecked = !!(adr && adr.isGlobal);
+  showModal(`
+    <div class="modal modal-wide">
+      <h2>${isEdit ? 'Éditer l\'ADR' : 'Nouvelle ADR'}</h2>
+      <p class="muted-sm">Projet <code>${esc(p.id)}</code> — ADR (architecture technique) structurée.</p>
+      <label class="modal-field">Titre
+        <input id="adr-title" value="${esc((adr && adr.title) || '')}" placeholder="ex. ADR — Architecture du module X" required>
+      </label>
+      <label class="modal-field">Statut
+        <select id="adr-status">${statusOpts}</select>
+      </label>
+      <label class="modal-field">Contexte
+        <textarea id="adr-context" class="modal-textarea" rows="3" placeholder="Contexte / problème">${esc((adr && adr.context) || '')}</textarea>
+      </label>
+      <label class="modal-field">Décision
+        <textarea id="adr-decision" class="modal-textarea" rows="3" placeholder="Décision">${esc((adr && adr.decision) || '')}</textarea>
+      </label>
+      <label class="modal-field">Conséquences
+        <textarea id="adr-consequences" class="modal-textarea" rows="3" placeholder="Conséquences">${esc((adr && adr.consequences) || '')}</textarea>
+      </label>
+      <label class="modal-field">Repos rattachés ${isEdit ? '<span class="muted-sm">— ajout uniquement (le retrait nécessite une évolution du registre)</span>' : '<span class="muted-sm">— cochez 1..N repos, ou « tous » ci-dessous</span>'}
+        <div style="max-height:120px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:6px">${repoChecks}</div>
+      </label>
+      <label class="modal-field" style="flex-direction:row;align-items:center;gap:6px">
+        <input type="checkbox" id="adr-global" ${globalChecked ? 'checked' : ''}>
+        <span>Tous les repos du projet (ADR <strong>globale</strong>)</span>
+      </label>
+      ${isEdit ? `
+      <label class="modal-field">Document (chemin)
+        <input id="adr-path" value="${esc((adr && adr.path) || '')}" placeholder="/home/coder/…/adr.md">
+      </label>` : `
+      <div class="pd-inline" style="margin:10px 0">
+        <select id="adr-doc-mode"><option value="upload">Importer depuis mon PC</option><option value="path">Référencer un chemin</option></select>
+      </div>
+      <input id="adr-file" type="file" accept=".md,.markdown,.txt,.feature,.adoc">
+      <input id="adr-path" placeholder="chemin existant (ex. /home/coder/…/adr.md)" hidden>`}
+      <div class="modal-actions">
+        <button class="ghost" id="modal-cancel">Annuler</button>
+        <button class="launch-btn" id="adr-save">${isEdit ? 'Enregistrer' : 'Créer'}</button>
+      </div>
+      <div id="adr-msg" class="msg"></div>
+    </div>`);
+  const msg = (t, ok = true) => { const m = document.getElementById('adr-msg'); if (m) { m.textContent = t; m.className = 'msg ' + (ok ? 'ok' : 'error'); } };
+  document.getElementById('modal-cancel').onclick = closeModal;
+  const modeEl = document.getElementById('adr-doc-mode');
+  if (modeEl) {
+    const fileEl = document.getElementById('adr-file');
+    const pathEl = document.getElementById('adr-path');
+    const sync = () => { const up = modeEl.value === 'upload'; fileEl.hidden = !up; pathEl.hidden = up; };
+    modeEl.addEventListener('change', sync); sync();
+  }
+  document.getElementById('adr-save').onclick = async () => {
+    try {
+      const body = {
+        kind: 'adr-tech',
+        title: document.getElementById('adr-title').value.trim() || undefined,
+        status: document.getElementById('adr-status').value || undefined,
+        context: document.getElementById('adr-context').value,
+        decision: document.getElementById('adr-decision').value,
+        consequences: document.getElementById('adr-consequences').value,
+      };
+      const isGlobal = document.getElementById('adr-global').checked;
+      const checkedRepos = [...document.querySelectorAll('.pd-adr-repo:checked')].map((c) => c.value);
+      if (isEdit) {
+        const path = document.getElementById('adr-path').value.trim();
+        if (path) body.path = path;
+        body.setGlobal = isGlobal;
+        const toAdd = checkedRepos.filter((r) => !currentRepos.includes(r));
+        if (toAdd.length) body.addRepoIds = toAdd;
+        await api(`/api/docs/${encodeURIComponent(adr.docId)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      } else {
+        body.projectId = p.id;
+        if (isGlobal) body.global = true;
+        else if (checkedRepos.length) body.repoIds = checkedRepos;
+        if (modeEl && modeEl.value === 'upload') {
+          const f = document.getElementById('adr-file').files[0];
+          if (!f) throw new Error('Choisissez un fichier.');
+          if (f.size > 2 * 1024 * 1024) throw new Error('Fichier trop volumineux (max 2 Mo).');
+          const buf = await f.arrayBuffer();
+          body.filename = f.name; body.dataBase64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+        } else {
+          const path = document.getElementById('adr-path').value.trim();
+          if (!path) throw new Error('Chemin requis.');
+          body.path = path;
+        }
+        await api('/api/docs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      }
+      closeModal();
+      if (typeof onSaved === 'function') await onSaved();
+    } catch (e) { msg(e.message || String(e), false); }
+  };
 }
 
 // ===========================================================================

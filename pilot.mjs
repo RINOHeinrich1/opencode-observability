@@ -549,7 +549,16 @@ export async function registerDoc(args) {
   return taskOrchestrator("doc_register", {
     kind: args.kind, title: args.title || undefined, path: args.path,
     description: args.description || undefined,
+    // Champs ADR structurés (item 120) — restitués en table par l'onglet ADR.
+    status: args.status || undefined,
+    context: args.context ?? undefined,
+    decision: args.decision ?? undefined,
+    consequences: args.consequences ?? undefined,
+    replacedBy: args.replacedBy || undefined,
     projectId: args.projectId || undefined, repoId: args.repoId || undefined,
+    // Rattachement repos 1..N + ADR globale (tous les repos du projet).
+    repoIds: Array.isArray(args.repoIds) && args.repoIds.length ? args.repoIds : undefined,
+    global: args.global === true ? true : undefined,
     organizationId: args.organizationId || undefined, createdBy: args.createdBy,
   });
 }
@@ -557,7 +566,16 @@ export async function updateDoc(args) {
   return taskOrchestrator("doc_update", {
     docId: args.docId, kind: args.kind || undefined, title: args.title,
     path: args.path, description: args.description,
+    // Champs ADR structurés (item 120).
+    status: args.status || undefined,
+    context: args.context ?? undefined,
+    decision: args.decision ?? undefined,
+    consequences: args.consequences ?? undefined,
+    replacedBy: args.replacedBy ?? undefined,
     addProjectId: args.addProjectId || undefined, addRepoId: args.addRepoId || undefined,
+    // Rattachement : ajout de repos (1..N) + bascule « tous les repos » (globale).
+    addRepoIds: Array.isArray(args.addRepoIds) && args.addRepoIds.length ? args.addRepoIds : undefined,
+    setGlobal: typeof args.setGlobal === "boolean" ? args.setGlobal : undefined,
   });
 }
 export async function deleteDoc(docId) {
@@ -577,7 +595,7 @@ const DOC_KINDS = ["adr-tech", "specs-fonctionnelles", "scenarios-gherkin"];
 // Import d'un fichier DOCUMENT depuis le PC de l'utilisateur : le fichier est
 // stocké côté serveur (storage/ref-docs) puis enregistré comme doc de référence
 // (ADR-12) rattaché à un projet et/ou un repo. Renvoie le doc enregistré.
-export async function registerDocUpload({ kind, title, filename, dataBase64, projectId, repoId, organizationId, by }) {
+export async function registerDocUpload({ kind, title, filename, dataBase64, projectId, repoId, repoIds, status, context, decision, consequences, replacedBy, global, organizationId, by }) {
   if (!dataBase64 || !filename) throw new Error("fichier requis (filename + dataBase64)");
   if (!DOC_KINDS || !DOC_KINDS.includes(kind)) throw new Error("kind requis (adr-tech | specs-fonctionnelles | scenarios-gherkin)");
   const fs = await import("node:fs");
@@ -592,8 +610,16 @@ export async function registerDocUpload({ kind, title, filename, dataBase64, pro
     kind,
     title: title ? String(title).trim() : undefined,
     path: dest,
+    // Champs ADR structurés : ne pas les perdre sur le chemin d'import fichier.
+    status: status || undefined,
+    context: context ?? undefined,
+    decision: decision ?? undefined,
+    consequences: consequences ?? undefined,
+    replacedBy: replacedBy || undefined,
     projectId: projectId || undefined,
     repoId: repoId || undefined,
+    repoIds: Array.isArray(repoIds) && repoIds.length ? repoIds : undefined,
+    global: global === true ? true : undefined,
     organizationId: organizationId || undefined,
     createdBy: by,
   });

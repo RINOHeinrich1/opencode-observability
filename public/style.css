@@ -84,6 +84,18 @@ main { padding: 20px; max-width: 1200px; margin: 0 auto; }
 .card .num { font-size: 26px; font-weight: 700; }
 .card .lbl { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
 
+/* Cartes CLIQUABLES de la Vue d'ensemble (cardinalités) — affordance de clic.
+   Un <button class="card card-link"> reprend le style .card et signale l'action. */
+.card-link {
+  display: block; width: 100%; text-align: left; font: inherit; color: inherit;
+  cursor: pointer;
+  transition: border-color .12s ease, background .12s ease, transform .12s ease;
+}
+.card-link:hover { border-color: var(--accent, #4f8cff); background: rgba(79, 140, 255, 0.08); transform: translateY(-1px); }
+.card-link:focus-visible { outline: 2px solid var(--accent, #4f8cff); outline-offset: 2px; }
+.card-link:active { transform: none; }
+.card-link .num { color: var(--text); }
+
 table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); font-size: 13px; }
 th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: .03em; }

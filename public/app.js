@@ -23,6 +23,15 @@ let tasksNeedRecette = localStorage.getItem('panel_task_recette') === '1'; // pr
 let tasksActifOnly = localStorage.getItem('panel_task_actif') === '1';      // pré-filtre « Actif » (statut != done)
 let tasksDateFrom = localStorage.getItem('panel_task_date_from') || '';      // filtre date de création — borne basse (YYYY-MM-DD)
 let tasksDateTo = localStorage.getItem('panel_task_date_to') || '';          // filtre date de création — borne haute (YYYY-MM-DD)
+// Filtres CIBLES « sans lien » (id-set de la cardinalité) — pré-appliqués par un
+// clic sur une carte de la Vue d'ensemble, valeur du <select> visible de la page.
+let tasksMissingFilter = localStorage.getItem('panel_task_missing') || '';    // '' | tache_sans_adr | tache_sans_fonctionnalite | tache_sans_sprint | emergents
+let recettesMissingFilter = localStorage.getItem('panel_recette_missing') || ''; // '' | recette_sans_adr | recette_sans_fonctionnalite | recette_sans_sprint
+let sprintsMissingFilter = localStorage.getItem('panel_sprint_missing') || '';   // '' | sprint_sans_fonctionnalite | sprint_sans_regle
+const persistTasksMissing = () => { if (tasksMissingFilter) localStorage.setItem('panel_task_missing', tasksMissingFilter); else localStorage.removeItem('panel_task_missing'); };
+const persistRecettesMissing = () => { if (recettesMissingFilter) localStorage.setItem('panel_recette_missing', recettesMissingFilter); else localStorage.removeItem('panel_recette_missing'); };
+const persistSprintsMissing = () => { if (sprintsMissingFilter) localStorage.setItem('panel_sprint_missing', sprintsMissingFilter); else localStorage.removeItem('panel_sprint_missing'); };
+const persistAdrMissing = () => { if (adrFilters && adrFilters.missingFeature) localStorage.setItem('panel_adr_missing', adrFilters.missingFeature); else localStorage.removeItem('panel_adr_missing'); };
 // Navigation CENTRÉE PROJET : quand un projet est ouvert, toutes les vues sont
 // scopées à ce projet (bandeau + sous-onglets). Vide = accueil (liste projets).
 let currentProject = localStorage.getItem('panel_current_project') || '';
@@ -117,7 +126,6 @@ const PROJECT_TABS = [
   ['adr', 'ADR'],
   ['sprints', 'Sprints'],
   ['features', 'Fonctionnalités / Règles'],
-  ['emergents', 'Émergents'],
   ['e2esecrets', 'Vars & Secrets E2E'],
   ['archives', 'Archives'],
 ];
@@ -330,6 +338,30 @@ function goToTab(tab, taskId) {
   refreshActive();
 }
 
+// Clic sur une CARTE de cardinalité (Vue d'ensemble) : ouvre l'onglet cible avec
+// le FILTRE pré-appliqué et VISIBLE (le <select> de la page porte la valeur),
+// puis re-rend la page (la liste est réellement filtrée par id-set). Les
+// variables de filtre sont persistées comme les filtres existants.
+function openCardinalityTarget(view) {
+  const card = CARDINALITY_CARDS.find((c) => c.view === view);
+  if (!card) return;
+  if (card.tab === 'tasks') {
+    tasksMissingFilter = card.filter;
+    persistTasksMissing();
+  } else if (card.tab === 'recettes') {
+    recettesMissingFilter = card.filter;
+    persistRecettesMissing();
+  } else if (card.tab === 'sprints') {
+    sprintsMissingFilter = card.filter;
+    persistSprintsMissing();
+  } else if (card.tab === 'adr') {
+    adrFilters.missingFeature = card.filter;
+    persistAdrMissing();
+  }
+  switchTab(card.tab);
+  refreshActive();
+}
+
 function filterBar() {
   return `<div class="filter-bar">
     <label for="f-task">Tâche</label>
@@ -471,6 +503,7 @@ async function renderOverview() {
     `${currentProject ? `<h2>Vue d'ensemble — ${esc(currentProject)}</h2>` : ''}` +
     `<div class="cards">${cards.map(([l, n]) => `<div class="card"><div class="num">${n}</div><div class="lbl">${esc(l)}</div></div>`).join('')}</div>` +
     `<div class="muted-sm">Registre : ${s.byStatus && Object.keys(s.byStatus).length ? 'connecté' : 'vide / non initialisé'}</div>` +
+    cardinalitySectionHtml() +
     `<div class="section adr-vig-section">
       <h3>Vigilances ADR (recettes)</h3>
       <div class="muted-sm">Historique append-only des ADR manquantes / conflits remontés par les recettes et les tests. Un point OUVERT bloque « Terminer la recette ».</div>
@@ -486,6 +519,7 @@ async function renderOverview() {
     </div>`;
   wireAdrVigFilters();
   loadAdrVigilances();
+  wireCardinalityOverview();
 }
 
 // --- Tâches ----------------------------------------------------------------
@@ -497,6 +531,9 @@ async function renderTasks() {
   const plans = plansData.plans || [];
   const plansByTask = {};
   plans.forEach((p) => { if (p.task_id) (plansByTask[p.task_id] = plansByTask[p.task_id] || []).push(p); });
+  // Filtre CIBLE « sans lien » : id-set de la vue de cardinalité correspondante
+  // (source = registre). `null` = filtre inactif ou indisponible → liste non filtrée.
+  const missingIds = tasksMissingFilter ? await cardinalityIdSetFor(tasksMissingFilter, 'task') : null;
   const projects = [...new Set(tasks.map((t) => t.project).filter(Boolean))];
   document.getElementById('pane-tasks').innerHTML = `
     <h2>Tâches</h2>
@@ -526,6 +563,13 @@ async function renderTasks() {
         <input type="date" id="f-date-to" value="${esc(tasksDateTo)}">
         <button type="button" class="ghost" id="f-date-clear" title="Effacer le filtre date" ${(tasksDateFrom || tasksDateTo) ? '' : 'hidden'}>✕</button>
       </span>
+      <select id="f-missing" title="Filtrer par lien manquant (cardinalité : source registre)">
+        <option value="">Sans lien : tous</option>
+        <option value="tache_sans_adr">Sans ADR</option>
+        <option value="tache_sans_fonctionnalite">Sans fonctionnalité</option>
+        <option value="tache_sans_sprint">Sans sprint</option>
+        <option value="emergents">Émergentes</option>
+      </select>
       <button id="new-task-btn" class="launch-btn">+ Nouvelle tâche</button>
     </div>
     <table><thead><tr><th></th><th>ID</th><th>Projet</th><th>Type</th><th>Priorité</th><th>Statut</th><th>Recette</th><th>E2E</th><th>Demande</th><th>Session</th><th>Créée par</th><th>Actions</th></tr></thead>
@@ -598,6 +642,7 @@ async function renderTasks() {
       && (!uf.length || uf.includes(t.created_by || '—'))
       && (!needRecette || (t.recette_status || 'pending') !== 'done')
       && (!actifOnly || (t.status || 'queued') !== 'done')
+      && (!tasksMissingFilter || !missingIds || missingIds.has(t.id))
       && (!dateFrom || dayOf(t) >= dateFrom)
       && (!dateTo || dayOf(t) <= dateTo));
 
@@ -747,6 +792,16 @@ async function renderTasks() {
     localStorage.setItem('panel_task_project', tasksProjectFilter);
     apply();
   });
+  // Filtre cible « sans lien » : valeur pré-appliquée (clic carte) + persistance.
+  const fMissingEl = document.getElementById('f-missing');
+  if (fMissingEl) {
+    fMissingEl.value = tasksMissingFilter || '';
+    fMissingEl.addEventListener('change', () => {
+      tasksMissingFilter = fMissingEl.value;
+      persistTasksMissing();
+      refreshActive();
+    });
+  }
   statusSelAdd.addEventListener('change', () => {
     const v = statusSelAdd.value;
     if (v && !tasksStatusFilter.includes(v)) setStatusFilter([...tasksStatusFilter, v]);
@@ -2525,6 +2580,11 @@ async function renderRecettes() {
     refreshActive();
   };
   recs = recs.filter((r) => !recettesUserFilter.length || recettesUserFilter.includes(r.created_by || '—'));
+  // Filtre CIBLE « sans lien » (id-set de la cardinalité, source registre).
+  if (recettesMissingFilter) {
+    const missingIds = await cardinalityIdSetFor(recettesMissingFilter, 'recette');
+    if (missingIds) recs = recs.filter((r) => missingIds.has(r.recette_id));
+  }
   document.getElementById('pane-recettes').innerHTML = `
     <h2>Recettes</h2>
     <p class="muted-sm">Opérations de vérification — chaque recette couvre UN projet (produit) et 0..N tâches de ce projet ; les repos transverses du projet sont sa portée réelle. Titre et session dédiée.</p>
@@ -2536,6 +2596,12 @@ async function renderRecettes() {
         <select id="rec-user-add" title="Ajouter un créateur à filtrer"><option value="">+ Ajouter…</option></select>
         <button type="button" class="ghost tagfilter-clear" id="rec-user-clear" hidden>tout afficher</button>
       </div>
+      <select id="rec-missing" title="Filtrer par lien manquant (cardinalité : source registre)">
+        <option value="">Sans lien : tous</option>
+        <option value="recette_sans_adr">Sans ADR</option>
+        <option value="recette_sans_fonctionnalite">Sans fonctionnalité</option>
+        <option value="recette_sans_sprint">Sans sprint</option>
+      </select>
       <button id="new-recette-btn" class="launch-btn">+ Nouvelle recette</button>
     </div>
     <div class="project-cards">${recs.map(recetteCard).join('') || '<p class="muted">Aucune recette.</p>'}</div>`;
@@ -2553,6 +2619,16 @@ async function renderRecettes() {
   });
   const clear = document.getElementById('rec-user-clear');
   if (clear) clear.addEventListener('click', () => setUserFilter([]));
+  // Filtre cible « sans lien » : valeur pré-appliquée (clic carte) + persistance.
+  const recMissingEl = document.getElementById('rec-missing');
+  if (recMissingEl) {
+    recMissingEl.value = recettesMissingFilter || '';
+    recMissingEl.addEventListener('change', () => {
+      recettesMissingFilter = recMissingEl.value;
+      persistRecettesMissing();
+      refreshActive();
+    });
+  }
   document.getElementById('new-recette-btn').addEventListener('click', () => recetteCreateModal());
   document.getElementById('new-recette-btn').addEventListener('click', () => recetteCreateModal());
   document.querySelectorAll('#pane-recettes [data-rec-session]').forEach((b) => b.addEventListener('click', () => openRecetteSession(b.dataset.recSession, false, b)));
@@ -4476,6 +4552,10 @@ function adrTableHtml(ctx = {}) {
   const f = ctx.filter || {};
   const repos = ctx.repos || [];
   const list = ctx.adrs || [];
+  // Filtre CIBLE « ADR sans fonctionnalité » : id-set de la vue de cardinalité
+  // (source registre). `null` = ensemble indisponible → filtre inactif.
+  const missingIds = ctx.missingFeatureIds || null;
+  const missingActive = !!f.missingFeature && !!missingIds;
   const repoName = (rid) => { const r = repos.find((x) => x.id === rid); return r ? (r.name || r.id) : rid; };
   const q = (f.q || '').trim().toLowerCase();
   const statusOpts = ['', ...ADR_STATUS]
@@ -4492,12 +4572,13 @@ function adrTableHtml(ctx = {}) {
       repos: dRepos.join(' '),
       search: [d.title, d.context, d.decision, d.consequences, d.path, dRepos.join(' ')].filter(Boolean).join(' ').toLowerCase(),
     };
-    const show = adrRowVisible(attrs, q, f.status || '', f.repo || '');
+    const isMissingFeature = missingIds ? missingIds.has(d.docId) : false;
+    const show = adrRowVisible(attrs, q, f.status || '', f.repo || '') && (!missingActive || isMissingFeature);
     if (show) visible++;
     const targetHtml = (d.isGlobal || chips)
       ? `<div>${[adrGlobalBadge(d), chips].filter(Boolean).join(' ')}</div>`
       : '<span class="muted-sm">—</span>';
-    return `<tr data-status="${esc(attrs.status)}" data-repos="${esc(attrs.repos)}" data-search="${esc(attrs.search)}"${show ? '' : ' hidden'}>
+    return `<tr data-status="${esc(attrs.status)}" data-repos="${esc(attrs.repos)}" data-search="${esc(attrs.search)}" data-missing="${isMissingFeature ? '1' : '0'}"${show ? '' : ' hidden'}>
       <td><strong>${esc(d.title || d.docId)}</strong>${d.description ? `<div class="muted-sm">${esc(d.description)}</div>` : ''}</td>
       <td>${adrStatusBadge(d.status)}</td>
       <td>${adrCellText(d.context)}</td>
@@ -4517,6 +4598,10 @@ function adrTableHtml(ctx = {}) {
       <input type="search" id="${esc(prefix)}-search" class="adr-search" placeholder="Rechercher (titre, contexte, décision…)" value="${esc(f.q || '')}">
       <select id="${esc(prefix)}-status-filter" title="Filtrer par statut">${statusOpts}</select>
       <select id="${esc(prefix)}-repo-filter" title="Filtrer par repo rattaché">${repoOpts}</select>
+      <select id="${esc(prefix)}-missing-filter" title="Filtrer par lien manquant (cardinalité : source registre)">
+        <option value="">Sans lien : tous</option>
+        <option value="adr_sans_fonctionnalite" ${f.missingFeature === 'adr_sans_fonctionnalite' ? 'selected' : ''}>Sans fonctionnalité</option>
+      </select>
       <span class="muted-sm" id="${esc(prefix)}-count">${visible} / ${list.length} ADR</span>
       <button type="button" class="launch-btn" id="${esc(prefix)}-new" title="Créer une ADR">+ Nouvelle ADR</button>
     </div>
@@ -4583,19 +4668,21 @@ function bindAdrTable(rootEl, ctx = {}) {
   const searchEl = root.querySelector(`#${prefix}-search`);
   const statusEl = root.querySelector(`#${prefix}-status-filter`);
   const repoEl = root.querySelector(`#${prefix}-repo-filter`);
+  const missingEl = root.querySelector(`#${prefix}-missing-filter`);
   const countEl = root.querySelector(`#${prefix}-count`);
   const rows = [...root.querySelectorAll('.adr-table tbody tr[data-status]')];
   const apply = () => {
     const q = ((searchEl && searchEl.value) || '').trim().toLowerCase();
     const st = (statusEl && statusEl.value) || '';
     const rp = (repoEl && repoEl.value) || '';
-    filter.status = st; filter.repo = rp; filter.q = (searchEl && searchEl.value) || '';
+    const mf = (missingEl && missingEl.value) || '';
+    filter.status = st; filter.repo = rp; filter.q = (searchEl && searchEl.value) || ''; filter.missingFeature = mf;
     let visible = 0;
     for (const row of rows) {
       const show = adrRowVisible(
         { status: row.getAttribute('data-status'), repos: row.getAttribute('data-repos'), search: row.getAttribute('data-search') },
         q, st, rp,
-      );
+      ) && (!mf || row.getAttribute('data-missing') === '1');
       row.hidden = !show;
       if (show) visible++;
     }
@@ -4604,6 +4691,7 @@ function bindAdrTable(rootEl, ctx = {}) {
   if (searchEl) searchEl.addEventListener('input', apply);
   if (statusEl) statusEl.addEventListener('change', apply);
   if (repoEl) repoEl.addEventListener('change', apply);
+  if (missingEl) missingEl.addEventListener('change', () => { apply(); if (prefix === 'adr') persistAdrMissing(); });
   apply();
 }
 
@@ -4612,7 +4700,7 @@ function bindAdrTable(rootEl, ctx = {}) {
 // projet courant + filtres statut/repo + recherche + CRUD + pièces jointes.
 // Mutualise adrTableHtml + bindAdrTable (aucune duplication).
 // ===========================================================================
-let adrFilters = { status: '', repo: '', q: '' };
+let adrFilters = { status: '', repo: '', q: '', missingFeature: localStorage.getItem('panel_adr_missing') || '' };
 
 async function renderAdrs() {
   const pane = document.getElementById('pane-adr');
@@ -4627,10 +4715,13 @@ async function renderAdrs() {
   try { repos = ((await api(`/api/repos?project=${encodeURIComponent(currentProject)}`)).repos || []); } catch { repos = []; }
   try { projects = ((await api('/api/projects')).projects || []); } catch { projects = []; }
   const project = projects.find((p) => p.id === currentProject) || { id: currentProject };
+  // Filtre CIBLE « ADR sans fonctionnalité » : id-set de la vue de cardinalité
+  // (source registre). Chargé seulement si le filtre est actif.
+  const missingFeatureIds = adrFilters.missingFeature ? await cardinalityIdSetFor('adr_sans_fonctionnalite') : null;
   pane.innerHTML = `
     <h2>ADR — architecture du projet <span class="muted-sm">${esc(project.name || currentProject)}</span></h2>
     <p class="muted-sm">Décisions d'architecture (<code>adr-tech</code>) du projet et de ses repos transverses.</p>
-    <div id="adr-table-wrap">${adrTableHtml({ projectId: currentProject, adrs, repos, filter: adrFilters, prefix: 'adr' })}</div>`;
+    <div id="adr-table-wrap">${adrTableHtml({ projectId: currentProject, adrs, repos, filter: adrFilters, prefix: 'adr', missingFeatureIds })}</div>`;
   bindAdrTable(pane, { prefix: 'adr', projectId: currentProject, project, docs: adrs, repos, filter: adrFilters, onChange: renderAdrs });
 }
 
@@ -4765,6 +4856,11 @@ async function renderSprints() {
   let sprints = [], pieces = [];
   try { sprints = ((await api(`/api/sprints?projectId=${encodeURIComponent(currentProject)}`)).sprints || []); } catch { sprints = []; }
   try { pieces = ((await api(`/api/pieces?projectId=${encodeURIComponent(currentProject)}`)).pieces || []); } catch { pieces = []; }
+  // Filtre CIBLE « sans lien » (id-set de la cardinalité, source registre).
+  if (sprintsMissingFilter) {
+    const missingIds = await cardinalityIdSetFor(sprintsMissingFilter, 'sprint');
+    if (missingIds) sprints = sprints.filter((s) => missingIds.has(s.id));
+  }
   const rows = sprints.map((s) => `<tr>
     <td><strong>${esc(s.title || s.id)}</strong>${s.isDefault ? ' <span class="badge queued" title="sprint par défaut">défaut</span>' : ''}<br><code class="muted-sm">${esc(s.id)}</code></td>
     <td>${sprintStatusBadge(s.status)}</td>
@@ -4787,6 +4883,11 @@ async function renderSprints() {
     <p class="muted-sm">Un sprint est l'unité de temps du projet. La <strong>clôture</strong> (bouton ou échéance) est l'action officielle qui bascule la garde d'émergence ; <strong>REPRENDRE</strong> la suspend. Le rapport est généré par le registre.</p>
     <div class="adr-pane-filters">
       <span class="muted-sm">${sprints.length} sprint(s)</span>
+      <select id="sp-missing" title="Filtrer par lien manquant (cardinalité : source registre)">
+        <option value="">Sans lien : tous</option>
+        <option value="sprint_sans_fonctionnalite">Sans fonctionnalité</option>
+        <option value="sprint_sans_regle">Sans règle métier</option>
+      </select>
       <button type="button" class="launch-btn" id="sp-new">+ Nouveau sprint</button>
       <button type="button" class="launch-btn" data-mg-session="1" title="Migrer les anciens sprints : convertir les ADR monolithiques en ADR atomiques (validation utilisateur avant écriture) et rattacher les éléments hérités à l'ancien sprint — sans faux émergent">Session de migration</button>
     </div>
@@ -4795,6 +4896,16 @@ async function renderSprints() {
       <tbody>${rows || '<tr><td colspan="7" class="muted-sm" style="padding:10px">Aucun sprint pour ce projet.</td></tr>'}</tbody>
     </table></div>`;
   document.getElementById('sp-new').addEventListener('click', () => sprintFormModal(pieces, renderSprints));
+  // Filtre cible « sans lien » : valeur pré-appliquée (clic carte) + persistance.
+  const spMissingEl = document.getElementById('sp-missing');
+  if (spMissingEl) {
+    spMissingEl.value = sprintsMissingFilter || '';
+    spMissingEl.addEventListener('change', () => {
+      sprintsMissingFilter = spMissingEl.value;
+      persistSprintsMissing();
+      refreshActive();
+    });
+  }
   pane.querySelectorAll('[data-mg-session]').forEach((b) => b.addEventListener('click', () => openMigrationSession(b)));
   pane.querySelectorAll('[data-sp-detail]').forEach((b) => b.addEventListener('click', () => sprintDetailModal(b.dataset.spDetail)));
   pane.querySelectorAll('[data-sp-report]').forEach((b) => b.addEventListener('click', () => sprintReportModal(b.dataset.spReport)));
@@ -5194,55 +5305,127 @@ async function renderFeaturesRules() {
 }
 
 // ===========================================================================
-// ONGLET ÉMERGENTS (ADR-001 §5, T6) — traçage des manques de cardinalité
-// (10 vues `cardinalityView` + signaux). LECTURE SEULE sauf la clôture TRACÉE
-// d'un signal (résolution obligatoire). Non bloquant : le panneau affiche
-// l'état renvoyé par le registre (aucun recalcul de l'émergence).
+// CARDINALITÉS & ÉMERGENCE (ADR-001 §5, T6/T7) — restituées en CARTES
+// statistiques CLIQUABLES dans la Vue d'ensemble (l'onglet « Émergents » a été
+// retiré). Compteurs + ensembles d'ids proviennent de la route existante
+// `GET /api/cardinality` (source de vérité = registre ; le panneau ne recalcule
+// JAMAIS l'émergence). Les signaux (clôture TRACÉE, résolution obligatoire)
+// restent accessibles via un point d'entrée DISCRET (modale), sans table
+// volumineuse affichée en permanence.
 // ===========================================================================
 
-const CARDINALITY_VIEW_LABELS = {
-  tache_sans_adr: 'Tâches sans ADR effectif',
-  tache_sans_fonctionnalite: 'Tâches sans fonctionnalité',
-  tache_sans_sprint: 'Tâches sans sprint',
-  recette_sans_adr: 'Recettes sans ADR',
-  recette_sans_fonctionnalite: 'Recettes sans fonctionnalité',
-  recette_sans_sprint: 'Recettes sans sprint',
-  adr_sans_fonctionnalite: 'ADR sans fonctionnalité',
-  sprint_sans_fonctionnalite: 'Sprints sans fonctionnalité',
-  sprint_sans_regle: 'Sprints sans règle métier',
-  emergents: 'Éléments émergents (tâches, fonctionnalités, règles, pièces)',
-};
+// 10 indicateurs = 10 vues du registre. `tab`/`filter` = cible du clic :
+// onglet à ouvrir + valeur du filtre pré-appliqué (select visible) de la page.
+const CARDINALITY_CARDS = [
+  { view: 'tache_sans_adr',              label: 'Tâches sans ADR',               tab: 'tasks',    filter: 'tache_sans_adr' },
+  { view: 'tache_sans_fonctionnalite',   label: 'Tâches sans fonctionnalité',    tab: 'tasks',    filter: 'tache_sans_fonctionnalite' },
+  { view: 'tache_sans_sprint',           label: 'Tâches sans sprint',            tab: 'tasks',    filter: 'tache_sans_sprint' },
+  { view: 'recette_sans_adr',            label: 'Recettes sans ADR',             tab: 'recettes', filter: 'recette_sans_adr' },
+  { view: 'recette_sans_fonctionnalite', label: 'Recettes sans fonctionnalité',  tab: 'recettes', filter: 'recette_sans_fonctionnalite' },
+  { view: 'recette_sans_sprint',         label: 'Recettes sans sprint',          tab: 'recettes', filter: 'recette_sans_sprint' },
+  { view: 'adr_sans_fonctionnalite',     label: 'ADR sans fonctionnalité',       tab: 'adr',      filter: 'adr_sans_fonctionnalite' },
+  { view: 'sprint_sans_fonctionnalite',  label: 'Sprints sans fonctionnalité',   tab: 'sprints',  filter: 'sprint_sans_fonctionnalite' },
+  { view: 'sprint_sans_regle',           label: 'Sprints sans règle métier',     tab: 'sprints',  filter: 'sprint_sans_regle' },
+  { view: 'emergents',                   label: 'Éléments émergents',            tab: 'tasks',    filter: 'emergents' },
+];
 
-async function renderEmergents() {
-  const pane = document.getElementById('pane-emergents');
+// Cache client (15 s) de l'agrégat `/api/cardinality` : évite de refetcher à
+// chaque rendu (polling). En cas d'échec, l'appelant dégrade proprement (liste
+// non filtrée / message muted) — jamais d'exception qui casse l'onglet.
+const CARDINALITY_CACHE_MS = 15000;
+let cardinalityCache = { projectId: null, at: 0, rep: null, promise: null };
+
+async function cardinalityReportCached(projectId) {
+  const pid = projectId || currentProject;
+  if (!pid) return null;
+  const fresh = cardinalityCache.projectId === pid && cardinalityCache.rep && (Date.now() - cardinalityCache.at) < CARDINALITY_CACHE_MS;
+  if (fresh) return cardinalityCache.rep;
+  if (cardinalityCache.projectId === pid && cardinalityCache.promise) return cardinalityCache.promise;
+  const p = api(`/api/cardinality?projectId=${encodeURIComponent(pid)}`)
+    .then((rep) => { cardinalityCache = { projectId: pid, at: Date.now(), rep, promise: null }; return rep; })
+    .catch((e) => { cardinalityCache = { projectId: pid, at: 0, rep: null, promise: null }; throw e; });
+  cardinalityCache = { projectId: pid, at: 0, rep: null, promise: p };
+  return p;
+}
+
+// Ensemble d'ids d'une vue de cardinalité (éventuellement restreint à un
+// `entityType` : la vue `emergents` agrège tâches/fonctionnalités/règles/pièces).
+function cardinalityIdSet(rep, view, entityType) {
+  const items = (rep && rep.views && rep.views[view] && rep.views[view].items) || [];
+  const list = entityType ? items.filter((it) => it.entityType === entityType) : items;
+  return new Set(list.map((it) => it.id).filter(Boolean));
+}
+
+// Ensemble d'ids prêt à l'emploi pour un filtre cible. `null` = filtre INACTIF
+// (pas de projet, ou appel en échec → liste NON filtrée, jamais vide).
+async function cardinalityIdSetFor(view, entityType) {
+  if (!currentProject || !view) return null;
+  try {
+    const rep = await cardinalityReportCached(currentProject);
+    if (!rep) return null;
+    return cardinalityIdSet(rep, view, entityType);
+  } catch { return null; }
+}
+
+// --- Cartes de la Vue d'ensemble (compteurs + point d'entrée signaux) ------
+// Rendues uniquement quand un projet est ouvert. Les compteurs sont remplis
+// ensuite par `wireCardinalityOverview` (dégradation `—` si l'appel échoue).
+function cardinalitySectionHtml() {
+  if (!currentProject) return '';
+  const cards = CARDINALITY_CARDS.map((c) => `<button type="button" class="card card-link" data-card-view="${esc(c.view)}" title="Ouvrir : ${esc(c.label)} (filtre pré-appliqué)">
+    <div class="num" data-card-count="${esc(c.view)}">…</div>
+    <div class="lbl">${esc(c.label)}</div>
+  </button>`).join('');
+  return `<div class="section card-stats-section">
+    <h3>Cardinalités &amp; émergence</h3>
+    <div class="muted-sm">Indicateurs de traçage du projet (renvoyés par le registre, <strong>non bloquant</strong>). Cliquez une carte pour ouvrir la page cible avec le filtre pré-appliqué.</div>
+    <div class="cards">${cards}</div>
+    <div class="muted-sm card-signals-entry"><button type="button" class="ghost tiny" id="card-signals-open" title="Signaux de cardinalité — clôture tracée (résolution obligatoire)">Signaux de cardinalité — <span id="card-signals-count">…</span></button></div>
+  </div>`;
+}
+
+async function wireCardinalityOverview() {
+  const pane = document.getElementById('pane-overview');
   if (!pane) return;
-  if (!currentProject) {
-    pane.innerHTML = '<h2>Émergents</h2><p class="muted-sm">Ouvrez un projet.</p>';
+  pane.querySelectorAll('[data-card-view]').forEach((b) => b.addEventListener('click', () => openCardinalityTarget(b.dataset.cardView)));
+  const sigBtn = document.getElementById('card-signals-open');
+  if (sigBtn) sigBtn.addEventListener('click', () => cardinalitySignalsModal());
+  if (!currentProject) return;
+  let rep = null;
+  try { rep = await cardinalityReportCached(currentProject); } catch { rep = null; }
+  if (!rep) {
+    pane.querySelectorAll('[data-card-count]').forEach((el) => { el.textContent = '—'; });
+    const cnt = document.getElementById('card-signals-count');
+    if (cnt) cnt.textContent = 'indisponibles';
     return;
   }
-  pane.innerHTML = `<h2>Émergents <span class="muted-sm">${esc(currentProject)}</span></h2><p class="muted-sm">Chargement…</p>`;
+  const counts = rep.counts || {};
+  pane.querySelectorAll('[data-card-count]').forEach((el) => {
+    const v = el.dataset.cardCount;
+    el.textContent = counts[v] == null ? '—' : String(counts[v]);
+  });
+  const cnt = document.getElementById('card-signals-count');
+  if (cnt) cnt.textContent = `${(rep.signals && rep.signals.open) || 0} ouvert(s) / ${(rep.signals && rep.signals.total) || 0}`;
+}
+
+// Modale DISCRÈTE des signaux de cardinalité — la table n'est plus affichée en
+// permanence. Clôture TRACÉE : la résolution est OBLIGATOIRE (prompt non vide).
+async function cardinalitySignalsModal() {
+  if (!currentProject) { alert('Ouvrez un projet pour voir ses signaux de cardinalité.'); return; }
+  showModal(`<div class="modal modal-wide">
+    <h2>Signaux de cardinalité <span class="muted-sm">${esc(currentProject)}</span></h2>
+    <p class="muted-sm">Manques de cardinalité détectés par le registre (<strong>non bloquant</strong>). La clôture d'un signal exige une résolution tracée.</p>
+    <div id="card-signals-body"><div class="muted-sm">Chargement…</div></div>
+    <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
+  </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
   let rep = null, err = '';
-  try { rep = await api(`/api/cardinality?projectId=${encodeURIComponent(currentProject)}`); }
-  catch (e) { err = e.message || String(e); }
-  if (!rep) { pane.innerHTML = `<h2>Émergents</h2><p class="msg error">${esc(err || 'Indisponible')}</p>`; return; }
-  const views = rep.views || {};
+  try { rep = await cardinalityReportCached(currentProject); } catch (e) { err = e.message || String(e); }
+  const body = document.getElementById('card-signals-body');
+  if (!body) return;
+  if (!rep) { body.innerHTML = `<p class="msg error">${esc(err || 'Signaux indisponibles')}</p>`; return; }
   const signals = (rep.signals && rep.signals.items) || [];
-  const viewHtml = (key) => {
-    const items = (views[key] && views[key].items) || [];
-    return `<details style="margin:6px 0">
-      <summary><strong>${esc(CARDINALITY_VIEW_LABELS[key] || key)}</strong> — <span class="chip">${items.length}</span></summary>
-      <div class="recette-list" style="max-height:28vh;overflow:auto;margin-top:6px">
-        ${items.length ? items.map((it) => `<div class="recette-item"><div>
-          <span class="badge art-entity-kind">${esc(it.entityType || '')}</span>
-          <code class="chip">${esc(it.id || '')}</code> ${esc(it.title || it.request || it.ref || '')}
-          ${it.ref && it.title ? `<span class="muted-sm">${esc(it.ref)}</span>` : ''}
-          ${it.emergent ? ' <span class="chip">émergent</span>' : ''}
-          ${it.emergentOrigin ? ` <span class="muted-sm">(origine : ${esc(it.emergentOrigin)})</span>` : ''}
-        </div></div>`).join('') : '<p class="muted-sm">Aucun élément.</p>'}
-      </div>
-    </details>`;
-  };
-  const signalRows = signals.map((s) => `<tr>
+  const rows = signals.map((s) => `<tr>
     <td><code class="chip">${esc(s.signalId)}</code></td>
     <td>${esc(s.entityType || '')}</td>
     <td><code class="muted-sm">${esc(s.entityId || '')}</code></td>
@@ -5250,25 +5433,22 @@ async function renderEmergents() {
     <td>${s.status === 'open' ? '<span class="badge awaiting">ouvert</span>' : '<span class="badge done">résolu</span>'}${s.stale ? ' <span class="chip" title="manques comblés depuis">stale</span>' : ''}</td>
     <td class="e2e-actions">${s.status === 'open' ? `<button type="button" class="ghost tiny" data-card-resolve="${esc(s.signalId)}">Clôturer</button>` : `<span class="muted-sm">${esc(s.resolution || '')}</span>`}</td>
   </tr>`).join('');
-  pane.innerHTML = `
-    <h2>Émergents <span class="muted-sm">${esc(currentProject)}</span></h2>
-    <p class="muted-sm">Traçage des manques de cardinalité (heuristiques T6, <strong>non bloquant</strong>). La clôture d'un sprint bascule la garde d'émergence ; l'état est renvoyé par le registre.</p>
+  body.innerHTML = `
     <div class="adr-pane-filters">
       <span class="muted-sm">Généré : ${esc(String(rep.generatedAt || '').replace('T', ' ').slice(0, 19))}</span>
       <span class="muted-sm">Signaux : ${(rep.signals && rep.signals.open) || 0} ouvert(s) / ${(rep.signals && rep.signals.total) || 0}</span>
     </div>
-    <div style="margin:10px 0">${Object.keys(CARDINALITY_VIEW_LABELS).map(viewHtml).join('')}</div>
-    <h3>Signaux de cardinalité</h3>
     <div class="adr-table-wrap"><table class="adr-table">
       <thead><tr><th>Signal</th><th>Entité</th><th>Id</th><th>Manques</th><th>Statut</th><th>Action</th></tr></thead>
-      <tbody>${signalRows || '<tr><td colspan="6" class="muted-sm" style="padding:10px">Aucun signal.</td></tr>'}</tbody>
+      <tbody>${rows || '<tr><td colspan="6" class="muted-sm" style="padding:10px">Aucun signal.</td></tr>'}</tbody>
     </table></div>`;
-  pane.querySelectorAll('[data-card-resolve]').forEach((b) => b.addEventListener('click', async () => {
+  body.querySelectorAll('[data-card-resolve]').forEach((b) => b.addEventListener('click', async () => {
     const resolution = prompt('Résolution (raison tracée obligatoire) :');
     if (!resolution || !resolution.trim()) return;
     try {
       await api(`/api/cardinality/signals/${encodeURIComponent(b.dataset.cardResolve)}/resolve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ resolution: resolution.trim() }) });
-      await renderEmergents();
+      cardinalityCache = { projectId: null, at: 0, rep: null, promise: null };
+      await cardinalitySignalsModal();
     } catch (e) { alert('Clôture impossible : ' + (e.message || e)); }
   }));
 }
@@ -6691,7 +6871,7 @@ function e2eVarModal(project, projects, existingName) {
 const RENDER = {
   overview: renderOverview, observability: renderObservability, projects: renderProjects, tasks: renderTasks, e2etests: renderE2ETests, e2esecrets: renderE2ESecrets, recettes: renderRecettes,
   events: renderEvents, deployments: renderDeployments, decisions: renderDecisions, artifacts: renderArtifacts, adr: renderAdrs, plans: renderPlans, archives: renderArchives, ecosystem: renderEcosystem, workspaces: renderWorkspaces, users: renderUsers,
-  sprints: renderSprints, features: renderFeaturesRules, emergents: renderEmergents,
+  sprints: renderSprints, features: renderFeaturesRules,
 };
 
 // --- Rafraîchissement automatique (polling, min 10 s) ----------------------

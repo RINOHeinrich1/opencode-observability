@@ -113,7 +113,6 @@ const PROJECT_TABS = [
   ['recettes', 'Recettes'],
   ['e2etests', 'Tests E2E'],
   ['decisions', 'Décisions'],
-  ['plans', 'Plans'],
   ['artifacts', 'Artefacts'],
   ['adr', 'ADR'],
   ['e2esecrets', 'Vars & Secrets E2E'],

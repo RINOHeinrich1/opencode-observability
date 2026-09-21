@@ -827,6 +827,10 @@ export async function updateFeature(args = {}) {
     role: args.role != null ? args.role : undefined,
     userStory: args.userStory || undefined,
     sourcedPieceId: args.sourcedPieceId != null ? args.sourcedPieceId : undefined,
+    // Qualification d'implémentation (T-20260921-133134-yz2i) — pass-through.
+    implemented: typeof args.implemented === "boolean" ? args.implemented : undefined,
+    implementedOrigin: args.implementedOrigin || undefined,
+    implementedNote: args.implementedNote != null ? args.implementedNote : undefined,
     by: args.by || undefined,
   });
 }
@@ -867,6 +871,10 @@ export async function updateRule(args = {}) {
     ref: args.ref || undefined,
     content: args.content || undefined,
     sourcedPieceId: args.sourcedPieceId != null ? args.sourcedPieceId : undefined,
+    // Qualification d'implémentation (T-20260921-133134-yz2i) — pass-through.
+    implemented: typeof args.implemented === "boolean" ? args.implemented : undefined,
+    implementedOrigin: args.implementedOrigin || undefined,
+    implementedNote: args.implementedNote != null ? args.implementedNote : undefined,
     by: args.by || undefined,
   });
 }

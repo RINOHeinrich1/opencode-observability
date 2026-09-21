@@ -4961,8 +4961,8 @@ async function openSprintSession(sprintId, force, btn) {
 // rafraîchissement. Le sous-onglet est en plus persisté (localStorage) pour
 // survivre à un rechargement de page.
 let frSubTab = localStorage.getItem('panel_fr_subtab') === 'rules' ? 'rules' : 'features';
-let frFeatureFilters = { q: '', role: '', emergent: '', link: '' };
-let frRuleFilters = { q: '', emergent: '', link: '' };
+let frFeatureFilters = { q: '', role: '', emergent: '', link: '', impl: '' };
+let frRuleFilters = { q: '', emergent: '', link: '', impl: '' };
 const persistFrSubTab = () => { localStorage.setItem('panel_fr_subtab', frSubTab); };
 
 // Relations affichables/créables depuis une fonctionnalité ou une règle.
@@ -5026,6 +5026,7 @@ function linkModal(preset, entityId, refs, onSaved) {
 function featureFormModal(feature, pieces, onSaved) {
   const isEdit = !!(feature && feature.id);
   const pieceIds = (pieces || []).map((p) => p.pieceId);
+  const curImpl = feature && feature.implemented ? (feature.implementedOrigin || 'ecosystem') : '';
   showModal(`<div class="modal">
     <h2>${isEdit ? 'Éditer la fonctionnalité' : 'Nouvelle fonctionnalité'}</h2>
     <p class="muted-sm">Projet <code>${esc(currentProject)}</code> — référence <code>US-xxx</code>.</p>
@@ -5034,6 +5035,12 @@ function featureFormModal(feature, pieces, onSaved) {
       <label class="modal-field">Rôle / acteur <input id="feat-role" value="${esc((feature && feature.role) || '')}" placeholder="ex. client, opérateur"></label>
       <label class="modal-field">User story <textarea id="feat-us" class="modal-textarea" rows="3" placeholder="En tant que …, je veux …, afin de …" required>${esc((feature && feature.userStory) || '')}</textarea></label>
       <label class="modal-field">Pièce client source (optionnel) <input id="feat-piece" list="feat-pieces" value="${esc((feature && feature.sourcedPieceId) || '')}" placeholder="pieceId"><datalist id="feat-pieces">${pieceIds.map((id) => `<option value="${esc(id)}">`).join('')}</datalist></label>
+      <label class="modal-field">Implémentation <select id="feat-impl">
+        <option value="" ${curImpl === '' ? 'selected' : ''}>Non implémentée</option>
+        <option value="ecosystem" ${curImpl === 'ecosystem' ? 'selected' : ''}>Implémentée · dans l'écosystème</option>
+        <option value="hors_ecosystem" ${curImpl === 'hors_ecosystem' ? 'selected' : ''}>Implémentée · hors écosystème</option>
+      </select></label>
+      <label class="modal-field">Motif d'implémentation (optionnel) <input id="feat-impl-note" value="${esc((feature && feature.implementedNote) || '')}" placeholder="ex. développé dans l'IDE avant rattachement"></label>
       <div class="modal-actions">
         <button type="button" class="ghost" id="modal-cancel">Annuler</button>
         <button type="submit" class="launch-btn">${isEdit ? 'Enregistrer' : 'Créer'}</button>
@@ -5045,15 +5052,31 @@ function featureFormModal(feature, pieces, onSaved) {
   document.getElementById('feat-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const msg = document.getElementById('feat-msg');
+    const impl = document.getElementById('feat-impl').value;
+    const implNote = document.getElementById('feat-impl-note').value.trim();
     const body = {
       ref: document.getElementById('feat-ref').value.trim(),
       role: document.getElementById('feat-role').value.trim(),
       userStory: document.getElementById('feat-us').value.trim(),
       sourcedPieceId: document.getElementById('feat-piece').value.trim(),
     };
+    // Qualification d'implémentation (T-20260921-133134-yz2i) — envoyée dans le
+    // body PUT/POST. `feature_register` (POST) ne porte pas l'état : si une
+    // origine est choisie à la création, la qualification est appliquée par un
+    // PUT juste après (mêmes routes, aucun tool supplémentaire).
+    if (impl) { body.implemented = true; body.implementedOrigin = impl; }
+    else if (isEdit) { body.implemented = false; }
+    body.implementedNote = implNote;
     try {
-      if (isEdit) await api(`/api/features/${encodeURIComponent(feature.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      else await api('/api/features', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: currentProject, ...body }) });
+      if (isEdit) {
+        await api(`/api/features/${encodeURIComponent(feature.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      } else {
+        const created = await api('/api/features', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: currentProject, ...body }) });
+        const newId = created && created.feature && created.feature.id;
+        if (impl && newId) {
+          await api(`/api/features/${encodeURIComponent(newId)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ implemented: true, implementedOrigin: impl, implementedNote: implNote }) });
+        }
+      }
       closeModal();
       if (typeof onSaved === 'function') await onSaved();
     } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
@@ -5063,6 +5086,7 @@ function featureFormModal(feature, pieces, onSaved) {
 function ruleFormModal(rule, pieces, onSaved) {
   const isEdit = !!(rule && rule.id);
   const pieceIds = (pieces || []).map((p) => p.pieceId);
+  const curImpl = rule && rule.implemented ? (rule.implementedOrigin || 'ecosystem') : '';
   showModal(`<div class="modal">
     <h2>${isEdit ? 'Éditer la règle métier' : 'Nouvelle règle métier'}</h2>
     <p class="muted-sm">Projet <code>${esc(currentProject)}</code> — référence <code>RM-xxxx</code>.</p>
@@ -5070,6 +5094,12 @@ function ruleFormModal(rule, pieces, onSaved) {
       <label class="modal-field">Référence <input id="rule-ref" value="${esc((rule && rule.ref) || '')}" placeholder="RM-xxxx" required></label>
       <label class="modal-field">Contenu <textarea id="rule-content" class="modal-textarea" rows="4" placeholder="Formulation de la règle métier" required>${esc((rule && rule.content) || '')}</textarea></label>
       <label class="modal-field">Pièce client source (optionnel) <input id="rule-piece" list="rule-pieces" value="${esc((rule && rule.sourcedPieceId) || '')}" placeholder="pieceId"><datalist id="rule-pieces">${pieceIds.map((id) => `<option value="${esc(id)}">`).join('')}</datalist></label>
+      <label class="modal-field">Implémentation <select id="rule-impl">
+        <option value="" ${curImpl === '' ? 'selected' : ''}>Non implémentée</option>
+        <option value="ecosystem" ${curImpl === 'ecosystem' ? 'selected' : ''}>Implémentée · dans l'écosystème</option>
+        <option value="hors_ecosystem" ${curImpl === 'hors_ecosystem' ? 'selected' : ''}>Implémentée · hors écosystème</option>
+      </select></label>
+      <label class="modal-field">Motif d'implémentation (optionnel) <input id="rule-impl-note" value="${esc((rule && rule.implementedNote) || '')}" placeholder="ex. développé dans l'IDE avant rattachement"></label>
       <div class="modal-actions">
         <button type="button" class="ghost" id="modal-cancel">Annuler</button>
         <button type="submit" class="launch-btn">${isEdit ? 'Enregistrer' : 'Créer'}</button>
@@ -5081,14 +5111,27 @@ function ruleFormModal(rule, pieces, onSaved) {
   document.getElementById('rule-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const msg = document.getElementById('rule-msg');
+    const impl = document.getElementById('rule-impl').value;
+    const implNote = document.getElementById('rule-impl-note').value.trim();
     const body = {
       ref: document.getElementById('rule-ref').value.trim(),
       content: document.getElementById('rule-content').value.trim(),
       sourcedPieceId: document.getElementById('rule-piece').value.trim(),
     };
+    // Qualification d'implémentation (T-20260921-133134-yz2i) — cf. featureFormModal.
+    if (impl) { body.implemented = true; body.implementedOrigin = impl; }
+    else if (isEdit) { body.implemented = false; }
+    body.implementedNote = implNote;
     try {
-      if (isEdit) await api(`/api/rules/${encodeURIComponent(rule.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      else await api('/api/rules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: currentProject, ...body }) });
+      if (isEdit) {
+        await api(`/api/rules/${encodeURIComponent(rule.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      } else {
+        const created = await api('/api/rules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: currentProject, ...body }) });
+        const newId = created && created.rule && created.rule.id;
+        if (impl && newId) {
+          await api(`/api/rules/${encodeURIComponent(newId)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ implemented: true, implementedOrigin: impl, implementedNote: implNote }) });
+        }
+      }
       closeModal();
       if (typeof onSaved === 'function') await onSaved();
     } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
@@ -5101,8 +5144,9 @@ async function featureDetailModal(featureId) {
     const f = d.feature || {};
     const sec = (t, arr, fmt) => `<div style="margin:8px 0"><strong>${esc(t)}</strong> (${(arr || []).length})<div class="recette-list" style="max-height:20vh;overflow:auto">${(arr || []).length ? arr.map((x) => `<div class="recette-item"><div>${fmt(x)}</div></div>`).join('') : '<p class="muted-sm">Aucun élément.</p>'}</div></div>`;
     showModal(`<div class="modal modal-wide">
-      <div class="md-head"><strong>${esc(f.ref || featureId)}</strong>${f.emergent ? ' <span class="chip">émergent</span>' : ''} <span class="badge queued">${esc(f.id || '')}</span></div>
+      <div class="md-head"><strong>${esc(f.ref || featureId)}</strong>${f.emergent ? ' <span class="chip">émergent</span>' : ''} ${frImplBadge(f)} <span class="badge queued">${esc(f.id || '')}</span></div>
       <p class="muted-sm"><strong>Rôle :</strong> ${esc(f.role || '—')}</p>
+      <p class="muted-sm"><strong>Implémentation :</strong> ${frImplBadge(f)}${f.implementedAt ? ` — qualifiée le ${esc(f.implementedAt)}${f.implementedBy ? ` par ${esc(f.implementedBy)}` : ''}` : ''}${f.implementedNote ? ` — ${esc(f.implementedNote)}` : ''}</p>
       <p>${esc(f.userStory || '')}</p>
       ${sec('Règles métier', f.regles, (r) => `<code class="chip">${esc(r.ref)}</code> ${esc(r.content || '')}`)}
       ${sec('Scénarios Gherkin', f.gherkin, (g) => `<code class="chip">${esc(g.e2eTestId)}</code> ${esc(g.scenario || '')}`)}
@@ -5122,7 +5166,8 @@ async function ruleDetailModal(ruleId) {
     const r = d.rule || {};
     const sec = (t, arr, fmt) => `<div style="margin:8px 0"><strong>${esc(t)}</strong> (${(arr || []).length})<div class="recette-list" style="max-height:20vh;overflow:auto">${(arr || []).length ? arr.map((x) => `<div class="recette-item"><div>${fmt(x)}</div></div>`).join('') : '<p class="muted-sm">Aucun élément.</p>'}</div></div>`;
     showModal(`<div class="modal modal-wide">
-      <div class="md-head"><strong>${esc(r.ref || ruleId)}</strong>${r.emergent ? ' <span class="chip">émergente</span>' : ''} <span class="badge queued">${esc(r.id || '')}</span></div>
+      <div class="md-head"><strong>${esc(r.ref || ruleId)}</strong>${r.emergent ? ' <span class="chip">émergente</span>' : ''} ${frImplBadge(r)} <span class="badge queued">${esc(r.id || '')}</span></div>
+      <p class="muted-sm"><strong>Implémentation :</strong> ${frImplBadge(r)}${r.implementedAt ? ` — qualifiée le ${esc(r.implementedAt)}${r.implementedBy ? ` par ${esc(r.implementedBy)}` : ''}` : ''}${r.implementedNote ? ` — ${esc(r.implementedNote)}` : ''}</p>
       <p>${esc(r.content || '')}</p>
       ${sec('Fonctionnalités liées', r.fonctionnalites, (f) => `<code class="chip">${esc(f.ref)}</code> ${esc(f.userStory || '')}`)}
       ${sec('Sprints', r.sprints, (s) => `<code class="chip">${esc(s.id)}</code> ${esc(s.title || '')} ${sprintStatusBadge(s.status)}`)}
@@ -5197,9 +5242,68 @@ function frLinkCellHtml(kind, id, linkIndex) {
   return parts.length ? parts.map((p) => `<span class="chip">${esc(p)}</span>`).join(' ') : '<span class="muted-sm">aucun lien</span>';
 }
 
+// ===========================================================================
+// ÉTAT D'IMPLÉMENTATION + ORIGINE (T-20260921-133134-yz2i) — badge, qualification.
+// L'émergence reste un AXE DISTINCT : ces helpers n'écrivent jamais `emergent`.
+// ===========================================================================
+
+// Badge d'état d'une fonctionnalité/règle. Priorité : implémentée (origine) >
+// émergente > « — ».
+function frImplBadge(o) {
+  const x = o || {};
+  if (x.implemented) {
+    const label = x.implementedOrigin === 'hors_ecosystem' ? 'hors écosystème' : 'écosystème';
+    const title = `implémentée (${label})${x.implementedNote ? ' — ' + x.implementedNote : ''}`;
+    return `<span class="chip" title="${esc(title)}">implémentée · ${esc(label)}</span>`;
+  }
+  if (x.emergent) return '<span class="chip" title="émergente">émergente</span>';
+  return '<span class="muted-sm">—</span>';
+}
+
+// Modale de QUALIFICATION d'implémentation (dans / hors écosystème) — écrit via
+// les routes PUT existantes (`/api/features/:id`, `/api/rules/:id`).
+function frQualifyModal(kind, id, current, onSaved) {
+  const isFeature = kind === 'feature';
+  const cur = current || {};
+  const path = isFeature ? `/api/features/${encodeURIComponent(id)}` : `/api/rules/${encodeURIComponent(id)}`;
+  showModal(`<div class="modal">
+    <h2>Qualifier l'implémentation</h2>
+    <p class="muted-sm"><code>${esc(id)}</code> — l'émergence reste un axe distinct (inchangée).</p>
+    <form id="frq-form" class="pilot-form">
+      <label class="modal-field">État <select id="frq-impl">
+        <option value="">Non implémentée</option>
+        <option value="ecosystem" ${cur.implementedOrigin === 'ecosystem' ? 'selected' : ''}>Implémentée · dans l'écosystème</option>
+        <option value="hors_ecosystem" ${cur.implementedOrigin === 'hors_ecosystem' ? 'selected' : ''}>Implémentée · hors écosystème</option>
+      </select></label>
+      <label class="modal-field">Motif (optionnel) <input id="frq-note" value="${esc(cur.implementedNote || '')}" placeholder="ex. développé dans l'IDE avant rattachement"></label>
+      <div class="modal-actions">
+        <button type="button" class="ghost" id="modal-cancel">Annuler</button>
+        <button type="submit" class="launch-btn">Enregistrer</button>
+      </div>
+    </form>
+    <div id="frq-msg" class="msg"></div>
+  </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('frq-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById('frq-msg');
+    const val = document.getElementById('frq-impl').value;
+    const note = document.getElementById('frq-note').value.trim();
+    const body = val
+      ? { implemented: true, implementedOrigin: val, implementedNote: note }
+      : { implemented: false, implementedNote: '' };
+    try {
+      await api(path, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      closeModal();
+      if (typeof onSaved === 'function') await onSaved();
+    } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
+  });
+}
+
 // Filtrage CLIENT du sous-onglet Fonctionnalités (pur, sans effet de bord).
-// `filter` = { q, role, emergent, link } ; `link` ∈ '' | sans_regle | sans_gherkin
-// | sans_adr | sans_sprint (lien absent selon l'index A003).
+// `filter` = { q, role, emergent, link, impl } ; `link` ∈ '' | sans_regle |
+// sans_gherkin | sans_adr | sans_sprint (lien absent selon l'index A003) ;
+// `impl` ∈ '' | yes | no | ecosystem | hors_ecosystem (état d'implémentation).
 function frFilterFeatures(features, filter, linkIndex) {
   const f = filter || {};
   const q = (f.q || '').trim().toLowerCase();
@@ -5210,6 +5314,10 @@ function frFilterFeatures(features, filter, linkIndex) {
     if (f.role && (x.role || '') !== f.role) return false;
     if (f.emergent === 'yes' && !x.emergent) return false;
     if (f.emergent === 'no' && x.emergent) return false;
+    if (f.impl === 'yes' && !x.implemented) return false;
+    if (f.impl === 'no' && x.implemented) return false;
+    if (f.impl === 'ecosystem' && !(x.implemented && x.implementedOrigin !== 'hors_ecosystem')) return false;
+    if (f.impl === 'hors_ecosystem' && !(x.implemented && x.implementedOrigin === 'hors_ecosystem')) return false;
     if (f.link) {
       const l = idx[x.id] || {};
       if (f.link === 'sans_regle' && l.rules) return false;
@@ -5222,7 +5330,8 @@ function frFilterFeatures(features, filter, linkIndex) {
 }
 
 // Filtrage CLIENT du sous-onglet Règles métier (pur, sans effet de bord).
-// `filter` = { q, emergent, link } ; `link` ∈ '' | sans_fonctionnalite | sans_sprint.
+// `filter` = { q, emergent, link, impl } ; `link` ∈ '' | sans_fonctionnalite |
+// sans_sprint ; `impl` ∈ '' | yes | no | ecosystem | hors_ecosystem.
 function frFilterRules(rules, filter, linkIndex) {
   const f = filter || {};
   const q = (f.q || '').trim().toLowerCase();
@@ -5232,6 +5341,10 @@ function frFilterRules(rules, filter, linkIndex) {
     if (q && !hay.includes(q)) return false;
     if (f.emergent === 'yes' && !x.emergent) return false;
     if (f.emergent === 'no' && x.emergent) return false;
+    if (f.impl === 'yes' && !x.implemented) return false;
+    if (f.impl === 'no' && x.implemented) return false;
+    if (f.impl === 'ecosystem' && !(x.implemented && x.implementedOrigin !== 'hors_ecosystem')) return false;
+    if (f.impl === 'hors_ecosystem' && !(x.implemented && x.implementedOrigin === 'hors_ecosystem')) return false;
     if (f.link) {
       const l = idx[x.id] || {};
       if (f.link === 'sans_fonctionnalite' && l.features) return false;
@@ -5246,18 +5359,20 @@ function frFilterRules(rules, filter, linkIndex) {
 function frFeatureTableHtml(features, linkIndex) {
   const rows = (features || []).map((f) => `<tr>
     <td><strong>${esc(f.ref)}</strong>${f.emergent ? ' <span class="chip" title="émergent">émergent</span>' : ''}</td>
+    <td>${frImplBadge(f)}</td>
     <td>${esc(f.role || '—')}</td>
     <td>${adrCellText(f.userStory, 200)}</td>
     <td class="fr-links">${frLinkCellHtml('feature', f.id, linkIndex)}</td>
     <td class="e2e-actions">
+      <button type="button" class="ghost tiny" data-fr-impl="${esc(f.id)}" title="Qualifier l'implémentation">Qualifier</button>
       <button type="button" class="ghost tiny" data-fr-edit="${esc(f.id)}">Éditer</button>
       <button type="button" class="ghost tiny" data-fr-detail="${esc(f.id)}">Détail</button>
       <button type="button" class="ghost tiny" data-fr-link="${esc(f.id)}">Lier</button>
     </td>
   </tr>`).join('');
   return `<div class="adr-table-wrap"><table class="adr-table">
-    <thead><tr><th>Ref</th><th>Rôle</th><th>User story</th><th>Liens</th><th>Actions</th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="5" class="muted-sm" style="padding:10px">Aucune fonctionnalité pour ce projet.</td></tr>'}</tbody>
+    <thead><tr><th>Ref</th><th>État</th><th>Rôle</th><th>User story</th><th>Liens</th><th>Actions</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="6" class="muted-sm" style="padding:10px">Aucune fonctionnalité pour ce projet.</td></tr>'}</tbody>
   </table></div>`;
 }
 
@@ -5266,18 +5381,20 @@ function frFeatureTableHtml(features, linkIndex) {
 function frRuleTableHtml(rules, linkIndex) {
   const rows = (rules || []).map((r) => `<tr>
     <td><strong>${esc(r.ref)}</strong>${r.emergent ? ' <span class="chip" title="émergente">émergente</span>' : ''}</td>
+    <td>${frImplBadge(r)}</td>
     <td>${adrCellText(r.content, 220)}</td>
     <td>${r.sourcedPieceId ? `<code class="chip">${esc(r.sourcedPieceId)}</code>` : '<span class="muted-sm">—</span>'}</td>
     <td class="fr-links">${frLinkCellHtml('rule', r.id, linkIndex)}</td>
     <td class="e2e-actions">
+      <button type="button" class="ghost tiny" data-rule-impl="${esc(r.id)}" title="Qualifier l'implémentation">Qualifier</button>
       <button type="button" class="ghost tiny" data-rule-edit="${esc(r.id)}">Éditer</button>
       <button type="button" class="ghost tiny" data-rule-detail="${esc(r.id)}">Détail</button>
       <button type="button" class="ghost tiny" data-rule-link="${esc(r.id)}">Lier</button>
     </td>
   </tr>`).join('');
   return `<div class="adr-table-wrap"><table class="adr-table">
-    <thead><tr><th>Ref</th><th>Contenu</th><th>Pièce source</th><th>Liens</th><th>Actions</th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="5" class="muted-sm" style="padding:10px">Aucune règle métier pour ce projet.</td></tr>'}</tbody>
+    <thead><tr><th>Ref</th><th>État</th><th>Contenu</th><th>Pièce source</th><th>Liens</th><th>Actions</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="6" class="muted-sm" style="padding:10px">Aucune règle métier pour ce projet.</td></tr>'}</tbody>
   </table></div>`;
 }
 
@@ -5304,6 +5421,13 @@ function renderFrFeaturePanel(features, refs, pieces, linkIndex) {
         <option value="yes" ${f.emergent === 'yes' ? 'selected' : ''}>Émergentes</option>
         <option value="no" ${f.emergent === 'no' ? 'selected' : ''}>Non émergentes</option>
       </select>
+      <select id="fr-f-impl" title="Filtrer par implémentation">
+        <option value="">Implémentation : toutes</option>
+        <option value="yes" ${f.impl === 'yes' ? 'selected' : ''}>Implémentées</option>
+        <option value="ecosystem" ${f.impl === 'ecosystem' ? 'selected' : ''}>Écosystème</option>
+        <option value="hors_ecosystem" ${f.impl === 'hors_ecosystem' ? 'selected' : ''}>Hors écosystème</option>
+        <option value="no" ${f.impl === 'no' ? 'selected' : ''}>Non implémentées</option>
+      </select>
       <select id="fr-f-link" title="Filtrer par lien manquant (index des liens)">
         <option value="">Liens : tous</option>
         <option value="sans_regle" ${f.link === 'sans_regle' ? 'selected' : ''}>Sans règle métier</option>
@@ -5315,6 +5439,7 @@ function renderFrFeaturePanel(features, refs, pieces, linkIndex) {
     </div>
     <div id="fr-feat-table">${frFeatureTableHtml(filtered, linkIndex)}</div>`;
   const wireRows = () => {
+    panel.querySelectorAll('[data-fr-impl]').forEach((b) => b.addEventListener('click', () => frQualifyModal('feature', b.dataset.frImpl, features.find((x) => x.id === b.dataset.frImpl), renderFeaturesRules)));
     panel.querySelectorAll('[data-fr-edit]').forEach((b) => b.addEventListener('click', () => featureFormModal(features.find((x) => x.id === b.dataset.frEdit), pieces, renderFeaturesRules)));
     panel.querySelectorAll('[data-fr-detail]').forEach((b) => b.addEventListener('click', () => featureDetailModal(b.dataset.frDetail)));
     panel.querySelectorAll('[data-fr-link]').forEach((b) => b.addEventListener('click', () => linkModal(LINK_PRESETS.feature, b.dataset.frLink, refs, renderFeaturesRules)));
@@ -5324,6 +5449,7 @@ function renderFrFeaturePanel(features, refs, pieces, linkIndex) {
       q: (document.getElementById('fr-f-q') || {}).value || '',
       role: (document.getElementById('fr-f-role') || {}).value || '',
       emergent: (document.getElementById('fr-f-emergent') || {}).value || '',
+      impl: (document.getElementById('fr-f-impl') || {}).value || '',
       link: (document.getElementById('fr-f-link') || {}).value || '',
     };
     const list = frFilterFeatures(features, frFeatureFilters, linkIndex);
@@ -5333,7 +5459,7 @@ function renderFrFeaturePanel(features, refs, pieces, linkIndex) {
     if (cnt) cnt.textContent = `${list.length} / ${(features || []).length} fonctionnalité(s)`;
     wireRows();
   };
-  ['fr-f-q', 'fr-f-role', 'fr-f-emergent', 'fr-f-link'].forEach((id) => {
+  ['fr-f-q', 'fr-f-role', 'fr-f-emergent', 'fr-f-impl', 'fr-f-link'].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.addEventListener(id === 'fr-f-q' ? 'input' : 'change', rerender);
   });
@@ -5359,6 +5485,13 @@ function renderFrRulePanel(rules, refs, pieces, linkIndex) {
         <option value="yes" ${f.emergent === 'yes' ? 'selected' : ''}>Émergentes</option>
         <option value="no" ${f.emergent === 'no' ? 'selected' : ''}>Non émergentes</option>
       </select>
+      <select id="fr-r-impl" title="Filtrer par implémentation">
+        <option value="">Implémentation : toutes</option>
+        <option value="yes" ${f.impl === 'yes' ? 'selected' : ''}>Implémentées</option>
+        <option value="ecosystem" ${f.impl === 'ecosystem' ? 'selected' : ''}>Écosystème</option>
+        <option value="hors_ecosystem" ${f.impl === 'hors_ecosystem' ? 'selected' : ''}>Hors écosystème</option>
+        <option value="no" ${f.impl === 'no' ? 'selected' : ''}>Non implémentées</option>
+      </select>
       <select id="fr-r-link" title="Filtrer par lien manquant (index des liens)">
         <option value="">Liens : tous</option>
         <option value="sans_fonctionnalite" ${f.link === 'sans_fonctionnalite' ? 'selected' : ''}>Sans fonctionnalité</option>
@@ -5368,6 +5501,7 @@ function renderFrRulePanel(rules, refs, pieces, linkIndex) {
     </div>
     <div id="fr-rule-table">${frRuleTableHtml(filtered, linkIndex)}</div>`;
   const wireRows = () => {
+    panel.querySelectorAll('[data-rule-impl]').forEach((b) => b.addEventListener('click', () => frQualifyModal('rule', b.dataset.ruleImpl, rules.find((x) => x.id === b.dataset.ruleImpl), renderFeaturesRules)));
     panel.querySelectorAll('[data-rule-edit]').forEach((b) => b.addEventListener('click', () => ruleFormModal(rules.find((x) => x.id === b.dataset.ruleEdit), pieces, renderFeaturesRules)));
     panel.querySelectorAll('[data-rule-detail]').forEach((b) => b.addEventListener('click', () => ruleDetailModal(b.dataset.ruleDetail)));
     panel.querySelectorAll('[data-rule-link]').forEach((b) => b.addEventListener('click', () => linkModal(LINK_PRESETS.rule, b.dataset.ruleLink, refs, renderFeaturesRules)));
@@ -5376,6 +5510,7 @@ function renderFrRulePanel(rules, refs, pieces, linkIndex) {
     frRuleFilters = {
       q: (document.getElementById('fr-r-q') || {}).value || '',
       emergent: (document.getElementById('fr-r-emergent') || {}).value || '',
+      impl: (document.getElementById('fr-r-impl') || {}).value || '',
       link: (document.getElementById('fr-r-link') || {}).value || '',
     };
     const list = frFilterRules(rules, frRuleFilters, linkIndex);
@@ -5385,7 +5520,7 @@ function renderFrRulePanel(rules, refs, pieces, linkIndex) {
     if (cnt) cnt.textContent = `${list.length} / ${(rules || []).length} règle(s)`;
     wireRows();
   };
-  ['fr-r-q', 'fr-r-emergent', 'fr-r-link'].forEach((id) => {
+  ['fr-r-q', 'fr-r-emergent', 'fr-r-impl', 'fr-r-link'].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.addEventListener(id === 'fr-r-q' ? 'input' : 'change', rerender);
   });

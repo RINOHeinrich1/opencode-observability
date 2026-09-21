@@ -2015,6 +2015,10 @@ const server = createServer(async (req, res) => {
           featureId: decodeURIComponent(featureMatch[1]),
           ref: b.ref, role: b.role, userStory: b.userStory,
           sourcedPieceId: b.sourcedPieceId != null ? b.sourcedPieceId : undefined,
+          // Qualification d'implémentation (T-20260921-133134-yz2i).
+          implemented: typeof b.implemented === "boolean" ? b.implemented : undefined,
+          implementedOrigin: b.implementedOrigin || undefined,
+          implementedNote: b.implementedNote != null ? b.implementedNote : undefined,
           by: user.username,
         }));
       } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
@@ -2055,6 +2059,10 @@ const server = createServer(async (req, res) => {
           ruleId: decodeURIComponent(ruleMatch[1]),
           ref: b.ref, content: b.content,
           sourcedPieceId: b.sourcedPieceId != null ? b.sourcedPieceId : undefined,
+          // Qualification d'implémentation (T-20260921-133134-yz2i).
+          implemented: typeof b.implemented === "boolean" ? b.implemented : undefined,
+          implementedOrigin: b.implementedOrigin || undefined,
+          implementedNote: b.implementedNote != null ? b.implementedNote : undefined,
           by: user.username,
         }));
       } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }

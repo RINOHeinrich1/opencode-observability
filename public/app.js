@@ -357,6 +357,93 @@ function sessionHref(sid) {
 }
 
 // --- Vue d'ensemble --------------------------------------------------------
+// Filtres persistants de l'historique des vigilances ADR (item 126) — append-only.
+let adrVigFilters = { project: '', recetteId: '', type: '', status: 'open', from: '', to: '' };
+let adrVigProjectsCache = null;
+
+// Charge/rafraîchit l'historique FILTRABLE des points de vigilance ADR des
+// recettes (ADR manquante / conflit). Aucun bouton de suppression (append-only) ;
+// seul un bouton « Lever » (raison tracée obligatoire) est proposé sur les ouverts.
+async function loadAdrVigilances() {
+  const box = document.getElementById('adr-vig-results');
+  if (!box) return;
+  const q = new URLSearchParams();
+  const proj = currentProject || adrVigFilters.project;
+  if (proj) q.set('project', proj);
+  if (adrVigFilters.recetteId) q.set('recetteId', adrVigFilters.recetteId.trim());
+  if (adrVigFilters.type) q.set('type', adrVigFilters.type);
+  if (adrVigFilters.status) q.set('status', adrVigFilters.status);
+  if (adrVigFilters.from) q.set('from', adrVigFilters.from);
+  if (adrVigFilters.to) q.set('to', adrVigFilters.to + 'T23:59:59.999Z');
+  box.innerHTML = '<div class="muted-sm">Chargement…</div>';
+  let data;
+  try { data = await api('/api/adr-vigilances' + (q.toString() ? '?' + q.toString() : '')); }
+  catch (e) { box.innerHTML = `<div class="muted-sm">Erreur : ${esc(e.message || e)}</div>`; return; }
+  const list = data.vigilancess || [];
+  if (!list.length) { box.innerHTML = '<div class="muted-sm">Aucun point de vigilance ADR pour ces filtres.</div>'; return; }
+  const rows = list.map((v) => {
+    const target = v.type === 'conflict'
+      ? `${esc(v.adrId || '?')}${v.relatedAdrId ? ' vs ' + esc(v.relatedAdrId) : ''}`
+      : esc(v.entity || '—');
+    return `<tr class="${v.status === 'open' ? 'adr-vig-open' : ''}">
+      <td class="muted-sm">${esc((v.createdAt || '').replace('T', ' ').slice(0, 16))}</td>
+      <td>${esc(v.project || '—')}</td>
+      <td class="code">${v.recetteId ? esc(v.recetteId) : '<span class="muted">—</span>'}</td>
+      <td><span class="badge ${v.type === 'conflict' ? 'adr-vig-type-conflict' : 'adr-vig-type-missing'}">${v.type === 'conflict' ? 'conflit' : 'manquant'}</span></td>
+      <td class="muted-sm">${target}</td>
+      <td class="adr-vig-reason">${esc(v.reason || v.description || '')}</td>
+      <td><span class="badge ${v.status === 'open' ? 'adr-vig-status-open' : 'adr-vig-status-resolved'}">${v.status === 'open' ? 'ouvert' : 'résolu'}</span></td>
+      <td class="muted-sm">${v.resolvedAt ? esc((v.resolvedAt || '').replace('T', ' ').slice(0, 16)) + (v.resolution ? `<br><span class="adr-vig-res">${esc(v.resolution)}</span>` : '') : '<span class="muted">—</span>'}</td>
+      <td>${v.status === 'open' ? `<button class="ghost" data-adr-vig-resolve="${esc(v.vigilanceId)}">Lever</button>` : ''}</td>
+    </tr>`;
+  }).join('');
+  box.innerHTML = `<table class="adr-vig-list"><thead><tr>
+      <th>Détection</th><th>Projet</th><th>Recette</th><th>Type</th><th>Entité / ADR</th><th>Raison</th><th>Statut</th><th>Résolution</th><th></th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+  box.querySelectorAll('[data-adr-vig-resolve]').forEach((b) => {
+    b.addEventListener('click', async () => {
+      const reason = prompt('Raison de la levée (tracée, obligatoire) :');
+      if (!reason || !reason.trim()) return;
+      try {
+        await api('/api/adr-vigilances/' + encodeURIComponent(b.dataset.adrVigResolve) + '/resolve', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ resolution: reason.trim(), resolutionKind: 'manual' }),
+        });
+        await loadAdrVigilances();
+      } catch (e) { alert('Échec de la levée : ' + (e.message || e)); }
+    });
+  });
+}
+
+// Barre de filtres de l'historique (projet, recette, type, statut, dates).
+async function wireAdrVigFilters() {
+  const sel = document.getElementById('adv-project');
+  if (sel) {
+    if (!adrVigProjectsCache) {
+      try { adrVigProjectsCache = ((await api('/api/projects')).projects || []).map((p) => p.id).filter(Boolean); }
+      catch { adrVigProjectsCache = []; }
+    }
+    sel.innerHTML = '<option value="">Tous les projets</option>' + adrVigProjectsCache.map((p) => `<option value="${esc(p)}" ${p === adrVigFilters.project ? 'selected' : ''}>${esc(p)}</option>`).join('');
+    sel.addEventListener('change', () => { adrVigFilters.project = sel.value; loadAdrVigilances(); });
+  }
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  setVal('adv-type', adrVigFilters.type);
+  setVal('adv-status', adrVigFilters.status);
+  const read = () => {
+    const g = (id) => { const el = document.getElementById(id); return el ? el.value : ''; };
+    adrVigFilters.recetteId = g('adv-recette');
+    adrVigFilters.type = g('adv-type');
+    adrVigFilters.status = g('adv-status');
+    adrVigFilters.from = g('adv-from');
+    adrVigFilters.to = g('adv-to');
+  };
+  const apply = document.getElementById('adv-apply');
+  if (apply) apply.addEventListener('click', () => { read(); loadAdrVigilances(); });
+  ['adv-type', 'adv-status', 'adv-from', 'adv-to'].forEach((id) => { const el = document.getElementById(id); if (el) el.addEventListener('change', () => { read(); loadAdrVigilances(); }); });
+  const rec = document.getElementById('adv-recette');
+  if (rec) rec.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { read(); loadAdrVigilances(); } });
+}
+
 async function renderOverview() {
   const params = [];
   if (currentProject) params.push('project=' + encodeURIComponent(currentProject));
@@ -368,7 +455,22 @@ async function renderOverview() {
   document.getElementById('pane-overview').innerHTML =
     `${currentProject ? `<h2>Vue d'ensemble — ${esc(currentProject)}</h2>` : ''}` +
     `<div class="cards">${cards.map(([l, n]) => `<div class="card"><div class="num">${n}</div><div class="lbl">${esc(l)}</div></div>`).join('')}</div>` +
-    `<div class="muted-sm">Registre : ${s.byStatus && Object.keys(s.byStatus).length ? 'connecté' : 'vide / non initialisé'}</div>`;
+    `<div class="muted-sm">Registre : ${s.byStatus && Object.keys(s.byStatus).length ? 'connecté' : 'vide / non initialisé'}</div>` +
+    `<div class="section adr-vig-section">
+      <h3>Vigilances ADR (recettes)</h3>
+      <div class="muted-sm">Historique append-only des ADR manquantes / conflits remontés par les recettes et les tests. Un point OUVERT bloque « Terminer la recette ».</div>
+      <div class="filters adr-vig-filters">
+        ${currentProject ? '' : '<select id="adv-project" title="Filtrer par projet"></select>'}
+        <input id="adv-recette" placeholder="Recette (RECT-…)" value="${esc(adrVigFilters.recetteId)}">
+        <select id="adv-type"><option value="">Type : tous</option><option value="missing">manquant</option><option value="conflict">conflit</option></select>
+        <select id="adv-status"><option value="">Statut : tous</option><option value="open">ouvert</option><option value="resolved">résolu</option></select>
+        <span class="date-filter"><span class="tagfilter-label">Détecté du</span><input type="date" id="adv-from" value="${esc(adrVigFilters.from)}"><span class="tagfilter-label">au</span><input type="date" id="adv-to" value="${esc(adrVigFilters.to)}"></span>
+        <button class="ghost" id="adv-apply">Filtrer</button>
+      </div>
+      <div id="adr-vig-results"><div class="muted-sm">Chargement…</div></div>
+    </div>`;
+  wireAdrVigFilters();
+  loadAdrVigilances();
 }
 
 // --- Tâches ----------------------------------------------------------------
@@ -2249,7 +2351,7 @@ function recetteCard(r) {
   const canSession = r.status === 'pending' || r.status === 'in_progress';
   const canFinish = r.status === 'in_progress';
   return `<article class="project-card">
-    <div class="project-card-head"><strong class="recette-title" data-rec-detail="${esc(r.recette_id)}" title="Voir le détail">${esc(r.title || r.recette_id)}</strong> <span class="rec-card-projs">${recetteScopeChips(r)}</span> ${badge(r.status)}</div>
+    <div class="project-card-head"><strong class="recette-title" data-rec-detail="${esc(r.recette_id)}" title="Voir le détail">${esc(r.title || r.recette_id)}</strong> <span class="rec-card-projs">${recetteScopeChips(r)}</span> ${badge(r.status)} ${Number(r.adr_vigilances_count || 0) > 0 ? `<span class="badge danger" title="${Number(r.adr_vigilances_count)} point(s) de vigilance ADR ouvert(s) — terminaison bloquée">⚠ ADR (${Number(r.adr_vigilances_count)})</span>` : ''}</div>
     <div class="project-card-body">
       ${r.description ? `<div class="project-kv"><span class="lbl">Description</span><span class="muted-sm">${esc(r.description.slice(0, 100))}${r.description.length > 100 ? '…' : ''}</span></div>` : ''}
       <div class="project-kv"><span class="lbl">Tâches couvertes</span><span>${r.tasks_count || 0}</span></div>
@@ -2722,6 +2824,10 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
   let d;
   try { d = await api(`/api/recettes/${encodeURIComponent(recetteId)}`); } catch (e) { alert('Impossible de charger la recette : ' + (e.message || e)); return; }
   const rec = d.recette || {};
+  // Points de vigilance ADR (item 126) : un point OUVERT BLOQUE la terminaison.
+  if (!Array.isArray(rec.adrVigilancesOpen)) rec.adrVigilancesOpen = (rec.adrVigilances || []).filter((v) => v.status === 'open');
+  const vigList = () => rec.adrVigilancesOpen || [];
+  const vigReasonsHtml = () => vigList().map((v) => `<li>${esc(v.reason || (v.type === 'conflict' ? `Conflit d'ADR : ${v.adrId || '?'} vs ${v.relatedAdrId || '?'}` : `ADR manquant pour ${v.entity || '?'}`))}${v.description ? ` — <span class="muted-sm">${esc(v.description)}</span>` : ''} <button type="button" class="ghost adr-vig-raise" data-vig-id="${esc(v.vigilanceId)}">Lever</button></li>`).join('');
   let items = rec.items || [];
   const itemCard = (it) => {
     const full = it.content || '';
@@ -2791,6 +2897,11 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
       <div class="finish-head"><h2 style="margin:0">${readOnly ? 'Détail de la recette' : 'Terminer la recette'}</h2>
         <button class="ghost" id="finish-fullscreen" title="Plein écran">⛶</button></div>
       <p class="muted">${esc(rec.title || recetteId)} — ${recetteScopeChips(rec)}${readOnly && rec.confirmed_at ? ` · clôturée le ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}</p>
+      ${!readOnly && vigList().length ? `<div class="adr-vig-block" id="adr-vig-block">
+        <strong>⚠ Terminaison bloquée — points de vigilance ADR ouverts :</strong>
+        <ul class="adr-vig-reasons">${vigReasonsHtml()}</ul>
+        <div class="muted-sm">Résous l'ADR (création / dépréciation actée) ou lève chaque point avec une raison tracée pour pouvoir terminer.</div>
+      </div>` : ''}
       <div id="finish-intro">${intro}</div>
       <div class="recette-list" id="finish-items"></div>
       ${launchModeBlock}
@@ -2884,6 +2995,40 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
   const hasOpenEdit = () => !!document.querySelector('#finish-items .finish-item-edit');
   const confirmBtn = document.getElementById('modal-confirm');
   const noTasksBtn = document.getElementById('modal-finish-notasks');
+  // Levée tracée d'un point de vigilance ADR (raison obligatoire) — puis
+  // rafraîchit le bloc et ré-active « Terminer » quand il ne reste plus de point.
+  const wireVigBlock = () => {
+    document.querySelectorAll('#adr-vig-block .adr-vig-raise').forEach((b) => {
+      b.addEventListener('click', async () => {
+        const reason = prompt('Raison de la levée (tracée, obligatoire) :');
+        if (!reason || !reason.trim()) return;
+        try {
+          await api('/api/adr-vigilances/' + encodeURIComponent(b.dataset.vigId) + '/resolve', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ resolution: reason.trim(), resolutionKind: 'manual' }),
+          });
+          const dd = await api(`/api/recettes/${encodeURIComponent(recetteId)}`);
+          rec.adrVigilances = (dd.recette && dd.recette.adrVigilances) || [];
+          rec.adrVigilancesOpen = (dd.recette && dd.recette.adrVigilancesOpen) || rec.adrVigilances.filter((v) => v.status === 'open');
+          const blk = document.getElementById('adr-vig-block');
+          if (vigList().length) {
+            if (blk) { blk.querySelector('.adr-vig-reasons').innerHTML = vigReasonsHtml(); wireVigBlock(); }
+          } else {
+            if (blk) blk.remove();
+            if (confirmBtn) confirmBtn.disabled = false;
+            if (noTasksBtn) noTasksBtn.disabled = false;
+          }
+        } catch (e) { alert('Échec de la levée : ' + (e.message || e)); }
+      });
+    });
+  };
+  wireVigBlock();
+  // Tant qu'un point de vigilance ADR est OUVERT, la terminaison est BLOQUÉE
+  // (le serveur/registre refuse de toute façon — ici on l'affiche et on désactive).
+  if (vigList().length) {
+    confirmBtn.disabled = true;
+    if (noTasksBtn) noTasksBtn.disabled = true;
+  }
   confirmBtn.onclick = async () => {
     const msg = document.getElementById('recette-finish-msg');
     if (hasOpenEdit()) { msg.textContent = 'Un élément est en cours d\'édition : enregistre-le ou annule-le avant de terminer.'; msg.className = 'msg error'; return; }

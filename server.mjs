@@ -2020,7 +2020,8 @@ const server = createServer(async (req, res) => {
         `SELECT r.*,
            (SELECT COUNT(*) FROM recette_tasks rt WHERE rt.recette_id = r.recette_id) AS tasks_count,
            (SELECT COUNT(*) FROM recette_items i WHERE i.recette_id = r.recette_id) AS items_count,
-           (SELECT COUNT(*) FROM recette_documents d WHERE d.recette_id = r.recette_id) AS documents_count
+           (SELECT COUNT(*) FROM recette_documents d WHERE d.recette_id = r.recette_id) AS documents_count,
+           (SELECT COUNT(*) FROM adr_vigilances v WHERE v.recette_id = r.recette_id AND v.status = 'open') AS adr_vigilances_count
          FROM recettes r
          ${conds.length ? "WHERE " + conds.join(" AND ") : ""}
          ORDER BY r.created_at DESC`,
@@ -2029,6 +2030,34 @@ const server = createServer(async (req, res) => {
       const reposMap = await reposByProjectIds([...new Set(rows.map((x) => x.project).filter(Boolean))]);
       for (const row of rows) row.repos = reposMap[row.project] || [];
       return sendJson(res, 200, { recettes: rows });
+    }
+    // Vigilances ADR (item 126) — HISTORIQUE FILTRABLE append-only des ADR
+    // manquantes / conflits remontés par les recettes (et les tests). Lecture
+    // seule (aucune route de suppression). Chaque point porte sa `reason` explicite.
+    if (path === "/api/adr-vigilances" && req.method === "GET") {
+      const r = await pilot.listAdrVigilances({
+        projectId: url.searchParams.get("project") || undefined,
+        recetteId: url.searchParams.get("recetteId") || undefined,
+        type: url.searchParams.get("type") || undefined,
+        status: url.searchParams.get("status") || undefined,
+        from: url.searchParams.get("from") || undefined,
+        to: url.searchParams.get("to") || undefined,
+        limit: url.searchParams.get("limit") || undefined,
+      });
+      const vigilancess = (r && r.vigilancess) || [];
+      return sendJson(res, 200, { vigilancess, count: vigilancess.length });
+    }
+    // Levée TRACÉE d'un point de vigilance ADR (raison obligatoire).
+    const adrVigResolve = path.match(/^\/api\/adr-vigilances\/([^/]+)\/resolve$/);
+    if (adrVigResolve && req.method === "POST") {
+      const b = await readBody(req);
+      return sendJson(res, 200, await pilot.resolveAdrVigilance({
+        vigilanceId: decodeURIComponent(adrVigResolve[1]),
+        resolution: b.resolution,
+        resolutionKind: b.resolutionKind,
+        adrId: b.adrId,
+        resolvedBy: (user && user.username) || "human",
+      }));
     }
     // Candidats : tâches NON encore couvertes par une recette (recette_status != done, non présentes dans recette_tasks).
     // Multi-projets : répéter le paramètre ?project=a&project=b (ou un seul).
@@ -2118,7 +2147,11 @@ const server = createServer(async (req, res) => {
          FROM recette_documents d LEFT JOIN artifacts a ON a.artifact_id = d.artifact_id
          WHERE d.recette_id = $1 ORDER BY d.id ASC`, [r.recette_id],
       )).rows;
-      return sendJson(res, 200, { recette: { ...r, repos: await reposOfProject(r.project), tasks, items, documents: docs } });
+      // Points de vigilance ADR (item 126) — historique + points OUVERTs qui
+      // BLOQUENT la terminaison (la modale de clôture les affiche avec la raison).
+      let adrVigilances = [];
+      try { const v = await pilot.listAdrVigilances({ recetteId: r.recette_id }); adrVigilances = (v && v.vigilancess) || []; } catch {}
+      return sendJson(res, 200, { recette: { ...r, repos: await reposOfProject(r.project), tasks, items, documents: docs, adrVigilances, adrVigilancesOpen: adrVigilances.filter((x) => x.status === "open") } });
     }
     // --- Batches d'orchestration (v0.9.0) : sessions / statut -----------------
     if (path === "/api/batches" && req.method === "GET") {

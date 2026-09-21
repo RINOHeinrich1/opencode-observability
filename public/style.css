@@ -927,3 +927,31 @@ body.readonly #agent-session-btn {
 .adr-pick-row input.adr-pick-cb { grid-row: 1 / span 2; margin-top: 2px; }
 .adr-pick-head { grid-column: 2; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .adr-pick-meta { grid-column: 2; font-size: 11px; color: var(--muted, #9aa4b2); }
+
+/* --- Vigilances ADR des recettes (item 126) : historique filtrable + blocage.
+   Historique APPEND-ONLY : table compacte, raison en évidence, aucun bouton
+   de suppression (seule la levée tracée est proposée sur les points ouverts). */
+.adr-vig-section { margin-top: 22px; }
+.adr-vig-section h3 { margin: 0 0 4px; }
+.adr-vig-filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 10px 0; }
+.adr-vig-filters input[type="text"], .adr-vig-filters input:not([type]) { min-width: 180px; }
+.adr-vig-list { width: 100%; border-collapse: collapse; font-size: 12px; }
+.adr-vig-list th {
+  text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border, #2b3242);
+  color: var(--muted, #9aa4b2); font-weight: 600; white-space: nowrap;
+}
+.adr-vig-list td { padding: 6px 8px; border-bottom: 1px solid var(--border, #2b3242); vertical-align: top; }
+.adr-vig-list tr:last-child td { border-bottom: none; }
+.adr-vig-open { background: rgba(220, 80, 80, .08); }
+.adr-vig-reason { color: var(--red, #ff8080); font-weight: 600; }
+.adr-vig-res { color: var(--muted, #9aa4b2); font-style: italic; }
+.badge.adr-vig-type-missing { background: #3a3220; color: var(--yellow, #f0c040); }
+.badge.adr-vig-type-conflict { background: #3a2020; color: var(--red, #ff8080); }
+.badge.adr-vig-status-open { background: #3a2020; color: var(--red, #ff8080); }
+.badge.adr-vig-status-resolved { background: #1d3a2a; color: var(--green, #6fdc8c); }
+.adr-vig-block {
+  margin: 10px 0; padding: 10px 12px; border: 1px solid #6b2a2a; border-radius: 8px;
+  background: rgba(220, 80, 80, .08);
+}
+.adr-vig-block .adr-vig-reasons { margin: 8px 0 4px; padding-left: 18px; }
+.adr-vig-block .adr-vig-reasons li { margin-bottom: 4px; }

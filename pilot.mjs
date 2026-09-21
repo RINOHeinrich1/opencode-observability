@@ -617,6 +617,35 @@ export async function adrContext(args = {}) {
   });
 }
 
+// --- Vigilances ADR (item 126) : historique filtrable + levée tracée ----------
+// `listAdrVigilances` : historique append-only des points de vigilance ADR
+// remontés par les recettes/tests (manquant/conflit), filtrable.
+export async function listAdrVigilances(args = {}) {
+  return taskOrchestrator("adr_vigilance_list", {
+    projectId: args.projectId || args.project || undefined,
+    recetteId: args.recetteId || undefined,
+    type: args.type || undefined,
+    status: args.status || undefined,
+    from: args.from || undefined,
+    to: args.to || undefined,
+    limit: args.limit != null ? Number(args.limit) : undefined,
+  });
+}
+
+// `resolveAdrVigilance` : lève un point de vigilance avec une RAISON TRACÉE
+// (obligatoire) — ADR créée / dépréciation actée / décision explicite / manuelle.
+export async function resolveAdrVigilance(args = {}) {
+  if (!args.vigilanceId) throw new Error("vigilanceId requis");
+  if (!args.resolution) throw new Error("resolution requise (raison tracée de la levée)");
+  return taskOrchestrator("adr_vigilance_resolve", {
+    vigilanceId: args.vigilanceId,
+    resolution: args.resolution,
+    resolutionKind: args.resolutionKind || undefined,
+    adrId: args.adrId || undefined,
+    resolvedBy: args.resolvedBy || undefined,
+  });
+}
+
 // Pièces jointes d'ADR (item 122) : rattacher un document/fichier à une ADR.
 // 3 sources : 'registry' (targetDocId), 'import' (path stocké storage/ref-docs)
 // ou 'ref' (path référencé workspace/checkout).
@@ -1074,6 +1103,17 @@ export async function finishRecette({ recetteId, items, by, launchMode = "batch"
   const rec = r && r.recette;
   if (!rec) throw new Error(`recette inconnue : ${recetteId}`);
   if (rec.status !== "in_progress") throw new Error(`recette non en cours (statut ${rec.status})`);
+
+  // PRÉ-CHECK ADR (item 126) — AVANT toute création de tâche : un point de
+  // vigilance ADR OUVERT (ADR manquante / conflit) BLOQUE la terminaison avec la
+  // raison explicite. Le registre reste la source de vérité (garde confirmRecette),
+  // mais ce pré-check évite de créer des tâches orphelines avant le refus.
+  const vig = await listAdrVigilances({ recetteId, status: "open" });
+  const vigOpen = Array.isArray(vig && vig.vigilancess) ? vig.vigilancess : [];
+  if (vigOpen.length) {
+    const reasons = vigOpen.map((v) => v.reason || (v.type === "conflict" ? `Conflit d'ADR : ${v.adrId || "?"} vs ${v.relatedAdrId || "?"}` : `ADR manquant pour ${v.entity || "?"}`));
+    throw new Error(`terminaison bloquée : ${reasons.join(" ; ")} — résolvez chaque point (adr_vigilance_resolve) ou levez-le explicitement avec une raison tracée`);
+  }
 
   // Clôture SANS création de tâches : on confirme simplement la recette.
   if (createTasks === false) {

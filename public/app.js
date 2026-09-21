@@ -4962,7 +4962,7 @@ async function openSprintSession(sprintId, force, btn) {
 // survivre à un rechargement de page.
 let frSubTab = localStorage.getItem('panel_fr_subtab') === 'rules' ? 'rules' : 'features';
 let frFeatureFilters = { q: '', role: '', emergent: '', link: '', impl: '' };
-let frRuleFilters = { q: '', emergent: '', link: '', impl: '' };
+let frRuleFilters = { q: '', role: '', emergent: '', link: '', impl: '' };
 const persistFrSubTab = () => { localStorage.setItem('panel_fr_subtab', frSubTab); };
 
 // Relations affichables/créables depuis une fonctionnalité ou une règle.
@@ -5276,8 +5276,9 @@ function frQualifyModal(kind, id, current, onSaved) {
 }
 
 // Filtrage CLIENT du sous-onglet Fonctionnalités (pur, sans effet de bord).
-// `filter` = { q, role, emergent, link, impl } ; `link` ∈ '' | sans_regle |
-// sans_gherkin | sans_adr | sans_sprint (lien absent selon l'index A003) ;
+// `filter` = { q, role, emergent, link, impl } ; `role` ∈ '' | <rôle> | __none__
+// (__none__ = « Sans rôle », homogène avec le sous-onglet Règles) ;
+// `link` ∈ '' | sans_regle | sans_gherkin | sans_adr | sans_sprint (index A003) ;
 // `impl` ∈ '' | yes | no | ecosystem | hors_ecosystem (état d'implémentation).
 function frFilterFeatures(features, filter, linkIndex) {
   const f = filter || {};
@@ -5286,7 +5287,8 @@ function frFilterFeatures(features, filter, linkIndex) {
   return (features || []).filter((x) => {
     const hay = `${x.ref || ''} ${x.userStory || ''}`.toLowerCase();
     if (q && !hay.includes(q)) return false;
-    if (f.role && (x.role || '') !== f.role) return false;
+    if (f.role === '__none__') { if ((x.role || '') !== '') return false; }
+    else if (f.role && (x.role || '') !== f.role) return false;
     if (f.emergent === 'yes' && !x.emergent) return false;
     if (f.emergent === 'no' && x.emergent) return false;
     if (f.impl === 'yes' && !x.implemented) return false;
@@ -5305,8 +5307,10 @@ function frFilterFeatures(features, filter, linkIndex) {
 }
 
 // Filtrage CLIENT du sous-onglet Règles métier (pur, sans effet de bord).
-// `filter` = { q, emergent, link, impl } ; `link` ∈ '' | sans_fonctionnalite |
-// sans_sprint ; `impl` ∈ '' | yes | no | ecosystem | hors_ecosystem.
+// `filter` = { q, role, emergent, link, impl } ; `role` ∈ '' | <rôle> | __none__
+// (rôle d'une règle = union des rôles de ses fonctionnalités liées ; __none__ =
+// « Sans rôle ») ; `link` ∈ '' | sans_fonctionnalite | sans_sprint ;
+// `impl` ∈ '' | yes | no | ecosystem | hors_ecosystem.
 function frFilterRules(rules, filter, linkIndex) {
   const f = filter || {};
   const q = (f.q || '').trim().toLowerCase();
@@ -5314,6 +5318,8 @@ function frFilterRules(rules, filter, linkIndex) {
   return (rules || []).filter((x) => {
     const hay = `${x.ref || ''} ${x.content || ''}`.toLowerCase();
     if (q && !hay.includes(q)) return false;
+    if (f.role === '__none__') { if ((x.roles || []).length) return false; }
+    else if (f.role && !(x.roles || []).includes(f.role)) return false;
     if (f.emergent === 'yes' && !x.emergent) return false;
     if (f.emergent === 'no' && x.emergent) return false;
     if (f.impl === 'yes' && !x.implemented) return false;
@@ -5390,6 +5396,7 @@ function renderFrFeaturePanel(features, refs, pieces, linkIndex) {
       <select id="fr-f-role" title="Filtrer par rôle">
         <option value="">Rôle : tous</option>
         ${roles.map((r) => `<option value="${esc(r)}" ${f.role === r ? 'selected' : ''}>${esc(r)}</option>`).join('')}
+        <option value="__none__" ${f.role === '__none__' ? 'selected' : ''}>Sans rôle</option>
       </select>
       <select id="fr-f-emergent" title="Filtrer par émergence">
         <option value="">Émergence : toutes</option>
@@ -5444,17 +5451,24 @@ function renderFrFeaturePanel(features, refs, pieces, linkIndex) {
 }
 
 // Sous-panneau RÈGLES MÉTIER : toolbar de filtres PROPRES (recherche ref/content,
-// émergence, sans fonctionnalité/sprint) + table isolée + bouton « + Nouvelle
+// rôle [union des rôles des fonctionnalités liées], émergence, sans
+// fonctionnalité/sprint) + table isolée + bouton « + Nouvelle
 // règle ». Même mécanique de filtrage CLIENT que le sous-panneau Fonctionnalités.
 function renderFrRulePanel(rules, refs, pieces, linkIndex) {
   const panel = document.getElementById('fr-subpanel');
   if (!panel) return;
   const f = frRuleFilters;
+  const roles = [...new Set((rules || []).flatMap((x) => x.roles || []))].sort();
   const filtered = frFilterRules(rules, f, linkIndex);
   panel.innerHTML = `
     <div class="adr-pane-filters fr-filters">
       <span class="muted-sm" id="fr-r-count">${filtered.length} / ${(rules || []).length} règle(s)</span>
       <input type="search" id="fr-r-q" class="adr-search" placeholder="Rechercher (ref, contenu…)" value="${esc(f.q || '')}">
+      <select id="fr-r-role" title="Filtrer par rôle">
+        <option value="">Rôle : tous</option>
+        ${roles.map((r) => `<option value="${esc(r)}" ${f.role === r ? 'selected' : ''}>${esc(r)}</option>`).join('')}
+        <option value="__none__" ${f.role === '__none__' ? 'selected' : ''}>Sans rôle</option>
+      </select>
       <select id="fr-r-emergent" title="Filtrer par émergence">
         <option value="">Émergence : toutes</option>
         <option value="yes" ${f.emergent === 'yes' ? 'selected' : ''}>Émergentes</option>
@@ -5484,6 +5498,7 @@ function renderFrRulePanel(rules, refs, pieces, linkIndex) {
   const rerender = () => {
     frRuleFilters = {
       q: (document.getElementById('fr-r-q') || {}).value || '',
+      role: (document.getElementById('fr-r-role') || {}).value || '',
       emergent: (document.getElementById('fr-r-emergent') || {}).value || '',
       impl: (document.getElementById('fr-r-impl') || {}).value || '',
       link: (document.getElementById('fr-r-link') || {}).value || '',
@@ -5495,7 +5510,7 @@ function renderFrRulePanel(rules, refs, pieces, linkIndex) {
     if (cnt) cnt.textContent = `${list.length} / ${(rules || []).length} règle(s)`;
     wireRows();
   };
-  ['fr-r-q', 'fr-r-emergent', 'fr-r-impl', 'fr-r-link'].forEach((id) => {
+  ['fr-r-q', 'fr-r-role', 'fr-r-emergent', 'fr-r-impl', 'fr-r-link'].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.addEventListener(id === 'fr-r-q' ? 'input' : 'change', rerender);
   });

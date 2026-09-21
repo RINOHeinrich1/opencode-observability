@@ -115,6 +115,9 @@ const PROJECT_TABS = [
   ['decisions', 'Décisions'],
   ['artifacts', 'Artefacts'],
   ['adr', 'ADR'],
+  ['sprints', 'Sprints'],
+  ['features', 'Fonctionnalités / Règles'],
+  ['emergents', 'Émergents'],
   ['e2esecrets', 'Vars & Secrets E2E'],
   ['archives', 'Archives'],
 ];
@@ -1210,7 +1213,7 @@ async function userOrgsModal(userId, username) {
 // --- Artefacts : gestionnaire central (toutes entités) ---------------------
 // Taxonomie doc_type (source de vérité : /docs/nomenclature-doc-type.md).
 const DOC_TYPE_LIST = ['adr', 'specs', 'gherkin', 'project_doc', 'adr_file', 'plan', 'task_synthese',
-  'task_report', 'audit_report', 'recette_report', 'recette_doc', 'e2e_report', 'e2e_video', 'autre'];
+  'task_report', 'audit_report', 'recette_report', 'recette_doc', 'e2e_report', 'e2e_video', 'piece', 'autre'];
 const ARTIFACT_KIND_LIST = ['plan', 'audit', 'report', 'autre'];
 let artFilters = { docType: '', contentId: '', kind: '', q: '' };
 
@@ -1219,7 +1222,7 @@ function artRow(a) {
   return `<tr>
     <td><span class="art-entity"><span class="badge art-entity-kind">${esc(a.entity_kind || 'entity')}</span> ${esc(a.entity_label || a.content_id || '')}</span><br><code class="muted-sm">${esc(a.content_id || '')}</code></td>
     <td><span class="badge art-type">${esc(a.doc_type || '—')}</span></td>
-    <td><span class="badge art-nature">${esc(a.kind || '—')}</span></td>
+    <td><span class="badge art-nature">${esc(a.kind || '—')}</span>${a.nature ? ` <span class="badge" title="Nature du document">${esc(a.nature)}</span>` : ''}</td>
     <td>${esc(a.title || (a.path || '').split('/').pop() || a.artifact_id)}<br><span class="muted-sm">${esc(a.path || '')}</span></td>
     <td class="code">${esc((a.created_at || '').replace('T', ' ').slice(0, 19))}</td>
     <td class="art-actions">${isMd ? `<button class="ghost" data-art-view="${esc(a.artifact_id)}">Regarder</button> ` : ''}<button class="btn-dl" data-art-dl="${esc(a.artifact_id)}">Télécharger</button></td>
@@ -4632,6 +4635,593 @@ async function renderAdrs() {
 }
 
 // ===========================================================================
+// ONGLET SPRINTS (ADR-001) — liste par projet (titre, dates, statut),
+// création à DURÉE PARAMÉTRABLE, CLÔTURER / REPRENDRE, rattachement des pièces
+// client, RAPPORT DE SPRINT téléchargeable. Toutes les écritures passent par
+// /api/sprints* (→ MCP `sprint_*`) : le panneau n'écrit jamais en base.
+// La clôture (bouton ou échéance auto) est l'action OFFICIELLE qui bascule la
+// garde d'émergence ; le panneau affiche l'état renvoyé par le registre.
+// ===========================================================================
+
+const SPRINT_STATUS_BADGE = { open: ['running', 'ouvert'], close: ['done', 'clôturé'] };
+function sprintStatusBadge(status) {
+  const [cls, label] = SPRINT_STATUS_BADGE[status] || ['queued', status || '—'];
+  return `<span class="badge ${cls}" title="Statut du sprint">${esc(label)}</span>`;
+}
+function fmtDateTime(v) {
+  return v ? esc(String(v).replace('T', ' ').slice(0, 16)) : '<span class="muted-sm">—</span>';
+}
+function fmtDay(v) {
+  return v ? esc(String(v).slice(0, 10)) : '—';
+}
+// `YYYY-MM-DD` (saisie) → ISO 8601 complet (registre) ; `end=true` → fin de journée.
+function dayToIso(day, end) {
+  if (!day) return undefined;
+  return new Date(`${day}T${end ? '23:59:59' : '00:00:00'}Z`).toISOString();
+}
+
+// Création d'un sprint — durée PARAMÉTRABLE (jours) synchronisée avec l'échéance.
+function sprintFormModal(pieces, onSaved) {
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const today = new Date();
+  const start = iso(today);
+  const end = iso(new Date(today.getTime() + 14 * 86400000));
+  const pieceOpts = (pieces || []).map((p) => `<label style="display:inline-flex;gap:4px;align-items:center;margin:2px 10px 2px 0"><input type="checkbox" class="sp-piece" value="${esc(p.pieceId)}"> ${esc(p.title || p.pieceId)}</label>`).join('');
+  showModal(`<div class="modal modal-wide">
+    <h2>Nouveau sprint</h2>
+    <p class="muted-sm">Projet <code>${esc(currentProject)}</code> — la clôture (bouton ou échéance) est l'action officielle qui bascule la garde d'émergence.</p>
+    <form id="sp-form" class="pilot-form">
+      <label class="modal-field">Titre <input id="sp-title" placeholder="ex. Sprint 2026-09" required></label>
+      <div class="pd-inline">
+        <label class="modal-field">Début <input id="sp-start" type="date" value="${start}"></label>
+        <label class="modal-field">Durée (jours) <input id="sp-days" type="number" min="1" value="14"></label>
+        <label class="modal-field">Échéance <input id="sp-end" type="date" value="${end}"></label>
+      </div>
+      <label class="modal-field" style="flex-direction:row;align-items:center;gap:6px">
+        <input type="checkbox" id="sp-autoclose" checked> <span>Clôture automatique à l'échéance</span>
+      </label>
+      <label class="modal-field">Pièces client rattachées à la création (non émergentes)
+        <div style="max-height:120px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:6px">${pieceOpts || '<span class="muted-sm">Aucune pièce client disponible.</span>'}</div>
+      </label>
+      <div class="modal-actions">
+        <button type="button" class="ghost" id="modal-cancel">Annuler</button>
+        <button type="submit" class="launch-btn">Créer le sprint</button>
+      </div>
+    </form>
+    <div id="sp-msg" class="msg"></div>
+  </div>`);
+  const msg = (t, ok = true) => { const m = document.getElementById('sp-msg'); if (m) { m.textContent = t; m.className = 'msg ' + (ok ? 'ok' : 'error'); } };
+  document.getElementById('modal-cancel').onclick = closeModal;
+  const syncEnd = () => {
+    const s = document.getElementById('sp-start').value;
+    const days = Number(document.getElementById('sp-days').value) || 0;
+    if (s && days > 0) {
+      const d = new Date(`${s}T00:00:00`);
+      d.setDate(d.getDate() + days);
+      document.getElementById('sp-end').value = iso(d);
+    }
+  };
+  document.getElementById('sp-days').addEventListener('input', syncEnd);
+  document.getElementById('sp-start').addEventListener('change', syncEnd);
+  document.getElementById('sp-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      const body = {
+        projectId: currentProject,
+        title: document.getElementById('sp-title').value.trim(),
+        startDate: dayToIso(document.getElementById('sp-start').value, false),
+        endDate: dayToIso(document.getElementById('sp-end').value, true),
+        autoClose: document.getElementById('sp-autoclose').checked,
+        pieces: [...document.querySelectorAll('.sp-piece:checked')].map((c) => c.value),
+      };
+      if (!body.title) throw new Error('Titre requis.');
+      await api('/api/sprints', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      closeModal();
+      if (typeof onSaved === 'function') await onSaved();
+    } catch (err) { msg(err.message || String(err), false); }
+  });
+}
+
+// Rattachement de pièces client à un sprint (émergentes si reçues après l'init).
+function sprintPiecesModal(sprintId, pieces, onSaved) {
+  const opts = (pieces || []).map((p) => `<label style="display:inline-flex;gap:4px;align-items:center;margin:2px 10px 2px 0"><input type="checkbox" class="sp-att-piece" value="${esc(p.pieceId)}"> ${esc(p.title || p.pieceId)} <span class="muted-sm">(${esc(p.nature || '')})</span></label>`).join('');
+  showModal(`<div class="modal modal-wide">
+    <h2>Rattacher des pièces client</h2>
+    <p class="muted-sm">Sprint <code>${esc(sprintId)}</code> — une pièce reçue après l'initialisation du sprint est marquée <strong>émergente</strong> (traçage, non bloquant).</p>
+    <div style="max-height:200px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:6px">${opts || '<span class="muted-sm">Aucune pièce client pour ce projet.</span>'}</div>
+    <label class="modal-field" style="flex-direction:row;align-items:center;gap:6px;margin-top:8px">
+      <input type="checkbox" id="sp-att-init"> <span>Rattachement à la création du sprint (non émergent)</span>
+    </label>
+    <div class="modal-actions">
+      <button type="button" class="ghost" id="modal-cancel">Annuler</button>
+      <button type="button" class="launch-btn" id="sp-att-go">Rattacher</button>
+    </div>
+    <div id="sp-att-msg" class="msg"></div>
+  </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('sp-att-go').onclick = async () => {
+    const msg = document.getElementById('sp-att-msg');
+    const pieceIds = [...document.querySelectorAll('.sp-att-piece:checked')].map((c) => c.value);
+    if (!pieceIds.length) { msg.textContent = 'Sélectionnez au moins une pièce.'; msg.className = 'msg error'; return; }
+    try {
+      await api(`/api/sprints/${encodeURIComponent(sprintId)}/pieces`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pieceIds, atInit: document.getElementById('sp-att-init').checked }),
+      });
+      closeModal();
+      if (typeof onSaved === 'function') await onSaved();
+    } catch (e) { msg.textContent = e.message || String(e); msg.className = 'msg error'; }
+  };
+}
+
+async function renderSprints() {
+  const pane = document.getElementById('pane-sprints');
+  if (!pane) return;
+  if (!currentProject) {
+    pane.innerHTML = '<h2>Sprints</h2><p class="muted-sm">Ouvrez un projet pour voir ses sprints.</p>';
+    return;
+  }
+  pane.innerHTML = `<h2>Sprints <span class="muted-sm">${esc(currentProject)}</span></h2><p class="muted-sm">Chargement…</p>`;
+  let sprints = [], pieces = [];
+  try { sprints = ((await api(`/api/sprints?projectId=${encodeURIComponent(currentProject)}`)).sprints || []); } catch { sprints = []; }
+  try { pieces = ((await api(`/api/pieces?projectId=${encodeURIComponent(currentProject)}`)).pieces || []); } catch { pieces = []; }
+  const rows = sprints.map((s) => `<tr>
+    <td><strong>${esc(s.title || s.id)}</strong>${s.isDefault ? ' <span class="badge queued" title="sprint par défaut">défaut</span>' : ''}<br><code class="muted-sm">${esc(s.id)}</code></td>
+    <td>${sprintStatusBadge(s.status)}</td>
+    <td>${fmtDay(s.startDate)}</td>
+    <td>${fmtDay(s.endDate)}</td>
+    <td>${s.autoClose ? '<span class="badge done" title="clôture auto à l\'échéance">auto</span>' : '<span class="muted-sm">manuel</span>'}</td>
+    <td>${s.closeReason ? `<span class="muted-sm">${esc(s.closeReason)}</span>` : '<span class="muted-sm">—</span>'}</td>
+    <td class="e2e-actions">
+      <button type="button" class="ghost tiny" data-sp-detail="${esc(s.id)}">Détail</button>
+      <button type="button" class="ghost tiny" data-sp-report="${esc(s.id)}">Rapport</button>
+      <button type="button" class="ghost tiny" data-sp-pieces="${esc(s.id)}">Pièces</button>
+      ${s.status === 'open'
+        ? `<button type="button" class="ghost tiny danger-text" data-sp-close="${esc(s.id)}">CLÔTURER</button>`
+        : `<button type="button" class="ghost tiny" data-sp-reopen="${esc(s.id)}">REPRENDRE</button>`}
+    </td>
+  </tr>`).join('');
+  pane.innerHTML = `
+    <h2>Sprints <span class="muted-sm">${esc(currentProject)}</span></h2>
+    <p class="muted-sm">Un sprint est l'unité de temps du projet. La <strong>clôture</strong> (bouton ou échéance) est l'action officielle qui bascule la garde d'émergence ; <strong>REPRENDRE</strong> la suspend. Le rapport est généré par le registre.</p>
+    <div class="adr-pane-filters">
+      <span class="muted-sm">${sprints.length} sprint(s)</span>
+      <button type="button" class="launch-btn" id="sp-new">+ Nouveau sprint</button>
+    </div>
+    <div class="adr-table-wrap"><table class="adr-table">
+      <thead><tr><th>Titre</th><th>Statut</th><th>Début</th><th>Échéance</th><th>Clôture</th><th>Motif</th><th>Actions</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="7" class="muted-sm" style="padding:10px">Aucun sprint pour ce projet.</td></tr>'}</tbody>
+    </table></div>`;
+  document.getElementById('sp-new').addEventListener('click', () => sprintFormModal(pieces, renderSprints));
+  pane.querySelectorAll('[data-sp-detail]').forEach((b) => b.addEventListener('click', () => sprintDetailModal(b.dataset.spDetail)));
+  pane.querySelectorAll('[data-sp-report]').forEach((b) => b.addEventListener('click', () => sprintReportModal(b.dataset.spReport)));
+  pane.querySelectorAll('[data-sp-pieces]').forEach((b) => b.addEventListener('click', () => sprintPiecesModal(b.dataset.spPieces, pieces, renderSprints)));
+  pane.querySelectorAll('[data-sp-close]').forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm('Clôturer ce sprint ? Les éléments suivants seront marqués émergents (traçage, non bloquant).')) return;
+    try {
+      await api(`/api/sprints/${encodeURIComponent(b.dataset.spClose)}/close`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+      await renderSprints();
+    } catch (e) { alert('Clôture impossible : ' + (e.message || e)); }
+  }));
+  pane.querySelectorAll('[data-sp-reopen]').forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm('Reprendre (rouvrir) ce sprint ? La garde d\'émergence est suspendue.')) return;
+    try {
+      await api(`/api/sprints/${encodeURIComponent(b.dataset.spReopen)}/reopen`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+      await renderSprints();
+    } catch (e) { alert('Reprise impossible : ' + (e.message || e)); }
+  }));
+}
+
+async function sprintDetailModal(sprintId) {
+  try {
+    const d = await api(`/api/sprints/${encodeURIComponent(sprintId)}`);
+    const s = d.sprint || {};
+    const sec = (title, arr, fmt) => `<div style="margin:8px 0"><strong>${esc(title)}</strong> (${(arr || []).length})<div class="recette-list" style="max-height:22vh;overflow:auto">${(arr || []).length ? arr.map((x) => `<div class="recette-item"><div>${fmt(x)}</div></div>`).join('') : '<p class="muted-sm">Aucun élément.</p>'}</div></div>`;
+    showModal(`<div class="modal modal-wide">
+      <div class="md-head"><strong>${esc(s.title || sprintId)}</strong> ${sprintStatusBadge(s.status)} <span class="badge queued">${esc(s.id || '')}</span></div>
+      <p class="muted-sm">Période ${fmtDay(s.startDate)} → ${fmtDay(s.endDate)}${s.closedAt ? ` · clôturé le ${fmtDateTime(s.closedAt)} (${esc(s.closeReason || '')})` : ''}</p>
+      ${sec('Pièces client', d.pieces, (p) => `${esc(p.title || p.pieceId)} <span class="muted-sm">(${esc(p.nature || '')})</span>${p.emergent ? ' <span class="chip">émergente</span>' : ''}`)}
+      ${sec('Fonctionnalités', d.fonctionnalites, (f) => `<code class="chip">${esc(f.ref)}</code> ${esc(f.userStory || '')}${f.emergent ? ' <span class="chip">émergente</span>' : ''}`)}
+      ${sec('Règles métier', d.regles, (r) => `<code class="chip">${esc(r.ref)}</code> ${esc(r.content || '')}${r.emergent ? ' <span class="chip">émergente</span>' : ''}`)}
+      ${sec('Tâches', d.tasks, (t) => `<code class="chip">${esc(t.id)}</code> ${esc(t.title || t.request || '')} ${badge(t.status)}${t.emergent ? ' <span class="chip">émergente</span>' : ''}`)}
+      ${sec('Recettes', d.recettes, (r) => `<code class="chip">${esc(r.recetteId)}</code> ${esc(r.title || '')}`)}
+      <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
+    </div>`);
+    document.getElementById('modal-cancel').onclick = closeModal;
+  } catch (e) { alert('Détail indisponible : ' + (e.message || e)); }
+}
+
+// RAPPORT DE SPRINT (A010) — affiché (markdown) puis téléchargeable. Le contenu
+// est généré par le registre (`sprint_report`), jamais recalculé côté panneau.
+async function sprintReportModal(sprintId) {
+  try {
+    const r = await api(`/api/sprints/${encodeURIComponent(sprintId)}/report`);
+    const md = (r && r.markdown) || '';
+    const html = await renderMarkdownInline(md);
+    const dlUrl = `/api/sprints/${encodeURIComponent(sprintId)}/report?download=1`;
+    showModal(`<div class="modal modal-doc-fullscreen">
+      <div class="doc-view-head">
+        <div class="doc-view-title"><h3>Rapport de sprint</h3><p class="muted-sm">${esc(sprintId)} — généré par le registre</p></div>
+        <div class="doc-view-actions">
+          <a class="btn-dl" href="${dlUrl}" download title="Télécharger le rapport">Télécharger</a>
+          <button class="ghost" id="modal-cancel">Fermer</button>
+        </div>
+      </div>
+      ${html ? `<div class="doc-view-body markdown-view">${html}</div>` : `<pre class="doc-view-body doc-view-pre">${esc(md)}</pre>`}
+    </div>`);
+    document.getElementById('modal-cancel').onclick = closeModal;
+  } catch (e) { alert('Rapport indisponible : ' + (e.message || e)); }
+}
+
+// ===========================================================================
+// ONGLET FONCTIONNALITÉS / RÈGLES MÉTIER (ADR-001, T5) — table structurée
+// (Ref / rôle / user story), règles métier, liens fonctionnalité↔règle /
+// ↔scénario Gherkin / ↔ADR, visibilité des rattachements sprint/tâches/recettes,
+// CRUD (création / modification : l'agent propose, l'humain valide/ajuste).
+// ===========================================================================
+
+// Relations affichables/créables depuis une fonctionnalité ou une règle.
+// `side` = position de l'entité courante dans le couple (a,b) du dispatcher.
+const LINK_PRESETS = {
+  feature: {
+    feature_rule:    { side: 'a', other: 'rule',    label: 'Fonctionnalité ↔ Règle métier' },
+    feature_gherkin: { side: 'a', other: 'gherkin', label: 'Fonctionnalité ↔ Scénario Gherkin' },
+    feature_adr:     { side: 'a', other: 'adr',     label: 'Fonctionnalité ↔ ADR' },
+    feature_sprint:  { side: 'a', other: 'sprint',  label: 'Fonctionnalité ↔ Sprint' },
+    task_feature:    { side: 'b', other: 'task',    label: 'Tâche ↔ Fonctionnalité' },
+    recette_feature: { side: 'b', other: 'recette', label: 'Recette ↔ Fonctionnalité' },
+  },
+  rule: {
+    feature_rule: { side: 'b', other: 'feature', label: 'Fonctionnalité ↔ Règle métier' },
+    rule_sprint:  { side: 'a', other: 'sprint',  label: 'Règle métier ↔ Sprint' },
+  },
+};
+
+function linkModal(preset, entityId, refs, onSaved) {
+  const kindOpts = Object.keys(preset).map((k) => `<option value="${esc(k)}">${esc(preset[k].label)}</option>`).join('');
+  showModal(`<div class="modal">
+    <h2>Créer un lien</h2>
+    <p class="muted-sm">Entité <code>${esc(entityId)}</code> — le registre valide les deux extrémités (idempotent).</p>
+    <form id="lk-form" class="pilot-form">
+      <label class="modal-field">Relation <select id="lk-kind">${kindOpts}</select></label>
+      <label class="modal-field">Cible <input id="lk-target" list="lk-targets" placeholder="identifiant de l'autre extrémité" required></label>
+      <datalist id="lk-targets"></datalist>
+      <div class="modal-actions">
+        <button type="button" class="ghost" id="modal-cancel">Annuler</button>
+        <button type="submit" class="launch-btn">Lier</button>
+      </div>
+    </form>
+    <div id="lk-msg" class="msg"></div>
+  </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  const fillTargets = () => {
+    const kind = document.getElementById('lk-kind').value;
+    const other = preset[kind] && preset[kind].other;
+    const list = (refs && refs[other]) || [];
+    document.getElementById('lk-targets').innerHTML = list.map((o) => `<option value="${esc(o.id)}">${esc(o.label || o.id)}</option>`).join('');
+  };
+  document.getElementById('lk-kind').addEventListener('change', fillTargets);
+  fillTargets();
+  document.getElementById('lk-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById('lk-msg');
+    const kind = document.getElementById('lk-kind').value;
+    const target = document.getElementById('lk-target').value.trim();
+    const side = preset[kind].side;
+    const a = side === 'a' ? entityId : target;
+    const b = side === 'a' ? target : entityId;
+    try {
+      await api('/api/links', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, a, b }) });
+      closeModal();
+      if (typeof onSaved === 'function') await onSaved();
+    } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
+  });
+}
+
+function featureFormModal(feature, pieces, onSaved) {
+  const isEdit = !!(feature && feature.id);
+  const pieceIds = (pieces || []).map((p) => p.pieceId);
+  showModal(`<div class="modal">
+    <h2>${isEdit ? 'Éditer la fonctionnalité' : 'Nouvelle fonctionnalité'}</h2>
+    <p class="muted-sm">Projet <code>${esc(currentProject)}</code> — référence <code>US-xxx</code>.</p>
+    <form id="feat-form" class="pilot-form">
+      <label class="modal-field">Référence <input id="feat-ref" value="${esc((feature && feature.ref) || '')}" placeholder="US-xxx" required></label>
+      <label class="modal-field">Rôle / acteur <input id="feat-role" value="${esc((feature && feature.role) || '')}" placeholder="ex. client, opérateur"></label>
+      <label class="modal-field">User story <textarea id="feat-us" class="modal-textarea" rows="3" placeholder="En tant que …, je veux …, afin de …" required>${esc((feature && feature.userStory) || '')}</textarea></label>
+      <label class="modal-field">Pièce client source (optionnel) <input id="feat-piece" list="feat-pieces" value="${esc((feature && feature.sourcedPieceId) || '')}" placeholder="pieceId"><datalist id="feat-pieces">${pieceIds.map((id) => `<option value="${esc(id)}">`).join('')}</datalist></label>
+      <div class="modal-actions">
+        <button type="button" class="ghost" id="modal-cancel">Annuler</button>
+        <button type="submit" class="launch-btn">${isEdit ? 'Enregistrer' : 'Créer'}</button>
+      </div>
+    </form>
+    <div id="feat-msg" class="msg"></div>
+  </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('feat-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById('feat-msg');
+    const body = {
+      ref: document.getElementById('feat-ref').value.trim(),
+      role: document.getElementById('feat-role').value.trim(),
+      userStory: document.getElementById('feat-us').value.trim(),
+      sourcedPieceId: document.getElementById('feat-piece').value.trim(),
+    };
+    try {
+      if (isEdit) await api(`/api/features/${encodeURIComponent(feature.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      else await api('/api/features', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: currentProject, ...body }) });
+      closeModal();
+      if (typeof onSaved === 'function') await onSaved();
+    } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
+  });
+}
+
+function ruleFormModal(rule, pieces, onSaved) {
+  const isEdit = !!(rule && rule.id);
+  const pieceIds = (pieces || []).map((p) => p.pieceId);
+  showModal(`<div class="modal">
+    <h2>${isEdit ? 'Éditer la règle métier' : 'Nouvelle règle métier'}</h2>
+    <p class="muted-sm">Projet <code>${esc(currentProject)}</code> — référence <code>RM-xxxx</code>.</p>
+    <form id="rule-form" class="pilot-form">
+      <label class="modal-field">Référence <input id="rule-ref" value="${esc((rule && rule.ref) || '')}" placeholder="RM-xxxx" required></label>
+      <label class="modal-field">Contenu <textarea id="rule-content" class="modal-textarea" rows="4" placeholder="Formulation de la règle métier" required>${esc((rule && rule.content) || '')}</textarea></label>
+      <label class="modal-field">Pièce client source (optionnel) <input id="rule-piece" list="rule-pieces" value="${esc((rule && rule.sourcedPieceId) || '')}" placeholder="pieceId"><datalist id="rule-pieces">${pieceIds.map((id) => `<option value="${esc(id)}">`).join('')}</datalist></label>
+      <div class="modal-actions">
+        <button type="button" class="ghost" id="modal-cancel">Annuler</button>
+        <button type="submit" class="launch-btn">${isEdit ? 'Enregistrer' : 'Créer'}</button>
+      </div>
+    </form>
+    <div id="rule-msg" class="msg"></div>
+  </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('rule-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById('rule-msg');
+    const body = {
+      ref: document.getElementById('rule-ref').value.trim(),
+      content: document.getElementById('rule-content').value.trim(),
+      sourcedPieceId: document.getElementById('rule-piece').value.trim(),
+    };
+    try {
+      if (isEdit) await api(`/api/rules/${encodeURIComponent(rule.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      else await api('/api/rules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: currentProject, ...body }) });
+      closeModal();
+      if (typeof onSaved === 'function') await onSaved();
+    } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
+  });
+}
+
+async function featureDetailModal(featureId) {
+  try {
+    const d = await api(`/api/features/${encodeURIComponent(featureId)}`);
+    const f = d.feature || {};
+    const sec = (t, arr, fmt) => `<div style="margin:8px 0"><strong>${esc(t)}</strong> (${(arr || []).length})<div class="recette-list" style="max-height:20vh;overflow:auto">${(arr || []).length ? arr.map((x) => `<div class="recette-item"><div>${fmt(x)}</div></div>`).join('') : '<p class="muted-sm">Aucun élément.</p>'}</div></div>`;
+    showModal(`<div class="modal modal-wide">
+      <div class="md-head"><strong>${esc(f.ref || featureId)}</strong>${f.emergent ? ' <span class="chip">émergent</span>' : ''} <span class="badge queued">${esc(f.id || '')}</span></div>
+      <p class="muted-sm"><strong>Rôle :</strong> ${esc(f.role || '—')}</p>
+      <p>${esc(f.userStory || '')}</p>
+      ${sec('Règles métier', f.regles, (r) => `<code class="chip">${esc(r.ref)}</code> ${esc(r.content || '')}`)}
+      ${sec('Scénarios Gherkin', f.gherkin, (g) => `<code class="chip">${esc(g.e2eTestId)}</code> ${esc(g.scenario || '')}`)}
+      ${sec('ADR', f.adrs, (a) => `<code class="chip">${esc(a.adrId)}</code> ${esc(a.title || '')}`)}
+      ${sec('Sprints', f.sprints, (s) => `<code class="chip">${esc(s.id)}</code> ${esc(s.title || '')} ${sprintStatusBadge(s.status)}`)}
+      ${sec('Tâches', f.tasks, (t) => `<code class="chip">${esc(t.id)}</code> ${esc(t.title || t.request || '')}`)}
+      ${sec('Recettes', f.recettes, (r) => `<code class="chip">${esc(r.recetteId)}</code> ${esc(r.title || '')}`)}
+      <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
+    </div>`);
+    document.getElementById('modal-cancel').onclick = closeModal;
+  } catch (e) { alert('Détail indisponible : ' + (e.message || e)); }
+}
+
+async function ruleDetailModal(ruleId) {
+  try {
+    const d = await api(`/api/rules/${encodeURIComponent(ruleId)}`);
+    const r = d.rule || {};
+    const sec = (t, arr, fmt) => `<div style="margin:8px 0"><strong>${esc(t)}</strong> (${(arr || []).length})<div class="recette-list" style="max-height:20vh;overflow:auto">${(arr || []).length ? arr.map((x) => `<div class="recette-item"><div>${fmt(x)}</div></div>`).join('') : '<p class="muted-sm">Aucun élément.</p>'}</div></div>`;
+    showModal(`<div class="modal modal-wide">
+      <div class="md-head"><strong>${esc(r.ref || ruleId)}</strong>${r.emergent ? ' <span class="chip">émergente</span>' : ''} <span class="badge queued">${esc(r.id || '')}</span></div>
+      <p>${esc(r.content || '')}</p>
+      ${sec('Fonctionnalités liées', r.fonctionnalites, (f) => `<code class="chip">${esc(f.ref)}</code> ${esc(f.userStory || '')}`)}
+      ${sec('Sprints', r.sprints, (s) => `<code class="chip">${esc(s.id)}</code> ${esc(s.title || '')} ${sprintStatusBadge(s.status)}`)}
+      <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
+    </div>`);
+    document.getElementById('modal-cancel').onclick = closeModal;
+  } catch (e) { alert('Détail indisponible : ' + (e.message || e)); }
+}
+
+// Colonnes « Liens » : enrichissement PARESSEUX (détail par entité, petite
+// concurrence) pour ne pas déclencher N appels MCP au rendu de la table.
+async function enrichLinkCells() {
+  const cells = [...document.querySelectorAll('[data-fr-links], [data-rule-links]')];
+  const run = async (cell) => {
+    const fid = cell.getAttribute('data-fr-links');
+    const rid = cell.getAttribute('data-rule-links');
+    try {
+      const d = fid ? await api(`/api/features/${encodeURIComponent(fid)}`) : await api(`/api/rules/${encodeURIComponent(rid)}`);
+      const o = (fid ? d.feature : d.rule) || {};
+      const parts = [];
+      if (fid) {
+        if (o.regles && o.regles.length) parts.push(`${o.regles.length} règle(s)`);
+        if (o.gherkin && o.gherkin.length) parts.push(`${o.gherkin.length} Gherkin`);
+        if (o.adrs && o.adrs.length) parts.push(`${o.adrs.length} ADR`);
+        if (o.sprints && o.sprints.length) parts.push(`${o.sprints.length} sprint(s)`);
+        if (o.tasks && o.tasks.length) parts.push(`${o.tasks.length} tâche(s)`);
+        if (o.recettes && o.recettes.length) parts.push(`${o.recettes.length} recette(s)`);
+      } else {
+        if (o.fonctionnalites && o.fonctionnalites.length) parts.push(`${o.fonctionnalites.length} fonctionnalité(s)`);
+        if (o.sprints && o.sprints.length) parts.push(`${o.sprints.length} sprint(s)`);
+      }
+      cell.innerHTML = parts.length ? parts.map((p) => `<span class="chip">${esc(p)}</span>`).join(' ') : '<span class="muted-sm">aucun lien</span>';
+    } catch { cell.innerHTML = '<span class="muted-sm">—</span>'; }
+  };
+  const queue = cells.slice();
+  const workers = Array.from({ length: Math.min(4, queue.length) }, async () => {
+    while (queue.length) { const c = queue.shift(); if (c) await run(c); }
+  });
+  await Promise.all(workers);
+}
+
+async function renderFeaturesRules() {
+  const pane = document.getElementById('pane-features');
+  if (!pane) return;
+  if (!currentProject) {
+    pane.innerHTML = '<h2>Fonctionnalités / Règles</h2><p class="muted-sm">Ouvrez un projet.</p>';
+    return;
+  }
+  pane.innerHTML = `<h2>Fonctionnalités / Règles métier <span class="muted-sm">${esc(currentProject)}</span></h2><p class="muted-sm">Chargement…</p>`;
+  const [featRes, ruleRes, docRes, e2eRes, sprintRes, taskRes, recRes, pieceRes] = await Promise.all([
+    api(`/api/features?projectId=${encodeURIComponent(currentProject)}`).catch(() => ({ features: [] })),
+    api(`/api/rules?projectId=${encodeURIComponent(currentProject)}`).catch(() => ({ rules: [] })),
+    api(`/api/docs?projectId=${encodeURIComponent(currentProject)}&includeRepoDocs=1`).catch(() => ({ docs: [] })),
+    api(`/api/e2e-tests?project=${encodeURIComponent(currentProject)}`).catch(() => ({ tests: [] })),
+    api(`/api/sprints?projectId=${encodeURIComponent(currentProject)}`).catch(() => ({ sprints: [] })),
+    api('/api/tasks').catch(() => ({ tasks: [] })),
+    api(`/api/recettes?project=${encodeURIComponent(currentProject)}`).catch(() => ({ recettes: [] })),
+    api(`/api/pieces?projectId=${encodeURIComponent(currentProject)}`).catch(() => ({ pieces: [] })),
+  ]);
+  const features = featRes.features || [];
+  const rules = ruleRes.rules || [];
+  const pieces = pieceRes.pieces || [];
+  const refs = {
+    rule: rules.map((r) => ({ id: r.id, label: `${r.ref} — ${(r.content || '').slice(0, 60)}` })),
+    feature: features.map((f) => ({ id: f.id, label: `${f.ref} — ${(f.userStory || '').slice(0, 60)}` })),
+    gherkin: (e2eRes.tests || []).map((t) => ({ id: t.id, label: `${t.id} — ${(t.scenario || t.title || '').slice(0, 60)}` })),
+    adr: (docRes.docs || []).filter((d) => d.kind === 'adr-tech').map((d) => ({ id: d.docId, label: `${d.title || d.docId}` })),
+    sprint: (sprintRes.sprints || []).map((s) => ({ id: s.id, label: `${s.title || s.id} (${s.status})` })),
+    task: (taskRes.tasks || []).filter((t) => !t.project || t.project === currentProject).map((t) => ({ id: t.id, label: `${t.id} — ${(t.title || t.request || '').slice(0, 50)}` })),
+    recette: (recRes.recettes || []).map((r) => ({ id: r.recette_id, label: `${r.recette_id} — ${(r.title || '').slice(0, 50)}` })),
+  };
+  const featRows = features.map((f) => `<tr>
+    <td><strong>${esc(f.ref)}</strong>${f.emergent ? ' <span class="chip" title="émergent">émergent</span>' : ''}</td>
+    <td>${esc(f.role || '—')}</td>
+    <td>${adrCellText(f.userStory, 200)}</td>
+    <td class="fr-links" data-fr-links="${esc(f.id)}"><span class="muted-sm">…</span></td>
+    <td class="e2e-actions">
+      <button type="button" class="ghost tiny" data-fr-edit="${esc(f.id)}">Éditer</button>
+      <button type="button" class="ghost tiny" data-fr-detail="${esc(f.id)}">Détail</button>
+      <button type="button" class="ghost tiny" data-fr-link="${esc(f.id)}">Lier</button>
+    </td>
+  </tr>`).join('');
+  const ruleRows = rules.map((r) => `<tr>
+    <td><strong>${esc(r.ref)}</strong>${r.emergent ? ' <span class="chip" title="émergente">émergente</span>' : ''}</td>
+    <td>${adrCellText(r.content, 220)}</td>
+    <td class="fr-links" data-rule-links="${esc(r.id)}"><span class="muted-sm">…</span></td>
+    <td class="e2e-actions">
+      <button type="button" class="ghost tiny" data-rule-edit="${esc(r.id)}">Éditer</button>
+      <button type="button" class="ghost tiny" data-rule-detail="${esc(r.id)}">Détail</button>
+      <button type="button" class="ghost tiny" data-rule-link="${esc(r.id)}">Lier</button>
+    </td>
+  </tr>`).join('');
+  pane.innerHTML = `
+    <h2>Fonctionnalités / Règles métier <span class="muted-sm">${esc(currentProject)}</span></h2>
+    <p class="muted-sm">Table structurée (<code>Ref</code>, rôle, user story) + règles métier et leurs liens (règle / Gherkin / ADR) et rattachements (sprint / tâches / recettes). L'agent propose, l'humain valide/ajuste.</p>
+    <div class="adr-pane-filters">
+      <span class="muted-sm">${features.length} fonctionnalité(s) · ${rules.length} règle(s)</span>
+      <button type="button" class="launch-btn" id="fr-new-feat">+ Nouvelle fonctionnalité</button>
+      <button type="button" class="launch-btn" id="fr-new-rule">+ Nouvelle règle</button>
+    </div>
+    <h3 style="margin-top:12px">Fonctionnalités</h3>
+    <div class="adr-table-wrap"><table class="adr-table">
+      <thead><tr><th>Ref</th><th>Rôle</th><th>User story</th><th>Liens</th><th>Actions</th></tr></thead>
+      <tbody>${featRows || '<tr><td colspan="5" class="muted-sm" style="padding:10px">Aucune fonctionnalité pour ce projet.</td></tr>'}</tbody>
+    </table></div>
+    <h3 style="margin-top:16px">Règles métier</h3>
+    <div class="adr-table-wrap"><table class="adr-table">
+      <thead><tr><th>Ref</th><th>Contenu</th><th>Liens</th><th>Actions</th></tr></thead>
+      <tbody>${ruleRows || '<tr><td colspan="4" class="muted-sm" style="padding:10px">Aucune règle métier pour ce projet.</td></tr>'}</tbody>
+    </table></div>`;
+  const newFeat = document.getElementById('fr-new-feat');
+  if (newFeat) newFeat.addEventListener('click', () => featureFormModal(null, pieces, renderFeaturesRules));
+  const newRule = document.getElementById('fr-new-rule');
+  if (newRule) newRule.addEventListener('click', () => ruleFormModal(null, pieces, renderFeaturesRules));
+  pane.querySelectorAll('[data-fr-edit]').forEach((b) => b.addEventListener('click', () => featureFormModal(features.find((f) => f.id === b.dataset.frEdit), pieces, renderFeaturesRules)));
+  pane.querySelectorAll('[data-rule-edit]').forEach((b) => b.addEventListener('click', () => ruleFormModal(rules.find((r) => r.id === b.dataset.ruleEdit), pieces, renderFeaturesRules)));
+  pane.querySelectorAll('[data-fr-detail]').forEach((b) => b.addEventListener('click', () => featureDetailModal(b.dataset.frDetail)));
+  pane.querySelectorAll('[data-rule-detail]').forEach((b) => b.addEventListener('click', () => ruleDetailModal(b.dataset.ruleDetail)));
+  pane.querySelectorAll('[data-fr-link]').forEach((b) => b.addEventListener('click', () => linkModal(LINK_PRESETS.feature, b.dataset.frLink, refs, renderFeaturesRules)));
+  pane.querySelectorAll('[data-rule-link]').forEach((b) => b.addEventListener('click', () => linkModal(LINK_PRESETS.rule, b.dataset.ruleLink, refs, renderFeaturesRules)));
+  enrichLinkCells();
+}
+
+// ===========================================================================
+// ONGLET ÉMERGENTS (ADR-001 §5, T6) — traçage des manques de cardinalité
+// (10 vues `cardinalityView` + signaux). LECTURE SEULE sauf la clôture TRACÉE
+// d'un signal (résolution obligatoire). Non bloquant : le panneau affiche
+// l'état renvoyé par le registre (aucun recalcul de l'émergence).
+// ===========================================================================
+
+const CARDINALITY_VIEW_LABELS = {
+  tache_sans_adr: 'Tâches sans ADR effectif',
+  tache_sans_fonctionnalite: 'Tâches sans fonctionnalité',
+  tache_sans_sprint: 'Tâches sans sprint',
+  recette_sans_adr: 'Recettes sans ADR',
+  recette_sans_fonctionnalite: 'Recettes sans fonctionnalité',
+  recette_sans_sprint: 'Recettes sans sprint',
+  adr_sans_fonctionnalite: 'ADR sans fonctionnalité',
+  sprint_sans_fonctionnalite: 'Sprints sans fonctionnalité',
+  sprint_sans_regle: 'Sprints sans règle métier',
+  emergents: 'Éléments émergents (tâches, fonctionnalités, règles, pièces)',
+};
+
+async function renderEmergents() {
+  const pane = document.getElementById('pane-emergents');
+  if (!pane) return;
+  if (!currentProject) {
+    pane.innerHTML = '<h2>Émergents</h2><p class="muted-sm">Ouvrez un projet.</p>';
+    return;
+  }
+  pane.innerHTML = `<h2>Émergents <span class="muted-sm">${esc(currentProject)}</span></h2><p class="muted-sm">Chargement…</p>`;
+  let rep = null, err = '';
+  try { rep = await api(`/api/cardinality?projectId=${encodeURIComponent(currentProject)}`); }
+  catch (e) { err = e.message || String(e); }
+  if (!rep) { pane.innerHTML = `<h2>Émergents</h2><p class="msg error">${esc(err || 'Indisponible')}</p>`; return; }
+  const views = rep.views || {};
+  const signals = (rep.signals && rep.signals.items) || [];
+  const viewHtml = (key) => {
+    const items = (views[key] && views[key].items) || [];
+    return `<details style="margin:6px 0">
+      <summary><strong>${esc(CARDINALITY_VIEW_LABELS[key] || key)}</strong> — <span class="chip">${items.length}</span></summary>
+      <div class="recette-list" style="max-height:28vh;overflow:auto;margin-top:6px">
+        ${items.length ? items.map((it) => `<div class="recette-item"><div>
+          <span class="badge art-entity-kind">${esc(it.entityType || '')}</span>
+          <code class="chip">${esc(it.id || '')}</code> ${esc(it.title || it.request || it.ref || '')}
+          ${it.ref && it.title ? `<span class="muted-sm">${esc(it.ref)}</span>` : ''}
+          ${it.emergent ? ' <span class="chip">émergent</span>' : ''}
+          ${it.emergentOrigin ? ` <span class="muted-sm">(origine : ${esc(it.emergentOrigin)})</span>` : ''}
+        </div></div>`).join('') : '<p class="muted-sm">Aucun élément.</p>'}
+      </div>
+    </details>`;
+  };
+  const signalRows = signals.map((s) => `<tr>
+    <td><code class="chip">${esc(s.signalId)}</code></td>
+    <td>${esc(s.entityType || '')}</td>
+    <td><code class="muted-sm">${esc(s.entityId || '')}</code></td>
+    <td>${(s.missing || []).map((m) => `<span class="chip">${esc(m)}</span>`).join(' ') || '—'}</td>
+    <td>${s.status === 'open' ? '<span class="badge awaiting">ouvert</span>' : '<span class="badge done">résolu</span>'}${s.stale ? ' <span class="chip" title="manques comblés depuis">stale</span>' : ''}</td>
+    <td class="e2e-actions">${s.status === 'open' ? `<button type="button" class="ghost tiny" data-card-resolve="${esc(s.signalId)}">Clôturer</button>` : `<span class="muted-sm">${esc(s.resolution || '')}</span>`}</td>
+  </tr>`).join('');
+  pane.innerHTML = `
+    <h2>Émergents <span class="muted-sm">${esc(currentProject)}</span></h2>
+    <p class="muted-sm">Traçage des manques de cardinalité (heuristiques T6, <strong>non bloquant</strong>). La clôture d'un sprint bascule la garde d'émergence ; l'état est renvoyé par le registre.</p>
+    <div class="adr-pane-filters">
+      <span class="muted-sm">Généré : ${esc(String(rep.generatedAt || '').replace('T', ' ').slice(0, 19))}</span>
+      <span class="muted-sm">Signaux : ${(rep.signals && rep.signals.open) || 0} ouvert(s) / ${(rep.signals && rep.signals.total) || 0}</span>
+    </div>
+    <div style="margin:10px 0">${Object.keys(CARDINALITY_VIEW_LABELS).map(viewHtml).join('')}</div>
+    <h3>Signaux de cardinalité</h3>
+    <div class="adr-table-wrap"><table class="adr-table">
+      <thead><tr><th>Signal</th><th>Entité</th><th>Id</th><th>Manques</th><th>Statut</th><th>Action</th></tr></thead>
+      <tbody>${signalRows || '<tr><td colspan="6" class="muted-sm" style="padding:10px">Aucun signal.</td></tr>'}</tbody>
+    </table></div>`;
+  pane.querySelectorAll('[data-card-resolve]').forEach((b) => b.addEventListener('click', async () => {
+    const resolution = prompt('Résolution (raison tracée obligatoire) :');
+    if (!resolution || !resolution.trim()) return;
+    try {
+      await api(`/api/cardinality/signals/${encodeURIComponent(b.dataset.cardResolve)}/resolve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ resolution: resolution.trim() }) });
+      await renderEmergents();
+    } catch (e) { alert('Clôture impossible : ' + (e.message || e)); }
+  }));
+}
+
+// ===========================================================================
 // Sélecteur ADR multi-lignes (item 125) — remplace l'ancienne liste BRUTE de
 // documents (.as-doc / .ea-doc / .rm-refdoc). Lignes COMPACTES et structurées :
 // case à cocher + titre + badge de statut + chips repos + badge globale +
@@ -6049,6 +6639,7 @@ function e2eVarModal(project, projects, existingName) {
 const RENDER = {
   overview: renderOverview, observability: renderObservability, projects: renderProjects, tasks: renderTasks, e2etests: renderE2ETests, e2esecrets: renderE2ESecrets, recettes: renderRecettes,
   events: renderEvents, deployments: renderDeployments, decisions: renderDecisions, artifacts: renderArtifacts, adr: renderAdrs, plans: renderPlans, archives: renderArchives, ecosystem: renderEcosystem, workspaces: renderWorkspaces, users: renderUsers,
+  sprints: renderSprints, features: renderFeaturesRules, emergents: renderEmergents,
 };
 
 // --- Rafraîchissement automatique (polling, min 10 s) ----------------------

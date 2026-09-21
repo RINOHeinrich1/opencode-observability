@@ -1828,7 +1828,7 @@ async function e2eDetailModal(e2eTestId) {
           <code class="chip">${esc(docKindLabel(d.kind))}</code> <strong>${esc(d.title || d.docId)}</strong>
           <span class="muted-sm">${esc(d.path)}</span>
         </div>`).join('')}</div>
-        <p class="muted-sm">Ces documents (ADR technique, specs, Gherkin) sont fournis en contexte lors des sessions de création / recette — voir l'onglet Projets → 📄 Docs de référence pour les gérer.</p>
+        <p class="muted-sm">Ces documents (ADR technique, specs, Gherkin) sont fournis en contexte lors des sessions de création / recette. Les documents de référence (ADR-12) sont désormais des <strong>pièces client</strong> : gérez-les via l'onglet <strong>Artefacts</strong> ou l'onglet <strong>Pièces client</strong> du projet ; les ADR via l'onglet <strong>ADR</strong>.</p>
       </div>` : ''}
       ${test.description ? `<div class="modal-request">${esc(test.description)}</div>` : ''}
       ${test.gherkin ? `<div class="actions-section"><h3>Comportement (Gherkin)</h3>
@@ -5978,8 +5978,9 @@ function provisionRepoModal(repo, opts = {}) {
   });
 }
 
-// Modale documents de référence (ADR-12) d'un projet ou d'un repo : liste les
-// docs + ajout (kind/titre/chemin) rattaché à un projet ou un repo.
+// Modale de création / édition d'un projet : identifiant + nom lisible
+// (l'organisation courante est appliquée). Les repos s'associent ensuite
+// depuis la modale « Détail » du projet.
 async function projectFormModal(project) {
   const editing = !!project;
   showModal(`

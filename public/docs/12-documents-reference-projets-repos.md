@@ -97,8 +97,11 @@ cocher au lancement :
 
 ## 5. Panel
 
-- Onglet **Projets** : chaque carte projet/repo expose « 📄 Docs de référence » —
-  modal de gestion (liste + ajout kind/titre/chemin rattaché à un projet ou un repo).
+- Onglet **Projets** : la gestion des documents de référence (ADR-12) passe
+  désormais par les **pièces client** — onglet **Artefacts** ou onglet
+  **Pièces client** de la modale « Détail projet » — et par l'onglet **ADR**
+  pour les ADR. L'onglet « 📄 Docs de référence » de la modale projet a été
+  retiré (doublon avec « Pièces client »).
 - Création de test via agent : fieldset **Documents de référence** (cases à cocher).
 - Création de recette : fieldset **Documents de référence des projets** (cases à cocher).
 
@@ -116,8 +119,8 @@ Sous chaque catégorie apparaissent les documents enregistrés pour le(s)
 projet(s) sélectionné(s) (eux aussi cochés par défaut). Décocher une catégorie
 décoche ses documents ; décocher un document l'exclut du contexte. Une
 catégorie sans document enregistré reste affichée (avec un rappel de gestion
-via Projets → 📄 Docs de référence) — le champ est donc toujours visible et
-actionnable.
+via les pièces client — onglet **Artefacts** / **Pièces client** du projet —
+ou l'onglet **ADR**) — le champ est donc toujours visible et actionnable.
 
 ### Import depuis le PC (fichiers locaux)
 

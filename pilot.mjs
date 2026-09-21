@@ -666,6 +666,253 @@ export async function removePiece(args = {}) {
   return taskOrchestrator("piece_delete", { pieceId: args.pieceId });
 }
 
+// ===========================================================================
+// Famille SPRINT `sprint_*` (ADR-001, T3/T4) : pont panneau→registre.
+// Source de vérité = MCP (aucune écriture directe en base). La CLÔTURE
+// (`sprint_close`) et la REPRISE (`sprint_reopen`) sont les actions OFFICIELLES
+// qui basculent / suspendent la garde d'émergence : le panneau ne recalcule
+// jamais l'émergence, il affiche l'état renvoyé par le registre.
+// ===========================================================================
+
+// `listSprints` : sprints d'un projet (statut + dates) ; la clôture AUTOMATIQUE
+// à l'échéance est appliquée côté registre AVANT lecture.
+export async function listSprints(args = {}) {
+  if (!args.projectId) throw new Error("projectId requis");
+  return taskOrchestrator("sprint_list", {
+    projectId: args.projectId,
+    status: args.status || undefined,
+  });
+}
+
+// `getSprintDetail` : détail complet d'un sprint (pièces/fonctionnalités/règles/
+// tâches/recettes rattachées + compteurs).
+export async function getSprintDetail(args = {}) {
+  if (!args.sprintId) throw new Error("sprintId requis");
+  return taskOrchestrator("sprint_get", { sprintId: args.sprintId });
+}
+
+// `createSprint` : création à DURÉE PARAMÉTRABLE (startDate/endDate ISO 8601),
+// clôture auto à l'échéance (`autoClose`), pièces client rattachées à la création.
+export async function createSprint(args = {}) {
+  if (!args.projectId) throw new Error("projectId requis");
+  if (!args.title) throw new Error("title requis");
+  return taskOrchestrator("sprint_start", {
+    projectId: args.projectId,
+    title: args.title,
+    startDate: args.startDate || undefined,
+    endDate: args.endDate || undefined,
+    autoClose: typeof args.autoClose === "boolean" ? args.autoClose : undefined,
+    createdBy: args.createdBy || undefined,
+    pieces: Array.isArray(args.pieces) && args.pieces.length ? args.pieces : undefined,
+  });
+}
+
+// `closeSprint` : CLÔTURE manuelle d'un sprint — déclenche la règle d'émergence.
+export async function closeSprint(args = {}) {
+  if (!args.sprintId) throw new Error("sprintId requis");
+  return taskOrchestrator("sprint_close", {
+    sprintId: args.sprintId,
+    reason: args.reason || undefined,
+  });
+}
+
+// `reopenSprint` : REPRISE / réouverture d'un sprint clôturé — suspend la règle
+// d'émergence ; `endDate` prolonge l'échéance.
+export async function reopenSprint(args = {}) {
+  if (!args.sprintId) throw new Error("sprintId requis");
+  return taskOrchestrator("sprint_reopen", {
+    sprintId: args.sprintId,
+    endDate: args.endDate || undefined,
+    autoClose: typeof args.autoClose === "boolean" ? args.autoClose : undefined,
+    by: args.by || undefined,
+  });
+}
+
+// `attachSprintPieces` : rattache des pièces client à un sprint (garde NATURE
+// côté registre). `atInit=true` = pièces de création (NON émergentes).
+export async function attachSprintPieces(args = {}) {
+  if (!args.sprintId) throw new Error("sprintId requis");
+  const pieceIds = Array.isArray(args.pieceIds) ? args.pieceIds.filter(Boolean) : [];
+  if (!pieceIds.length) throw new Error("pieceIds requis (au moins une pièce)");
+  return taskOrchestrator("sprint_attach_pieces", {
+    sprintId: args.sprintId,
+    pieceIds,
+    atInit: args.atInit === true,
+    by: args.by || undefined,
+  });
+}
+
+// `sprintReport` : RAPPORT DE SPRINT généré côté registre (markdown par défaut).
+export async function sprintReport(args = {}) {
+  if (!args.sprintId) throw new Error("sprintId requis");
+  return taskOrchestrator("sprint_report", {
+    sprintId: args.sprintId,
+    format: args.format || undefined,
+  });
+}
+
+// ===========================================================================
+// Familles FONCTIONNALITÉS `feature_*` / RÈGLES `rule_*` (ADR-001, T5).
+// CRUD : l'agent propose via le registre, l'humain valide/ajuste dans le panneau.
+// ===========================================================================
+
+export async function listFeatures(args = {}) {
+  if (!args.projectId) throw new Error("projectId requis");
+  return taskOrchestrator("feature_list", {
+    projectId: args.projectId,
+    emergent: typeof args.emergent === "boolean" ? args.emergent : undefined,
+    search: args.search || undefined,
+    limit: args.limit != null ? Number(args.limit) : undefined,
+  });
+}
+
+export async function getFeature(args = {}) {
+  if (!args.featureId) throw new Error("featureId requis");
+  return taskOrchestrator("feature_get", { featureId: args.featureId });
+}
+
+export async function createFeature(args = {}) {
+  if (!args.projectId) throw new Error("projectId requis");
+  if (!args.ref) throw new Error("ref requis");
+  if (!args.userStory) throw new Error("userStory requis");
+  return taskOrchestrator("feature_register", {
+    projectId: args.projectId,
+    ref: args.ref,
+    role: args.role || undefined,
+    userStory: args.userStory,
+    sourcedPieceId: args.sourcedPieceId || undefined,
+    recetteId: args.recetteId || undefined,
+    createdBy: args.createdBy || undefined,
+  });
+}
+
+export async function updateFeature(args = {}) {
+  if (!args.featureId) throw new Error("featureId requis");
+  return taskOrchestrator("feature_update", {
+    featureId: args.featureId,
+    ref: args.ref || undefined,
+    role: args.role != null ? args.role : undefined,
+    userStory: args.userStory || undefined,
+    sourcedPieceId: args.sourcedPieceId != null ? args.sourcedPieceId : undefined,
+    by: args.by || undefined,
+  });
+}
+
+export async function listRules(args = {}) {
+  if (!args.projectId) throw new Error("projectId requis");
+  return taskOrchestrator("rule_list", {
+    projectId: args.projectId,
+    emergent: typeof args.emergent === "boolean" ? args.emergent : undefined,
+    search: args.search || undefined,
+    limit: args.limit != null ? Number(args.limit) : undefined,
+  });
+}
+
+export async function getRule(args = {}) {
+  if (!args.ruleId) throw new Error("ruleId requis");
+  return taskOrchestrator("rule_get", { ruleId: args.ruleId });
+}
+
+export async function createRule(args = {}) {
+  if (!args.projectId) throw new Error("projectId requis");
+  if (!args.ref) throw new Error("ref requis");
+  if (!args.content) throw new Error("content requis");
+  return taskOrchestrator("rule_register", {
+    projectId: args.projectId,
+    ref: args.ref,
+    content: args.content,
+    sourcedPieceId: args.sourcedPieceId || undefined,
+    recetteId: args.recetteId || undefined,
+    createdBy: args.createdBy || undefined,
+  });
+}
+
+export async function updateRule(args = {}) {
+  if (!args.ruleId) throw new Error("ruleId requis");
+  return taskOrchestrator("rule_update", {
+    ruleId: args.ruleId,
+    ref: args.ref || undefined,
+    content: args.content || undefined,
+    sourcedPieceId: args.sourcedPieceId != null ? args.sourcedPieceId : undefined,
+    by: args.by || undefined,
+  });
+}
+
+// ===========================================================================
+// Liaisons N:N (ADR-001, T5) : dispatcher UNIQUE `linkEntities`/`unlinkEntities`.
+// Évite 18 routes dédiées : `kind` → tool MCP `*_link`/`*_unlink` + clés des 2
+// extrémités. Aucune logique métier côté panneau (le registre valide).
+// ===========================================================================
+export const LINK_KINDS = {
+  feature_rule:    { a: "featureId", b: "regleId" },
+  feature_gherkin: { a: "featureId", b: "e2eTestId" },
+  feature_adr:     { a: "featureId", b: "adrId" },
+  feature_sprint:  { a: "featureId", b: "sprintId" },
+  rule_sprint:     { a: "regleId",   b: "sprintId" },
+  task_sprint:     { a: "taskId",    b: "sprintId" },
+  task_feature:    { a: "taskId",    b: "featureId" },
+  recette_sprint:  { a: "recetteId", b: "sprintId" },
+  recette_feature: { a: "recetteId", b: "featureId" },
+};
+
+function linkArgs(kind, args = {}) {
+  const map = LINK_KINDS[kind];
+  if (!map) throw new Error(`kind de lien inconnu : ${kind || "(absent)"} (attendu : ${Object.keys(LINK_KINDS).join(" | ")})`);
+  if (!args.a || !args.b) throw new Error("a et b requis (identifiants des 2 extrémités du lien)");
+  return { tool: `${kind}_link`, args: { [map.a]: args.a, [map.b]: args.b } };
+}
+
+// `linkEntities` : crée un lien N:N (idempotent côté registre).
+export async function linkEntities(args = {}) {
+  const { tool, args: mcpArgs } = linkArgs(String(args.kind || "").trim(), args);
+  return taskOrchestrator(tool, mcpArgs);
+}
+
+// `unlinkEntities` : retire un lien N:N.
+export async function unlinkEntities(args = {}) {
+  const kind = String(args.kind || "").trim();
+  const map = LINK_KINDS[kind];
+  if (!map) throw new Error(`kind de lien inconnu : ${kind || "(absent)"} (attendu : ${Object.keys(LINK_KINDS).join(" | ")})`);
+  if (!args.a || !args.b) throw new Error("a et b requis (identifiants des 2 extrémités du lien)");
+  return taskOrchestrator(`${kind}_unlink`, { [map.a]: args.a, [map.b]: args.b });
+}
+
+// ===========================================================================
+// CARDINALITÉS HEURISTIQUES / ÉMERGENCE (ADR-001 §5, T6). LECTURE SEULE (sauf
+// la clôture TRACÉE d'un signal) : le panneau affiche l'état, ne recalcule rien.
+// ===========================================================================
+
+// `cardinalityReport` : agrégat (10 vues + signaux) ou vue unique via `view`.
+export async function cardinalityReport(args = {}) {
+  if (!args.projectId) throw new Error("projectId requis");
+  return taskOrchestrator("cardinality_report", {
+    projectId: args.projectId,
+    view: args.view || undefined,
+  });
+}
+
+// `listCardinalitySignals` : historique filtrable des signaux de cardinalité.
+export async function listCardinalitySignals(args = {}) {
+  return taskOrchestrator("cardinality_signals_list", {
+    projectId: args.projectId || undefined,
+    entityType: args.entityType || undefined,
+    entityId: args.entityId || undefined,
+    status: args.status || undefined,
+    limit: args.limit != null ? Number(args.limit) : undefined,
+  });
+}
+
+// `resolveCardinalitySignal` : clôt un signal avec une RAISON TRACÉE (obligatoire).
+export async function resolveCardinalitySignal(args = {}) {
+  if (!args.signalId) throw new Error("signalId requis");
+  if (!args.resolution) throw new Error("resolution requise (raison tracée de la clôture)");
+  return taskOrchestrator("cardinality_signal_resolve", {
+    signalId: args.signalId,
+    resolution: args.resolution,
+    resolvedBy: args.resolvedBy || undefined,
+  });
+}
+
 // --- Famille ADR `adr_*` (item 125) : lecture condensée + bloc de contexte ---
 // `listAdrs` : vue condensée des ADR d'un projet (titre, statut, repos, décision).
 export async function listAdrs(args = {}) {

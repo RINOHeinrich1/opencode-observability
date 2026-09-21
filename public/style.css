@@ -903,3 +903,27 @@ body.readonly #agent-session-btn {
 
 /* Deux actions de génération côte à côte */
 .subtitled-gen button.launch-btn:disabled { opacity: .5; cursor: wait; }
+
+/* --- Sélecteur ADR multi-lignes (item 125) — modales de lancement de session ---
+   Remplace l'ancienne liste brute de documents : lignes compactes et
+   structurées (case à cocher + titre + statut + repos + décision), filtres
+   statut/repo + recherche. */
+.adr-pick { display: flex; flex-direction: column; gap: 6px; }
+.adr-pick-filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.adr-pick-filters input[type="search"] { flex: 1 1 200px; min-width: 150px; }
+.adr-pick-filters select { max-width: 220px; }
+.adr-pick-list {
+  max-height: 30vh; overflow: auto;
+  border: 1px solid var(--border, #2b3242); border-radius: 8px; padding: 4px;
+}
+.adr-pick-row {
+  display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto;
+  column-gap: 8px; row-gap: 2px; align-items: start;
+  padding: 6px 8px; border-bottom: 1px solid var(--border, #2b3242); cursor: pointer;
+}
+.adr-pick-row:last-child { border-bottom: none; }
+.adr-pick-row:hover { background: rgba(255, 255, 255, .04); }
+.adr-pick-row[hidden] { display: none; }
+.adr-pick-row input.adr-pick-cb { grid-row: 1 / span 2; margin-top: 2px; }
+.adr-pick-head { grid-column: 2; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.adr-pick-meta { grid-column: 2; font-size: 11px; color: var(--muted, #9aa4b2); }

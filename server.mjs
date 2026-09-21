@@ -1159,7 +1159,7 @@ function e2eTitleSlug(title) {
 }
 
 async function handleE2ECreate(res, b, user) {
-  const { project, specFile, scenario, title, description, coveredProjects, repoIds, repos, params, viaAgent, docIds, organizationId } = b || {};
+  const { project, specFile, scenario, title, description, coveredProjects, repoIds, repos, params, viaAgent, adrIds, organizationId } = b || {};
   const orgId = organizationId || (user && user.organizationId) || undefined;
   const createdBy = user && user.username;
   if (!project) return sendJson(res, 400, { error: "project requis (projet produit)" });
@@ -1183,7 +1183,7 @@ async function handleE2ECreate(res, b, user) {
     // Passe l'entité en DRAFT (spec pas encore rédigé) puis lance la session.
     await pilot.draftE2ETest(test.e2eTestId);
     let session = null;
-    try { session = await pilot.launchTestSession({ e2eTestId: test.e2eTestId, mode: "create", docIds: Array.isArray(docIds) ? docIds : undefined }); } catch (e) { session = { error: (e && e.message) || String(e) }; }
+    try { session = await pilot.launchTestSession({ e2eTestId: test.e2eTestId, mode: "create", adrIds: Array.isArray(adrIds) ? adrIds : undefined }); } catch (e) { session = { error: (e && e.message) || String(e) }; }
     return sendJson(res, 201, { ok: true, test: { ...test, status: "DRAFT" }, session, viaAgent: true });
   }
 
@@ -2051,14 +2051,14 @@ const server = createServer(async (req, res) => {
     }
     if (path === "/api/recettes" && req.method === "POST") {
       const b = await readBody(req);
-      return sendJson(res, 200, await pilot.createRecette({ project: b.project, title: b.title, description: b.description, taskIds: b.taskIds, documents: b.documents, docIds: b.docIds, by: user.username, organizationId: b.organizationId || user.activeOrganizationId || user.organizationId }));
+      return sendJson(res, 200, await pilot.createRecette({ project: b.project, title: b.title, description: b.description, taskIds: b.taskIds, documents: b.documents, adrIds: b.adrIds, by: user.username, organizationId: b.organizationId || user.activeOrganizationId || user.organizationId }));
     }
     const recetteAction = path.match(/^\/api\/recettes\/([^/]+)\/(session|finish)$/);
     if (recetteAction && req.method === "POST") {
       if (recetteAction[2] === "session") {
         let sb = {};
         try { sb = await readBody(req); } catch {}
-        return sendJson(res, 200, await pilot.launchRecetteSession({ recetteId: recetteAction[1], force: !!(sb && sb.force) }));
+        return sendJson(res, 200, await pilot.launchRecetteSession({ recetteId: recetteAction[1], force: !!(sb && sb.force), adrIds: (sb && sb.adrIds) || undefined }));
       }
       const b = await readBody(req);
       return sendJson(res, 200, await pilot.finishRecette({ recetteId: recetteAction[1], items: b.items, by: user.username, launchMode: b.launchMode, createTasks: b.createTasks !== false }));
@@ -2175,7 +2175,7 @@ const server = createServer(async (req, res) => {
       if (!t) return sendJson(res, 404, { error: "test E2E inconnu" });
       const sb = await readBody(req).catch(() => ({}));
       try {
-        const s = await pilot.launchTestSession({ e2eTestId: e2eSessionMatch[1], force: !!(sb && sb.force), mode: (sb && sb.mode) || undefined, docIds: (sb && sb.docIds) || undefined });
+        const s = await pilot.launchTestSession({ e2eTestId: e2eSessionMatch[1], force: !!(sb && sb.force), mode: (sb && sb.mode) || undefined, adrIds: (sb && sb.adrIds) || undefined });
         return sendJson(res, 200, s);
       } catch (e) {
         const msg = String((e && e.message) || e);
@@ -2197,7 +2197,7 @@ const server = createServer(async (req, res) => {
         if ((b && b.action) === "continue") {
           return sendJson(res, 200, await pilot.continueFreeTestSession({ sessionId: b.sessionId, message: b.message }));
         }
-        return sendJson(res, 200, await pilot.launchFreeTestSession({ project: (b && b.project) || undefined, repoId: (b && b.repoId) || undefined, message: (b && b.message) || undefined, docIds: (b && b.docIds) || undefined }));
+        return sendJson(res, 200, await pilot.launchFreeTestSession({ project: (b && b.project) || undefined, repoId: (b && b.repoId) || undefined, message: (b && b.message) || undefined, adrIds: (b && b.adrIds) || undefined }));
       } catch (e) {
         const msg = String((e && e.message) || e);
         if (/indisponible|inconnu|absent|expir/i.test(msg)) return sendJson(res, 400, { error: msg });

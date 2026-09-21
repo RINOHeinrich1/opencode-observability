@@ -436,6 +436,76 @@ export function buildSprintPrompt({ sprintId, project, repos, title, startDate, 
   ].join("\n");
 }
 
+/**
+ * Prompt d'ouverture d'une session de MIGRATION DES ANCIENS SPRINTS
+ * (agent-migration) — v0.1.0. La session est rattachée à la migration
+ * (`migrations.session_id`). Mission + cadre, jamais méthode : l'agent LIT les
+ * ADR monolithiques + pièces client, PROPOSE un découpage en ADR atomiques,
+ * n'écrit qu'APRÈS validation utilisateur, pose les détails en pièces jointes,
+ * associe chaque ADR convertie à 1..N fonctionnalités, et rattache les éléments
+ * hérités à l'ANCIEN SPRINT (sprint par défaut) SANS AUCUN faux émergent.
+ */
+export function buildMigrationPrompt({ migrationId, project, repos, sprintId, title, startDate, endDate, pieces = [], docs = [], adrs = [], adrContext = "" }) {
+  const proj = (project && String(project).trim()) || "";
+  const repoBlock = (repos && repos.length)
+    ? `  Repos transverses du projet (portée réelle — ADR 11) : ${repos.map((x) => x.repoId || x.id || x).join(", ")}`
+    : "";
+  // Bloc ADR (item 125) : « ## ADR de référence » construit par `adr_context`.
+  const adrBlock = (adrContext && String(adrContext).trim())
+    ? ["", String(adrContext).trim(), ""]
+    : [];
+  // ADR monolithiques du projet (à LIRE et à DÉCOUPER).
+  const adrListBlock = (adrs && adrs.length)
+    ? [
+        "",
+        "ADR MONOLITHIQUES du projet (à LIRE puis à DÉCOUPER en ADR atomiques) :",
+        ...adrs.map((a, i) => `  ${i + 1}. [${a.status || "(sans statut)"}] ${a.title || a.adrId || ""} — \`${a.adrId}\` — chemin : \`${a.path}\``),
+        "Lis chaque fichier (`adr_get` puis lecture du `path`) : il contient PLUSIEURS décisions distinctes à séparer en ADR atomiques (titre/statut/contexte/décision/conséquences) ; les grands détails iront en PIÈCES JOINTES (`adr_file`).",
+        "",
+      ]
+    : [];
+  const pieceBlock = (pieces && pieces.length)
+    ? [
+        "",
+        "PIÈCES CLIENT du projet (à LIRE — matière héritée à rattacher à l'ancien sprint) :",
+        ...pieces.map((p, i) => {
+          const where = p.path ? `chemin : \`${p.path}\`` : (p.url ? `lien (lecture) : ${p.url}` : "localisation : à demander");
+          return `  ${i + 1}. [${p.nature || "pièce"}] ${p.title || p.pieceId || ""} — ${where}`;
+        }),
+        "",
+      ]
+    : [];
+  const docBlock = (docs && docs.length)
+    ? [
+        "",
+        "Documents de référence du projet (à LIRE — ils décrivent l'EXISTANT) :",
+        ...docs.map((d, i) => `  ${i + 1}. [${d.kind}] ${d.title || d.docId || ""} — chemin : \`${d.path}\``),
+        "",
+      ]
+    : [];
+  return [
+    `Ouvre la **session de migration des anciens sprints** « ${title || migrationId || proj} » — projet : \`${proj}\`${repoBlock ? `\n${repoBlock}` : ""} (v0.1.0).`,
+    "",
+    `Migration : \`${migrationId || "(non précisée)"}\`. ANCIEN SPRINT (sprint par défaut, cible de tous les rattachements) : \`${sprintId || "(non précisé)"}\`${startDate || endDate ? ` — période ${startDate || "?"} → ${endDate || "?"}` : ""}.`,
+    "Tous les éléments migrés (pièces client, fonctionnalités, règles métier, ADR converties) et les anciennes tâches sont rattachés à CET ancien sprint. La session est RATTACHÉE à la migration (`migrations.session_id`) : elle se reprend.",
+    ...adrBlock,
+    ...adrListBlock,
+    ...pieceBlock,
+    ...docBlock,
+    "Mission :",
+    "- Récupère le contexte : `migration_get(<migrationId>)` (migration + sprint cible résolu), `sprint_get(<sprintId>)` (éléments déjà rattachés), `adr_list({ projectId })` + `adr_get(adrId)` (ADR monolithiques), `doc_attachment_list({ docId })` / `adr_conversion_list({ originalAdrId })` (conversions déjà faites), `feature_list({ projectId })` / `rule_list({ projectId })` (inventaire avant proposition).",
+    "- **Pipeline** : (1) LIRE chaque ADR monolithique et repérer les DÉCISIONS DISTINCTES → (2) PROPOSER un découpage en ADR atomiques (titre/statut/contexte/décision/conséquences + pièces jointes pour les détails + fonctionnalités associées) → (3) FAIRE VALIDER EXPLICITEMENT par l'utilisateur (`question`) → (4) ÉCRIRE seulement après validation.",
+    "- **Conversion sans perte** : `adr_convert({ originalAdrId, title, status, context, decision, consequences, attachments })`. L'ADR d'origine reste INTACTE ; le lien historique est écrit dans `adr_conversions`. Les grands détails passent en PIÈCES JOINTES (`adr_attach` / `doc_attachment_add` → `adr_file`) — jamais supprimés.",
+    "- **ADR ↔ fonctionnalités** : associe CHAQUE ADR convertie à 1..N fonctionnalités (`feature_adr_link`), existantes ou créées après validation (`feature_register`). Ne laisse jamais une ADR convertie sans fonctionnalité (garde de cardinalité T1).",
+    "- **Rattachement à l'ancien sprint** : `sprint_migrate_elements({ projectId })` — INSERT directs et idempotents pour les pièces client, fonctionnalités, règles métier, anciennes tâches et recettes. N'appelle **JAMAIS** `sprint_attach_pieces` (il écrit `meta.emergent`).",
+    "- **AUCUN FAUX ÉMERGENT (règle absolue)** : n'écris JAMAIS `emergent`/`emergent_origin` sur un élément hérité. Les anciennes tâches sont associées à l'ancien sprint SANS être marquées émergentes ; tu peux les lier à leur fonctionnalité (`task_feature_link`) et proposer leur ADR (`task_adr_propose` → validation humaine `task_adr_validate`).",
+    "- **Clôture** : `migration_finish({ migrationId, status: 'done' })` quand la migration du projet est terminée et validée. Vérifie ensuite `cardinality_report({ projectId })` : aucun NOUVEAU signal d'émergence sur les éléments hérités.",
+    "- Ne crée aucune tâche, aucun test, aucun code : tu convertis les ADR et tu rattaches l'existant, rien d'autre.",
+    "",
+    "Cadre : session dédiée à la migration ; VALIDATION UTILISATEUR OBLIGATOIRE avant toute écriture. À la fin, résume les ADR converties (origine → atomiques), les pièces jointes posées, les fonctionnalités associées, les éléments/tâches rattachés à l'ancien sprint et les questions restantes.",
+  ].join("\n");
+}
+
 // Prompt de mission pour la session de CRÉATION / MISE À JOUR d'un test E2E
 // (agent `test-agent`). Le test est une entité de 1er niveau : la session est
 // rattachée au test (e2e_tests.session_id). mission ≠ méthode : le prompt porte

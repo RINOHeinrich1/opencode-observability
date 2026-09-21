@@ -1926,6 +1926,58 @@ const server = createServer(async (req, res) => {
         }));
       } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
     }
+    // --- SESSION DE MIGRATION DES ANCIENS SPRINTS (ADR-001 §6) ----------------
+    // Entité `migrations` d'un PROJET (type dédié), ancrée sur le sprint par
+    // défaut (= l'ancien sprint). Le rattachement des éléments est idempotent et
+    // ANTI-ÉMERGENT (jamais de marquage rétroactif) : le panneau ne fait que
+    // relayer le registre.
+    // GET /api/migrations?project=&limit= — liste des sessions de migration.
+    if (path === "/api/migrations" && req.method === "GET") {
+      try {
+        const r = await pilot.listMigrations({
+          project: url.searchParams.get("project") || undefined,
+          limit: url.searchParams.get("limit") ? Number(url.searchParams.get("limit")) : undefined,
+        });
+        return sendJson(res, 200, { migrations: (r && r.migrations) || [], count: (r && r.count) || 0 });
+      } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    // POST /api/migrations — DÉMARRE (ou résout, idempotent) la session de
+    // migration d'un projet ; ancre sur le sprint par défaut (ancien sprint).
+    if (path === "/api/migrations" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        if (!b.projectId) return sendJson(res, 400, { error: "projectId requis" });
+        return sendJson(res, 201, await pilot.startMigration({
+          projectId: b.projectId,
+          title: b.title || undefined,
+          startDate: b.startDate || undefined,
+          endDate: b.endDate || undefined,
+          createdBy: user.username,
+        }));
+      } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    // GET /api/migrations/:id — détail (migration + sprint cible résolu).
+    const migrationGetMatch = path.match(/^\/api\/migrations\/([^/]+)$/);
+    if (migrationGetMatch && req.method === "GET") {
+      try { return sendJson(res, 200, await pilot.getMigration({ migrationId: decodeURIComponent(migrationGetMatch[1]) })); }
+      catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    // POST /api/migrations/:id/session — LANCE (ou REPREND) la session IA dédiée
+    // de l'agent-migration rattachée à la migration (`migrations.session_id`).
+    // Miroir de `/api/sprints/:id/session`. Corps `{ force }`. Ne touche pas au
+    // statut open/close du sprint.
+    const migrationSessionMatch = path.match(/^\/api\/migrations\/([^/]+)\/session$/);
+    if (migrationSessionMatch && req.method === "POST") {
+      let mb = {};
+      try { mb = await readBody(req); } catch {}
+      try {
+        return sendJson(res, 200, await pilot.launchMigrationSession({
+          migrationId: decodeURIComponent(migrationSessionMatch[1]),
+          force: !!(mb && mb.force),
+          adrIds: (mb && mb.adrIds) || undefined,
+        }));
+      } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
     // --- FONCTIONNALITÉS / RÈGLES MÉTIER (ADR-001, T5) : CRUD + liens N:N ----
     // GET /api/features?projectId=&emergent=&search=&limit=
     if (path === "/api/features" && req.method === "GET") {

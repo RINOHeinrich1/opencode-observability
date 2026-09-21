@@ -4788,12 +4788,14 @@ async function renderSprints() {
     <div class="adr-pane-filters">
       <span class="muted-sm">${sprints.length} sprint(s)</span>
       <button type="button" class="launch-btn" id="sp-new">+ Nouveau sprint</button>
+      <button type="button" class="launch-btn" data-mg-session="1" title="Migrer les anciens sprints : convertir les ADR monolithiques en ADR atomiques (validation utilisateur avant écriture) et rattacher les éléments hérités à l'ancien sprint — sans faux émergent">Session de migration</button>
     </div>
     <div class="adr-table-wrap"><table class="adr-table">
       <thead><tr><th>Titre</th><th>Statut</th><th>Début</th><th>Échéance</th><th>Clôture</th><th>Motif</th><th>Actions</th></tr></thead>
       <tbody>${rows || '<tr><td colspan="7" class="muted-sm" style="padding:10px">Aucun sprint pour ce projet.</td></tr>'}</tbody>
     </table></div>`;
   document.getElementById('sp-new').addEventListener('click', () => sprintFormModal(pieces, renderSprints));
+  pane.querySelectorAll('[data-mg-session]').forEach((b) => b.addEventListener('click', () => openMigrationSession(b)));
   pane.querySelectorAll('[data-sp-detail]').forEach((b) => b.addEventListener('click', () => sprintDetailModal(b.dataset.spDetail)));
   pane.querySelectorAll('[data-sp-report]').forEach((b) => b.addEventListener('click', () => sprintReportModal(b.dataset.spReport)));
   pane.querySelectorAll('[data-sp-pieces]').forEach((b) => b.addEventListener('click', () => sprintPiecesModal(b.dataset.spPieces, pieces, renderSprints)));
@@ -4853,6 +4855,37 @@ async function sprintReportModal(sprintId) {
     </div>`);
     document.getElementById('modal-cancel').onclick = closeModal;
   } catch (e) { alert('Rapport indisponible : ' + (e.message || e)); }
+}
+
+// Ouvre la SESSION DE MIGRATION DES ANCIENS SPRINTS (agent-migration) du projet
+// courant. Démarre (ou résout, idempotent) la migration via POST /api/migrations
+// — le registre l'ancre sur le SPRINT PAR DÉFAUT (= l'ancien sprint) — puis
+// lance/reprend la session IA (route POST /api/migrations/:id/session). La
+// conversion des ADR et le rattachement des éléments hérités sont proposés par
+// l'agent PUIS validés par l'utilisateur dans la session ; AUCUN faux émergent.
+async function openMigrationSession(btn) {
+  if (!currentProject) { alert('Ouvrez un projet.'); return; }
+  const original = btn ? btn.innerHTML : null;
+  setBtnBusy(btn, 'Migration');
+  try {
+    const mig = await api('/api/migrations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: currentProject }) });
+    const m = (mig && mig.migration) || {};
+    const s = (mig && mig.sprint) || m.sprint || {};
+    const target = `Ancien sprint cible (sprint par défaut) : « ${s.title || s.id || '?'} »${s.startDate || s.endDate ? ` — ${fmtDay(s.startDate)} → ${fmtDay(s.endDate)}` : ''}`;
+    const ok = confirm(
+      `Session de migration des anciens sprints — projet ${currentProject}.\n\n${target}\n\n` +
+      `L'agent va LIRE les ADR monolithiques, PROPOSER un découpage en ADR atomiques (détails en pièces jointes) et rattacher les éléments hérités à cet ancien sprint. ` +
+      `VALIDATION UTILISATEUR OBLIGATOIRE avant toute écriture. AUCUN faux émergent.\n\nOuvrir la session ?`,
+    );
+    if (!ok) { if (btn && original != null) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; } return; }
+    const r = await api(`/api/migrations/${encodeURIComponent(m.migrationId)}/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: false }) });
+    if (r.sessionId && /^ses_/.test(r.sessionId)) window.open(sessionHref(r.sessionId), '_blank');
+    else alert(r.error || 'Aucune session de migration disponible.');
+    refreshActive();
+  } catch (e) {
+    if (btn && original != null) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+    alert('Échec de la session de migration : ' + (e.message || e));
+  }
 }
 
 // Ouvre la session de sprint (agent-sprint) : reprend la session rattachée au

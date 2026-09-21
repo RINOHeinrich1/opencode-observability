@@ -5,7 +5,7 @@
 // sessions opencode est délégué au bridge `session-bridge.mjs` (Plan C).
 
 import { taskOrchestrator, coderWorkspaces } from "./mcp-client.mjs";
-import { launchSession, injectMessage, buildLaunchPrompt, buildReworkPrompt, buildRecettePrompt, buildSprintPrompt, buildTestPrompt, buildFreeTestPrompt, buildBatchSessionPrompt, listSessions, killSession, sessionExists, sessionExistsById } from "./session-bridge.mjs";
+import { launchSession, injectMessage, buildLaunchPrompt, buildReworkPrompt, buildRecettePrompt, buildSprintPrompt, buildMigrationPrompt, buildTestPrompt, buildFreeTestPrompt, buildBatchSessionPrompt, listSessions, killSession, sessionExists, sessionExistsById } from "./session-bridge.mjs";
 import { existsSync } from "node:fs";
 
 // Décision n°7 : agents contraints par type de tâche.
@@ -752,6 +752,39 @@ export async function sprintReport(args = {}) {
 }
 
 // ===========================================================================
+// Famille SESSION DE MIGRATION DES ANCIENS SPRINTS `migration_*` (ADR-001 §6).
+// Pont panneau→registre. Le rattachement à l'ancien sprint est IDEMPOTENT et
+// ANTI-ÉMERGENT (le registre ne marque jamais les éléments hérités).
+// ===========================================================================
+
+// `startMigration` : démarre (ou résout) la session de migration d'un projet,
+// ancrée sur le sprint par défaut (= l'ancien sprint).
+export async function startMigration(args = {}) {
+  if (!args.projectId) throw new Error("projectId requis");
+  return taskOrchestrator("migration_start", {
+    projectId: args.projectId,
+    title: args.title || undefined,
+    startDate: args.startDate || undefined,
+    endDate: args.endDate || undefined,
+    createdBy: args.createdBy || undefined,
+  });
+}
+
+// `listMigrations` : liste des sessions de migration (filtrable par projet).
+export async function listMigrations(args = {}) {
+  return taskOrchestrator("migration_list", {
+    project: args.project || args.projectId || undefined,
+    limit: args.limit != null ? Number(args.limit) : undefined,
+  });
+}
+
+// `getMigration` : détail d'une migration (+ sprint cible résolu).
+export async function getMigration(args = {}) {
+  if (!args.migrationId) throw new Error("migrationId requis");
+  return taskOrchestrator("migration_get", { migrationId: args.migrationId });
+}
+
+// ===========================================================================
 // Familles FONCTIONNALITÉS `feature_*` / RÈGLES `rule_*` (ADR-001, T5).
 // CRUD : l'agent propose via le registre, l'humain valide/ajuste dans le panneau.
 // ===========================================================================
@@ -1193,6 +1226,85 @@ export async function launchSprintSession({ sprintId, force = false, adrIds }) {
     }
     await taskOrchestrator("sprint_session_set", { sprintId, sessionId });
     return { sprintId, sessionId, resumed: false };
+  });
+}
+
+// Lance (ou reprend) la session dédiée de l'agent-migration pour une migration
+// d'anciens sprints. `force = true` : ignore la session rattachée et en démarre
+// une nouvelle. Anti-doublon : dès qu'une session est rattachée à la migration
+// (`migrations.session_id`), on la REPREND (vérifiée par identifiant auprès du
+// serveur opencode). La session est ancrée sur le projet de la migration ; le
+// prompt injecte l'ancien sprint cible (sprint par défaut), les ADR
+// monolithiques, les pièces client et les documents de référence. Le
+// rattachement passe par `migration_session_set` (qui ne touche PAS au statut
+// open/close du sprint). R6 : si aucun répertoire d'ancrage n'est résolu
+// (`dir = null`), on lève une erreur explicite.
+export async function launchMigrationSession({ migrationId, force = false, adrIds } = {}) {
+  if (!migrationId) throw new Error("migrationId requis");
+  return withLaunchLock(`migration:${migrationId}`, async () => {
+    const r = await taskOrchestrator("migration_get", { migrationId });
+    const migration = r && r.migration;
+    if (!migration) throw new Error(`migration inconnue : ${migrationId}`);
+
+    const proj = migration.project;
+    const dir = await projectAnchorDir(proj);
+    if (!dir) throw new Error(`aucun répertoire d'ancrage résolu pour le projet ${proj} (migration ${migrationId})`);
+
+    // REPRISE : session rattachée à la migration (vérifiée par identifiant).
+    // Pour repartir de zéro : `force = true`.
+    if (!force && migration.sessionId && /^ses_/.test(migration.sessionId)) {
+      if (await sessionAlive(migration.sessionId, dir)) {
+        return { migrationId, sessionId: migration.sessionId, resumed: true };
+      }
+    }
+    // ADR (item 125) : bloc de contexte ADR du projet — ancrage de référence.
+    let adrCtx = { context: "", adrs: [] };
+    try { adrCtx = await adrContext({ projectId: proj, adrIds, scope: [] }); } catch {}
+    // Repos transverses du projet (ADR 11) — portée réelle de la migration.
+    let repos = [];
+    try {
+      const pr = await listProjects();
+      const project = ((pr && pr.projects) || []).find((x) => x.id === proj);
+      repos = ((project && project.repos) || []).map((id) => ({ repoId: id }));
+    } catch { repos = []; }
+    // Documents de référence du projet (ADR-12) — décrivent l'EXISTANT.
+    let docs = [];
+    try {
+      const dl = await listDocs({ projectId: proj, includeRepoDocs: true });
+      docs = ((dl && dl.docs) || []).filter((x) => x && x.path);
+    } catch { docs = []; }
+    // ADR MONOLITHIQUES du projet (à découper) : `adr_list` (vue condensée).
+    let adrs = [];
+    try {
+      const al = await taskOrchestrator("adr_list", { projectId: proj, includeRepoDocs: true });
+      adrs = ((al && al.adrs) || []).filter((x) => x && x.path);
+    } catch { adrs = []; }
+    // Pièces client du projet (matière héritée à rattacher).
+    let pieces = [];
+    try {
+      const pl = await taskOrchestrator("piece_list", { projectId: proj });
+      pieces = (pl && pl.pieces) || [];
+    } catch { pieces = []; }
+    const sprintId = migration.sprintId || null;
+    const prompt = buildMigrationPrompt({
+      migrationId,
+      project: proj,
+      repos,
+      sprintId,
+      title: migration.title,
+      startDate: (migration.sprint && migration.sprint.startDate) || null,
+      endDate: (migration.sprint && migration.sprint.endDate) || null,
+      pieces,
+      docs,
+      adrs,
+      adrContext: adrCtx.context || "",
+    });
+    const { sessionId } = await launchSession({ dir, agent: "agent-migration", prompt, title: `Migration ${migration.title || proj}` });
+    if (!sessionId || !/^ses_/.test(sessionId)) {
+      throw new Error("échec de lancement de la session de migration (agent-migration indisponible ?)");
+    }
+    await taskOrchestrator("migration_session_set", { migrationId, sessionId });
+    return { migrationId, sessionId, resumed: false };
   });
 }
 

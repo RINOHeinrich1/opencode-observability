@@ -3914,7 +3914,7 @@ async function renderProjects() {
 // Documents de référence (ajouter/voir/supprimer). Aucune sous-modale.
 // ===========================================================================
 async function projectDetailModal(projectId, tab = 'projet') {
-  let projects = [], repos = [], allDocs = [];
+  let projects = [], repos = [], allDocs = [], allPieces = [];
   try { projects = ((await api('/api/projects')).projects || []); } catch {}
   try { repos = ((await api(`/api/repos?project=${encodeURIComponent(projectId)}`)).repos || []); } catch {}
   const p0 = projects.find((x) => x.id === projectId);
@@ -3924,7 +3924,12 @@ async function projectDetailModal(projectId, tab = 'projet') {
     try { allDocs = ((await api(`/api/docs?projectId=${encodeURIComponent(projectId)}&includeRepoDocs=1`)).docs || []); }
     catch { allDocs = []; }
   };
+  const loadPieces = async () => {
+    try { allPieces = ((await api(`/api/pieces?projectId=${encodeURIComponent(projectId)}`)).pieces || []); }
+    catch { allPieces = []; }
+  };
   await loadDocs();
+  await loadPieces();
 
   const kindOpts = `<option value="adr-tech">ADR — Architecture technique</option><option value="specs-fonctionnelles">Specs fonctionnelles</option><option value="scenarios-gherkin">Scénarios (Gherkin)</option>`;
   const repoMap = () => new Map(repos.map((r) => [r.id, r]));
@@ -3934,10 +3939,12 @@ async function projectDetailModal(projectId, tab = 'projet') {
     const rm = repoMap();
     const pRepos = (p.repos || []).map((rid) => rm.get(rid)).filter(Boolean);
     const pDocs = allDocs;
+    const pPieces = allPieces;
     const tabs = [
       ['projet', 'Projet'],
       ['repos', `Repos (${pRepos.length})`],
       ['docs', `Documents de référence (${pDocs.length})`],
+      ['pieces', `Pièces client (${pPieces.length})`],
     ];
     showModal(`
       <div class="modal modal-wide modal-project-detail">
@@ -3955,6 +3962,7 @@ async function projectDetailModal(projectId, tab = 'projet') {
     const panel = document.getElementById('pd-panel');
     if (tab === 'projet') panel.innerHTML = projetTabHtml(p);
     else if (tab === 'repos') panel.innerHTML = reposTabHtml(p, pRepos);
+    else if (tab === 'pieces') panel.innerHTML = piecesTabHtml(p, pPieces);
     else panel.innerHTML = docsTabHtml(p, pDocs);
     wire();
   };
@@ -4057,6 +4065,48 @@ async function projectDetailModal(projectId, tab = 'projet') {
           <input id="pd-d-path" placeholder="chemin existant (ex. /home/coder/mada-talk/docs/adr.md)" hidden>
         </div>
         <div class="actions-buttons"><button type="submit" class="launch-btn">+ Ajouter le document</button></div>
+      </form>`;
+  };
+
+  // --- Onglet PIÈCES CLIENT (ADR-001, item 4) : ajouter / voir / supprimer ---
+  // Natures admises : markdown | pdf | docx | lien Drive public. PHOTO/VIDÉO
+  // refusées (garde MCP + garde miroir serveur). Lien public = avertissement.
+  const piecesTabHtml = (p, pPieces) => {
+    const natLabel = (n) => ({ markdown: 'Markdown', pdf: 'PDF', docx: 'DOCX', lien: 'Lien (Drive public)' }[n] || n || '—');
+    const newPieces = pPieces.filter((x) => !x.requalified);
+    const requalified = pPieces.filter((x) => x.requalified);
+    const row = (d) => `
+      <div class="recette-item">
+        <div><code class="chip">${esc(natLabel(d.nature))}</code> <strong>${esc(d.title || d.pieceId)}</strong>
+          ${d.emergent ? `<span class="chip" title="reçue après l'initialisation d'un sprint (${esc(d.emergentOrigin || '')})">émergente${d.sprintId ? ' · ' + esc(d.sprintId) : ''}</span>` : ''}
+          ${d.requalified ? '<span class="chip" title="Document ADR-12 requalifié pièce client (source, plus référence normative exclusive)">requalifiée</span>' : ''}
+        </div>
+        ${d.url ? `<div class="muted-sm">🔗 <a href="${esc(d.url)}" target="_blank" rel="noopener noreferrer">${esc(d.url)}</a></div>` : ''}
+        ${d.path ? `<div class="muted-sm">${esc(d.path)}</div>` : ''}
+        ${d.securityNote ? `<div class="muted-sm" title="limite de sécurité du lien public">⚠️ ${esc(d.securityNote)}</div>` : ''}
+        <div class="e2e-actions">
+          ${d.path && !d.url ? `<button type="button" class="ghost tiny" data-piece-dl="${esc(d.path)}">Télécharger</button>` : ''}
+          ${!d.requalified ? `<button type="button" class="ghost tiny danger-text" data-piece-del="${esc(d.pieceId)}">Supprimer</button>` : ''}
+        </div>
+      </div>`;
+    return `
+      <p class="muted-sm">Pièces client — <strong>matière première des sprints</strong>. Natures admises : <strong>markdown, pdf, docx, lien Drive public</strong>. Les <strong>photos et vidéos sont refusées</strong>. Un lien doit être <strong>public</strong> (l'agent lit le contenu via l'URL) : toute personne disposant de l'URL y accède — <strong>limite de sécurité assumée</strong>, ne jamais y placer de contenu sensible.</p>
+      <div id="pd-list" class="recette-list" style="max-height:28vh;overflow:auto">
+        ${newPieces.length ? newPieces.map(row).join('') : '<p class="muted-sm">Aucune pièce client.</p>'}
+      </div>
+      ${requalified.length ? `<div class="muted-sm" style="margin-top:8px">Documents ADR-12 requalifiés en pièces client (${requalified.length}) — conservés (chemins, projets/repos, nature).</div>
+      <div class="recette-list" style="max-height:20vh;overflow:auto">${requalified.map(row).join('')}</div>` : ''}
+      <form id="pd-piece-form" class="pilot-form" style="border-top:1px solid var(--border);padding-top:10px">
+        <div class="pd-inline">
+          <select id="pd-pc-mode"><option value="upload">Importer un fichier (md/pdf/docx)</option><option value="url">Lien externe public (Drive…)</option><option value="path">Référencer un chemin</option></select>
+          <select id="pd-pc-nature"><option value="">nature (auto)</option><option value="markdown">Markdown</option><option value="pdf">PDF</option><option value="docx">DOCX</option><option value="lien">Lien</option></select>
+        </div>
+        <input id="pd-pc-title" placeholder="titre (ex. Specs fonctionnelles client)">
+        <input id="pd-pc-url" placeholder="URL publique (ex. https://drive.google.com/…)" hidden>
+        <input id="pd-pc-file" type="file" accept=".md,.markdown,.pdf,.docx">
+        <input id="pd-pc-path" placeholder="chemin existant (ex. /home/coder/…/specs.md)" hidden>
+        <textarea id="pd-pc-desc" class="modal-textarea" rows="2" placeholder="description (optionnel)"></textarea>
+        <div class="actions-buttons"><button type="submit" class="launch-btn">+ Ajouter la pièce</button></div>
       </form>`;
   };
 
@@ -4170,6 +4220,57 @@ async function projectDetailModal(projectId, tab = 'projet') {
       try { await api(`/api/docs/${encodeURIComponent(b.dataset.pdDelDoc)}`, { method: 'DELETE' }); await loadDocs(); msg('Document supprimé.'); render(); }
       catch (err) { msg(err.message || String(err), false); }
     }));
+    // PIÈCES CLIENT : mode + ajout / suppression / téléchargement.
+    const pcMode = document.getElementById('pd-pc-mode');
+    if (pcMode) {
+      const fileEl = document.getElementById('pd-pc-file');
+      const urlEl = document.getElementById('pd-pc-url');
+      const pathEl = document.getElementById('pd-pc-path');
+      const sync = () => {
+        const m = pcMode.value;
+        fileEl.hidden = m !== 'upload'; urlEl.hidden = m !== 'url'; pathEl.hidden = m !== 'path';
+        fileEl.required = m === 'upload'; urlEl.required = m === 'url'; pathEl.required = m === 'path';
+      };
+      pcMode.addEventListener('change', sync); sync();
+    }
+    const pcForm = document.getElementById('pd-piece-form');
+    if (pcForm) pcForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        const body = {
+          projectId: p0.id,
+          title: document.getElementById('pd-pc-title').value.trim() || undefined,
+          nature: document.getElementById('pd-pc-nature').value || undefined,
+          description: document.getElementById('pd-pc-desc').value.trim() || undefined,
+        };
+        const m = document.getElementById('pd-pc-mode').value;
+        if (m === 'upload') {
+          const f = document.getElementById('pd-pc-file').files[0];
+          if (!f) throw new Error('Choisissez un fichier.');
+          if (f.size > 5 * 1024 * 1024) throw new Error('Fichier trop volumineux (max 5 Mo).');
+          const bytes = new Uint8Array(await f.arrayBuffer());
+          let bin = '';
+          for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+          body.filename = f.name; body.dataBase64 = btoa(bin);
+        } else if (m === 'url') {
+          body.url = document.getElementById('pd-pc-url').value.trim();
+          if (!body.url) throw new Error('URL requise.');
+        } else {
+          body.path = document.getElementById('pd-pc-path').value.trim();
+          if (!body.path) throw new Error('Chemin requis.');
+        }
+        await api('/api/pieces', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        await loadPieces(); msg('Pièce ajoutée.'); render();
+      } catch (err) { msg(err.message || String(err), false); }
+    });
+    panel.querySelectorAll('[data-piece-del]').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('Supprimer cette pièce client ?')) return;
+      try { await api(`/api/pieces/${encodeURIComponent(b.dataset.pieceDel)}`, { method: 'DELETE' }); await loadPieces(); msg('Pièce supprimée.'); render(); }
+      catch (err) { msg(err.message || String(err), false); }
+    }));
+    panel.querySelectorAll('[data-piece-dl]').forEach((b) => b.addEventListener('click', () => {
+      window.open(`/api/pieces/file?path=${encodeURIComponent(b.dataset.pieceDl)}`, '_blank');
+    }));
   };
 
   // Édition inline d'un repo (dans l'onglet Repos) : remplace la liste par un formulaire.
@@ -4219,6 +4320,7 @@ async function projectDetailModal(projectId, tab = 'projet') {
     try { projects = ((await api('/api/projects')).projects || []); } catch {}
     try { repos = ((await api('/api/repos')).repos || []); } catch {}
     await loadDocs();
+    await loadPieces();
   };
 
   render();

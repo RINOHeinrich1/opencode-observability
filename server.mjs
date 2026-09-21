@@ -88,7 +88,7 @@ function readBody(req) {
   });
 }
 
-const MIME = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "application/javascript; charset=utf-8", ".json": "application/json", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".png": "image/png", ".woff2": "font/woff2", ".md": "text/markdown; charset=utf-8", ".zip": "application/zip" };
+const MIME = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "application/javascript; charset=utf-8", ".json": "application/json", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".png": "image/png", ".woff2": "font/woff2", ".md": "text/markdown; charset=utf-8", ".zip": "application/zip", ".pdf": "application/pdf", ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document" };
 
 const PUBLIC_EXT = [".css", ".js", ".svg", ".ico", ".png", ".woff", ".woff2", ".map"];
 function isPublicAsset(path) {
@@ -445,7 +445,7 @@ async function registryDeployments(url) {
 
 // Taxonomie `doc_type` (source de vérité : public/docs/nomenclature-doc-type.md).
 const DOC_TYPES = ["adr", "specs", "gherkin", "project_doc", "adr_file", "plan", "task_synthese",
-  "task_report", "audit_report", "recette_report", "recette_doc", "e2e_report", "e2e_video", "autre"];
+  "task_report", "audit_report", "recette_report", "recette_doc", "e2e_report", "e2e_video", "piece", "autre"];
 const TASK_DOC_TYPES = ["plan", "task_synthese", "task_report", "audit_report", "autre"];
 const RECETTE_DOC_TYPES = ["recette_doc", "recette_report"];
 const DOCS_DOC_TYPES = ["adr", "specs", "gherkin", "project_doc"];
@@ -1730,6 +1730,87 @@ const server = createServer(async (req, res) => {
       const b = await readBody(req);
       try { return sendJson(res, 200, await pilot.updateDoc({ docId: docDelMatch[1], ...b })); }
       catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    // --- PIÈCES CLIENT (ADR-001, item 4) : natures md/pdf/docx/lien Drive -----
+    // GET /api/pieces?projectId=&nature=&emergent=&includeRequalified= — liste
+    // unifiée (pièces nouvelles + docs ADR-12 requalifiés).
+    if (path === "/api/pieces" && req.method === "GET") {
+      try {
+        const r = await pilot.listPieces({
+          projectId: url.searchParams.get("projectId") || undefined,
+          nature: url.searchParams.get("nature") || undefined,
+          emergent: url.searchParams.get("emergent") === "1" ? true : (url.searchParams.get("emergent") === "0" ? false : undefined),
+          includeRequalified: url.searchParams.get("includeRequalified") !== "0",
+        });
+        return sendJson(res, 200, { pieces: (r && r.pieces) || [] });
+      } catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
+    }
+    // POST /api/pieces — ajout d'une pièce : import PC (filename+dataBase64 →
+    // storage/pieces), lien externe public (url) ou chemin référencé (path).
+    // GARDE PHOTO/VIDÉO (défense en profondeur) AVANT toute écriture disque.
+    if (path === "/api/pieces" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        if (!b.projectId) return sendJson(res, 400, { error: "projectId requis" });
+        // 1) Garde natures (refus photo/vidéo, import ET lien) — AVANT écriture.
+        pilot.assertPieceAllowed({ nature: b.nature, path: b.path, url: b.url, filename: b.filename });
+        if (b.filename && b.dataBase64) {
+          const PIECE_STORAGE = join(__dirname, "storage", "pieces");
+          mkdirSync(PIECE_STORAGE, { recursive: true });
+          const buf = Buffer.from(String(b.dataBase64), "base64");
+          if (!buf.length) return sendJson(res, 400, { error: "fichier vide" });
+          if (buf.length > 5 * 1024 * 1024) return sendJson(res, 400, { error: "fichier trop volumineux (max 5 Mo)" });
+          const safe = String(b.filename).replace(/[^\w.\-]+/g, "_").slice(-80) || "piece";
+          const dest = join(PIECE_STORAGE, `${Date.now()}-${safe}`);
+          writeFileSync(dest, buf);
+          return sendJson(res, 201, await pilot.addPiece({
+            projectId: b.projectId, nature: b.nature, title: b.title, path: dest,
+            filename: b.filename, description: b.description, createdBy: user.username,
+          }));
+        }
+        if (b.url) {
+          return sendJson(res, 201, await pilot.addPiece({
+            projectId: b.projectId, nature: b.nature || "lien", title: b.title, url: b.url,
+            description: b.description, createdBy: user.username,
+          }));
+        }
+        if (b.path) {
+          return sendJson(res, 201, await pilot.addPiece({
+            projectId: b.projectId, nature: b.nature, title: b.title, path: b.path,
+            filename: b.filename, description: b.description, createdBy: user.username,
+          }));
+        }
+        return sendJson(res, 400, { error: "pièce requise : filename+dataBase64, url ou path" });
+      } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    // DELETE /api/pieces/:id — retire une pièce (famille `piece` uniquement).
+    const pieceDelMatch = path.match(/^\/api\/pieces\/([^/]+)$/);
+    if (pieceDelMatch && req.method === "DELETE") {
+      try { return sendJson(res, 200, await pilot.removePiece({ pieceId: pieceDelMatch[1] })); }
+      catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    // GET /api/pieces/file?path= — sert un fichier de pièce IMPORTÉ (restreint
+    // à storage/pieces : jamais un chemin arbitraire du système).
+    if (path === "/api/pieces/file" && req.method === "GET") {
+      const piecePath = url.searchParams.get("path") || "";
+      try {
+        const PIECE_STORAGE = join(__dirname, "storage", "pieces");
+        const abs = normalize(piecePath);
+        if (!abs.startsWith(PIECE_STORAGE + "/") || !existsSync(abs) || statSync(abs).isDirectory()) {
+          return sendJson(res, 404, { error: "fichier de pièce introuvable (ou hors storage/pieces)" });
+        }
+        const ext = extname(abs) || "";
+        const base = (basename(abs, ext) || "piece").replace(/[^\w.\- ]+/g, "_").trim() || "piece";
+        const filename = base.toLowerCase().endsWith(ext.toLowerCase()) ? base : base + ext;
+        const ct = MIME[ext.toLowerCase()] || "application/octet-stream";
+        res.writeHead(200, {
+          "Content-Type": ct,
+          "Content-Disposition": `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+          "Cache-Control": "no-store",
+        });
+        createReadStream(abs).pipe(res);
+        return;
+      } catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
     }
     // --- Pièces jointes d'ADR (item 122) : 0..N documents/fichiers par ADR ----
     // Ajout : import PC (filename+dataBase64 → storage/ref-docs), document du

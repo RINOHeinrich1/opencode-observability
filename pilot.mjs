@@ -590,6 +590,82 @@ export async function docGet(docId) {
   return (r && r.doc) || null;
 }
 
+// --- PIÈCES CLIENT (ADR-001, item 4) : pont panneau → MCP (source de vérité) --
+// Une pièce est la matière première d'un sprint. Natures admises : markdown |
+// pdf | docx | lien externe (Drive public). PHOTO et VIDÉO sont REFUSÉES.
+// La garde AUTORITATIVE est côté MCP (`assertPieceAllowed`, db.mjs) ; la garde
+// ci-dessous est un MIROIR (défense en profondeur) appelé AVANT toute écriture
+// disque par la route POST /api/pieces.
+export const PIECE_NATURES = ["markdown", "pdf", "docx", "lien"];
+export const PIECE_NATURE_BY_EXT = { ".md": "markdown", ".markdown": "markdown", ".pdf": "pdf", ".docx": "docx" };
+export const PIECE_REFUSED_EXT = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".bmp", ".tiff", ".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"];
+export const PIECE_REFUSED_HOSTS = ["youtube.com", "youtu.be", "vimeo.com", "dailymotion.com", "twitch.tv", "tiktok.com"];
+
+export function assertPieceAllowed({ nature, path, url, filename } = {}) {
+  const extOf = (s) => { if (!s) return ""; const c = String(s).trim().toLowerCase().split("?")[0].split("#")[0]; const i = c.lastIndexOf("."); return i >= 0 ? c.slice(i) : ""; };
+  const p = path ? String(path).trim() : null;
+  const u = url ? String(url).trim() : null;
+  const f = filename ? String(filename).trim() : null;
+  for (const cand of [f, p]) {
+    const e = extOf(cand);
+    if (e && PIECE_REFUSED_EXT.includes(e)) throw new Error(`pièce refusée : les photos et vidéos ne sont pas admises (extension « ${e} »). Natures admises : ${PIECE_NATURES.join(" | ")}`);
+  }
+  if (u) {
+    let host = ""; let pathname = "";
+    try {
+      const parsed = new URL(u);
+      if (!/^https?:$/.test(parsed.protocol)) throw new Error("protocole non http(s)");
+      host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+      pathname = parsed.pathname || "";
+    } catch { throw new Error(`lien invalide : ${u} (une URL http(s) publique est attendue)`); }
+    if (PIECE_REFUSED_HOSTS.some((h) => host === h || host.endsWith("." + h))) throw new Error(`lien refusé : la vidéo (${host}) n'est pas une pièce client admise`);
+    const e = extOf(pathname);
+    if (e && PIECE_REFUSED_EXT.includes(e)) throw new Error(`lien refusé : photo/vidéo non admise (extension « ${e} »)`);
+  }
+  let nat = nature ? String(nature).trim() : "";
+  if (u) nat = "lien";
+  else if (!nat) nat = PIECE_NATURE_BY_EXT[extOf(f || p)] || "";
+  if (!PIECE_NATURES.includes(nat)) throw new Error(`nature de pièce invalide : ${nature || "(absente)"} (attendu : ${PIECE_NATURES.join(" | ")})`);
+  return nat;
+}
+
+// Liste les pièces d'un projet (pièces nouvelles + docs ADR-12 requalifiés).
+export async function listPieces(args = {}) {
+  return taskOrchestrator("piece_list", {
+    projectId: args.projectId || undefined,
+    nature: args.nature || undefined,
+    emergent: typeof args.emergent === "boolean" ? args.emergent : undefined,
+    includeRequalified: typeof args.includeRequalified === "boolean" ? args.includeRequalified : undefined,
+  });
+}
+
+// Ajoute une pièce client (garde miroir PUIS MCP, garde autoritative).
+export async function addPiece(args = {}) {
+  if (!args.projectId) throw new Error("projectId requis");
+  assertPieceAllowed({ nature: args.nature, path: args.path, url: args.url, filename: args.filename });
+  return taskOrchestrator("piece_add", {
+    projectId: args.projectId,
+    nature: args.nature || undefined,
+    title: args.title || undefined,
+    path: args.path || undefined,
+    url: args.url || undefined,
+    filename: args.filename || undefined,
+    description: args.description || undefined,
+    createdBy: args.createdBy,
+  });
+}
+
+// Requalifie sans perte les docs ADR-12 d'un projet (ou de tous).
+export async function requalifyPieces(args = {}) {
+  return taskOrchestrator("piece_requalify", { projectId: args.projectId || undefined });
+}
+
+// Retire une pièce client (famille `piece`).
+export async function removePiece(args = {}) {
+  if (!args.pieceId) throw new Error("pieceId requis");
+  return taskOrchestrator("piece_delete", { pieceId: args.pieceId });
+}
+
 // --- Famille ADR `adr_*` (item 125) : lecture condensée + bloc de contexte ---
 // `listAdrs` : vue condensée des ADR d'un projet (titre, statut, repos, décision).
 export async function listAdrs(args = {}) {

@@ -24,6 +24,7 @@
 | 11 | [11-tests-e2e-projet-repos.md](11-tests-e2e-projet-repos.md) | **Tests E2E** : rattachement à un PROJET unique + repos traversés (N:N) (à implémenter) |
 | 12 | [12-documents-reference-projets-repos.md](12-documents-reference-projets-repos.md) | **Documents de référence** projets/repos : ADR technique, specs fonctionnelles, scénarios Gherkin — chemins fournis en contexte (ADR-12) |
 | 13 | [13-adr-et-artefacts.md](13-adr-et-artefacts.md) | **ADR structurées, famille `adr_*`, gouvernance ADR en recette & gestionnaire central d'artefacts** (table polymorphe `artifacts`) |
+| 14 | [14-pieces-client.md](14-pieces-client.md) | **Pièces client par projet** — natures admises (md/pdf/docx/lien Drive public), garde photo/vidéo, requalification sans perte des docs ADR-12, émergence, **limite de sécurité du lien public** |
 | — | [nomenclature-doc-type.md](nomenclature-doc-type.md) | **Nomenclature `doc_type`** — taxonomie du gestionnaire central d'artefacts (référentiel) |
 | — | [CHANGELOG.md](CHANGELOG.md) | Historique des versions / Version history |
 

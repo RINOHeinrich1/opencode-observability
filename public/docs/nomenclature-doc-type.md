@@ -31,7 +31,7 @@ créé ni utilisé. Ne pas l'ajouter.
 rattachement N:N ADR ↔ projet/repo est porté par `artifact_projects` /
 `artifact_repos`.
 
-## 2. Taxonomie `doc_type` (13 familles nommées + `autre`)
+## 2. Taxonomie `doc_type` (14 familles nommées + `autre`)
 
 | `doc_type` | Définition | Exemple |
 |------------|-----------|---------|
@@ -48,6 +48,7 @@ rattachement N:N ADR ↔ projet/repo est porté par `artifact_projects` /
 | `recette_doc` | Document d'appui de recette (importé ou lié, `nature` conservée). | `recette_documents` importé |
 | `e2e_report` | Rapport TEXTE de run E2E Playwright. | `e2e_executions.report_artifact_id` |
 | `e2e_video` | Vidéo de preuve E2E (**preuve HUMAINE**, jamais analysée par l'IA). | `e2e_executions.video_url` / `storage/e2e` |
+| `piece` | **Pièce client** d'un projet — **matière première des sprints** : `markdown` \| `pdf` \| `docx` \| `lien` externe public (Drive). `content_id = projectId`. | `piece_add` ; docs ADR-12 requalifiés (`meta.piece_client`) |
 | `autre` | Type inconnu / non encore formalisé (**garde-fou**). | tout artefact non classé |
 
 > Règle : toute **nouvelle** valeur passe **d'abord** par `autre`, puis est formalisée ici
@@ -69,12 +70,14 @@ rattachement N:N ADR ↔ projet/repo est porté par `artifact_projects` /
 | `doc_attachments` | `adr_file` | `doc_id` | `kind` | `nature` | `source` | `{ targetDocId }` |
 | `e2e_executions.report_artifact_id` | `e2e_report` | `e2e_test_id` | `autre` | — | `artifact` | — |
 | `e2e_executions.video_url` | `e2e_video` | `e2e_test_id` | `autre` | — | `artifact` | `{ videoUrl }` |
+| **pièce client** (nouvelle) | `piece` | `projectId` | `autre` | — | `import` (fichier) \| `ref` (lien/URL) | `{ piece_nature, url, filename, emergent, emergent_origin, sprint_id, security_note }` |
+| **doc ADR-12 requalifié** (pièce client) | **conservé** (`adr`/`specs`/`gherkin`/`project_doc`) | **conservé** (`docId`) | conservé (`autre`) | — | conservé (`registry`) | `+ { piece_client: true, piece_nature, requalified_at, requalified_from_doc_type }` |
 
 ## 4. Domaines `source`
 
 | `source` | Sens |
 |----------|------|
-| `import` | Fichier importé (stocké sous `storage/ref-docs`). |
+| `import` | Fichier importé (stocké sous `storage/ref-docs` pour les docs ; `storage/pieces` pour les pièces client). |
 | `artifact` | Artefact du registre lié par `artifact_id`. |
 | `registry` | Document du registre (ADR-12 : `path` pointe le fichier). |
 | `ref` | Fichier référencé par chemin (workspace / checkout). |
@@ -90,6 +93,13 @@ rattachement N:N ADR ↔ projet/repo est porté par `artifact_projects` /
 | **e2e** (`e2e_report`, `e2e_video`) | `updateE2EExecution` | Upsert idempotent par (`content_id`, `path`) — pas de suppression |
 | **recette** (`recette_doc`, `recette_report`) | `removeRecetteDocument(documentId)` | `DELETE FROM artifacts WHERE id = $1 AND doc_type = ANY(RECETTE_DOC_TYPES)` |
 | **projet** (`project_doc`) | — | **Aucun chemin de suppression** aujourd'hui (pas de `deleteProject` nettoyant). Si un chemin est ajouté, il devra nettoyer cette famille. |
+| **pièce client** (`piece`) | `removePiece(pieceId)` (`piece_delete`) | `DELETE FROM artifacts WHERE artifact_id = $1 AND doc_type = 'piece'` — les liens `artifact_projects` et `sprint_pieces` suivent en **CASCADE**. |
+
+> **Pièces client & docs ADR-12 requalifiés** : la requalification (`piece_requalify` /
+> `requalify-pieces-client.mjs`) **ne supprime rien** et **ne change pas** `doc_type`,
+> `content_id`, `path` ni les liens : elle n'écrit qu'un marqueur dans `meta`
+> (`piece_client`, `piece_nature`, `requalified_at`, `requalified_from_doc_type`).
+> Un doc requalifié reste donc lisible par `doc_list` / `doc_get` / `adr_list`.
 
 ## 6. Rétrocompatibilité
 

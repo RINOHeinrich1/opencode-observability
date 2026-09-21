@@ -1012,3 +1012,25 @@ body.readonly #agent-session-btn {
 .badge.art-type { background: #2a3a2a; color: var(--green, #6fdc8c); }
 .badge.art-nature { background: #3a3220; color: var(--yellow, #f0c040); }
 .art-actions { white-space: nowrap; }
+
+/* --- Onglet ADR DU PROJET (PROJECT_TABS) -----------------------------------
+   Table des ADR du projet courant : barre de filtres (recherche + statut +
+   repo) responsive + table scrollable (en-tête collant). Rendue par
+   adrTableHtml (mutualisée), câblée par bindAdrTable. */
+.adr-pane-filters {
+  display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 10px 0 14px;
+}
+.adr-pane-filters select, .adr-pane-filters input { min-width: 150px; }
+.adr-pane-filters .adr-search { flex: 1 1 220px; }
+.adr-table-wrap {
+  overflow: auto; max-height: 60vh; border: 1px solid var(--border, #2b3242); border-radius: 8px;
+}
+.adr-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.adr-table th {
+  text-align: left; padding: 7px; border-bottom: 1px solid var(--border, #2b3242);
+  color: var(--muted, #9aa4b2); font-weight: 600; white-space: nowrap;
+  position: sticky; top: 0; background: var(--panel, #161c2b); z-index: 1;
+}
+.adr-table td { padding: 6px; border-bottom: 1px solid var(--border, #2b3242); vertical-align: top; }
+.adr-table tr:last-child td { border-bottom: none; }
+.adr-actions { white-space: nowrap; }

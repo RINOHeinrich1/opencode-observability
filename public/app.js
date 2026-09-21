@@ -77,7 +77,21 @@ function esc(s) {
 }
 
 // --- Navigation croisée + filtre par tâche --------------------------------
+// Crée à la demande (et UNE seule fois) la <section class="pane"> d'un onglet
+// absent du DOM statique (index.html hors périmètre). Idempotent : ne recrée
+// jamais une section déjà présente.
+function ensurePane(tab) {
+  if (!tab || document.getElementById('pane-' + tab)) return;
+  const main = document.querySelector('main');
+  if (!main) return;
+  const s = document.createElement('section');
+  s.id = 'pane-' + tab;
+  s.className = 'pane';
+  main.appendChild(s);
+}
+
 function switchTab(tab) {
+  ensurePane(tab);
   document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('.pane').forEach((p) => p.classList.toggle('active', p.id === 'pane-' + tab));
   activeTab = tab;
@@ -103,6 +117,7 @@ const PROJECT_TABS = [
   ['plans', 'Plans'],
   ['events', 'Événements'],
   ['artifacts', 'Artefacts'],
+  ['adr', 'ADR'],
   ['e2esecrets', 'Vars & Secrets E2E'],
   ['archives', 'Archives'],
 ];
@@ -3914,9 +3929,6 @@ async function projectDetailModal(projectId, tab = 'projet') {
   };
   await loadDocs();
 
-  // Filtres de l'onglet ADR (statut / repo), conservés le temps de la modale.
-  let adrFilter = { status: '', repo: '' };
-
   const kindOpts = `<option value="adr-tech">ADR — Architecture technique</option><option value="specs-fonctionnelles">Specs fonctionnelles</option><option value="scenarios-gherkin">Scénarios (Gherkin)</option>`;
   const repoMap = () => new Map(repos.map((r) => [r.id, r]));
 
@@ -3925,12 +3937,10 @@ async function projectDetailModal(projectId, tab = 'projet') {
     const rm = repoMap();
     const pRepos = (p.repos || []).map((rid) => rm.get(rid)).filter(Boolean);
     const pDocs = allDocs;
-    const pAdrs = allDocs.filter((d) => d.kind === 'adr-tech');
     const tabs = [
       ['projet', 'Projet'],
       ['repos', `Repos (${pRepos.length})`],
       ['docs', `Documents de référence (${pDocs.length})`],
-      ['adr', `ADR (${pAdrs.length})`],
     ];
     showModal(`
       <div class="modal modal-wide modal-project-detail">
@@ -3948,7 +3958,6 @@ async function projectDetailModal(projectId, tab = 'projet') {
     const panel = document.getElementById('pd-panel');
     if (tab === 'projet') panel.innerHTML = projetTabHtml(p);
     else if (tab === 'repos') panel.innerHTML = reposTabHtml(p, pRepos);
-    else if (tab === 'adr') panel.innerHTML = adrTabHtml(p, pAdrs, pRepos, adrFilter);
     else panel.innerHTML = docsTabHtml(p, pDocs);
     wire();
   };
@@ -4164,39 +4173,6 @@ async function projectDetailModal(projectId, tab = 'projet') {
       try { await api(`/api/docs/${encodeURIComponent(b.dataset.pdDelDoc)}`, { method: 'DELETE' }); await loadDocs(); msg('Document supprimé.'); render(); }
       catch (err) { msg(err.message || String(err), false); }
     }));
-    // ADR : créer / éditer / regarder / supprimer + filtres statut/repo.
-    const adrNew = document.getElementById('pd-adr-new');
-    if (adrNew) adrNew.addEventListener('click', () => adrFormModal(p, pRepos, null, async () => { await loadDocs(); msg('ADR créée.'); render(); }));
-    panel.querySelectorAll('[data-pd-adr-edit]').forEach((b) => b.addEventListener('click', () => {
-      const adr = allDocs.find((d) => d.docId === b.dataset.pdAdrEdit);
-      if (!adr) return;
-      adrFormModal(p, pRepos, adr, async () => { await loadDocs(); msg('ADR enregistrée.'); render(); });
-    }));
-    panel.querySelectorAll('[data-pd-adr-view]').forEach((b) => b.addEventListener('click', () => viewRefDoc(b.dataset.pdAdrView)));
-    panel.querySelectorAll('[data-pd-adr-del]').forEach((b) => b.addEventListener('click', async () => {
-      if (!confirm('Supprimer cette ADR ?')) return;
-      try { await api(`/api/docs/${encodeURIComponent(b.dataset.pdAdrDel)}`, { method: 'DELETE' }); await loadDocs(); msg('ADR supprimée.'); render(); }
-      catch (err) { msg(err.message || String(err), false); }
-    }));
-    // Pièces jointes d'ADR (item 122) : ajouter / retirer / voir un doc du registre.
-    panel.querySelectorAll('[data-pd-adr-att-add]').forEach((b) => b.addEventListener('click', () => {
-      adrAttachmentModal(b.dataset.pdAdrAttAdd, allDocs, async () => { await loadDocs(); msg('Pièce jointe ajoutée.'); render(); });
-    }));
-    panel.querySelectorAll('[data-pd-adr-att-del]').forEach((b) => b.addEventListener('click', async () => {
-      if (!confirm('Retirer cette pièce jointe ?')) return;
-      try {
-        await api(`/api/docs/${encodeURIComponent(b.dataset.pdAdrAttDoc)}/attachments/${encodeURIComponent(b.dataset.pdAdrAttDel)}`, { method: 'DELETE' });
-        await loadDocs(); msg('Pièce jointe retirée.'); render();
-      } catch (err) { msg(err.message || String(err), false); }
-    }));
-    panel.querySelectorAll('[data-pd-adr-att-view]').forEach((b) => b.addEventListener('click', (e) => {
-      e.preventDefault();
-      if (b.dataset.pdAdrAttView) viewRefDoc(b.dataset.pdAdrAttView);
-    }));
-    const adrStatusFilter = document.getElementById('pd-adr-status-filter');
-    if (adrStatusFilter) adrStatusFilter.addEventListener('change', () => { adrFilter.status = adrStatusFilter.value; render(); });
-    const adrRepoFilter = document.getElementById('pd-adr-repo-filter');
-    if (adrRepoFilter) adrRepoFilter.addEventListener('change', () => { adrFilter.repo = adrRepoFilter.value; render(); });
   };
 
   // Édition inline d'un repo (dans l'onglet Repos) : remplace la liste par un formulaire.
@@ -4310,7 +4286,9 @@ function adrAttSourceBadge(source) {
 // le registre). Par pièce : libellé + badge de source + téléchargement (fichier
 // importé/référencé) ou lecture du document du registre + bouton de retrait.
 // Bouton « + Joindre » toujours présent (le cas 0 pièce joint → « — »).
-function adrAttachmentsCell(d) {
+// `prefix` paramètre les attributs data-* : le défaut « pd-adr » conserve le
+// câblage de la modale projet ; l'onglet ADR du projet passe « adr ».
+function adrAttachmentsCell(d, prefix = 'pd-adr') {
   const docId = d && d.docId;
   const list = (d && Array.isArray(d.attachments)) ? d.attachments : [];
   const items = list.map((a) => {
@@ -4318,16 +4296,16 @@ function adrAttachmentsCell(d) {
     const badge = adrAttSourceBadge(a.source);
     let link;
     if (a.source === 'registry') {
-      link = `<a href="#" data-pd-adr-att-view="${esc(a.targetDocId || '')}" title="Voir le document du registre">${esc(name)}</a>`;
+      link = `<a href="#" data-${prefix}-att-view="${esc(a.targetDocId || '')}" title="Voir le document du registre">${esc(name)}</a>`;
     } else {
       const href = `/api/docs/${encodeURIComponent(docId)}/attachments/${encodeURIComponent(a.attachmentId)}/download`;
       link = `<a href="${esc(href)}" title="Télécharger ${esc(name)}">${esc(name)}</a>`;
     }
-    const del = `<button type="button" class="ghost tiny danger-text" data-pd-adr-att-del="${esc(a.attachmentId)}" data-pd-adr-att-doc="${esc(docId)}" title="Retirer la pièce jointe">×</button>`;
+    const del = `<button type="button" class="ghost tiny danger-text" data-${prefix}-att-del="${esc(a.attachmentId)}" data-${prefix}-att-doc="${esc(docId)}" title="Retirer la pièce jointe">×</button>`;
     return `<span style="display:inline-flex;gap:4px;align-items:center;margin:1px 0">${badge} ${link} ${del}</span>`;
   });
   const addBtn = docId
-    ? `<button type="button" class="ghost tiny" data-pd-adr-att-add="${esc(docId)}" title="Joindre un document ou un fichier">+ Joindre</button>`
+    ? `<button type="button" class="ghost tiny" data-${prefix}-att-add="${esc(docId)}" title="Joindre un document ou un fichier">+ Joindre</button>`
     : '';
   const body = items.length ? items.join('<br>') : '<span class="muted-sm">—</span>';
   return `<div style="display:flex;flex-direction:column;gap:3px">${body}<div>${addBtn}</div></div>`;
@@ -4375,63 +4353,183 @@ async function viewRefDoc(docId) {
 }
 
 // ===========================================================================
-// Onglet ADR — table structurée 6 colonnes (Titre, Statut, Contexte, Décision,
-// Conséquences, Pièces jointes) + Actions. Filtres statut/repo. ADR globale
-// signalée par un badge. `adrs` = docs kind=adr-tech du projet (incl. repos
-// transverses), `repos` = repos du projet, `filter` = { status, repo }.
+// Table ADR MUTUALISÉE (onglet projet). Rend les ADR du projet courant
+// (incl. repos transverses) : Titre, Statut, Contexte, Décision, Conséquences,
+// Repos rattachés (+ badge « globale »), Pièces jointes, Actions. Filtres
+// statut/repo + recherche (client). `ctx = { projectId, adrs, repos, filter,
+// prefix }`. `filter = { status, repo, q }`. Aucune duplication : le câblage
+// (CRUD + pièces jointes + filtres) est assuré par bindAdrTable.
 // ===========================================================================
-function adrTabHtml(p, adrs, repos, filter = {}) {
-  const f = filter || {};
-  const projRepoIds = (p && p.repos) ? p.repos.slice() : [];
-  const repoName = (rid) => { const r = (repos || []).find((x) => x.id === rid); return r ? (r.name || r.id) : rid; };
-  const list = adrs || [];
-  const filtered = list.filter((d) =>
-    (!f.status || (d.status || '') === f.status) &&
-    (!f.repo || (Array.isArray(d.repos) && d.repos.includes(f.repo))));
+// Prédicat de filtrage ADR — partagé par le rendu (adrTableHtml) et le câblage
+// live (bindAdrTable). `attrs` = { status, repos (chips espacées), search }.
+function adrRowVisible(attrs, q, status, repo) {
+  if (status && (attrs.status || '') !== status) return false;
+  if (repo && !(attrs.repos || '').split(/\s+/).includes(repo)) return false;
+  if (q && !(attrs.search || '').includes(q)) return false;
+  return true;
+}
+
+function adrTableHtml(ctx = {}) {
+  const prefix = ctx.prefix || 'adr';
+  const f = ctx.filter || {};
+  const repos = ctx.repos || [];
+  const list = ctx.adrs || [];
+  const repoName = (rid) => { const r = repos.find((x) => x.id === rid); return r ? (r.name || r.id) : rid; };
+  const q = (f.q || '').trim().toLowerCase();
   const statusOpts = ['', ...ADR_STATUS]
     .map((s) => `<option value="${esc(s)}" ${f.status === s ? 'selected' : ''}>${s ? esc(s) : '— tous les statuts —'}</option>`).join('');
-  const repoOpts = ['', ...projRepoIds]
+  const repoIds = [...new Set(list.flatMap((d) => (Array.isArray(d.repos) ? d.repos : [])))];
+  const repoOpts = ['', ...repoIds]
     .map((r) => `<option value="${esc(r)}" ${f.repo === r ? 'selected' : ''}>${r ? esc(repoName(r)) : '— tous les repos —'}</option>`).join('');
-  const rows = filtered.map((d) => {
-    const targets = [];
-    if (d.isGlobal) targets.push(adrGlobalBadge(d));
-    if (Array.isArray(d.repos) && d.repos.length) targets.push(d.repos.map((rid) => `<code class="chip-repo" title="Repo rattaché">${esc(repoName(rid))}</code>`).join(' '));
-    const targetHtml = targets.length ? `<div style="margin-top:4px">${targets.join(' ')}</div>` : '';
-    return `<tr>
-      <td style="border-bottom:1px solid var(--border);padding:6px;vertical-align:top"><strong>${esc(d.title || d.docId)}</strong>${targetHtml}${d.description ? `<div class="muted-sm">${esc(d.description)}</div>` : ''}</td>
-      <td style="border-bottom:1px solid var(--border);padding:6px;vertical-align:top">${adrStatusBadge(d.status)}</td>
-      <td style="border-bottom:1px solid var(--border);padding:6px;vertical-align:top">${adrCellText(d.context)}</td>
-      <td style="border-bottom:1px solid var(--border);padding:6px;vertical-align:top">${adrCellText(d.decision)}</td>
-      <td style="border-bottom:1px solid var(--border);padding:6px;vertical-align:top">${adrCellText(d.consequences)}</td>
-      <td style="border-bottom:1px solid var(--border);padding:6px;vertical-align:top">${adrAttachmentsCell(d)}</td>
-      <td style="border-bottom:1px solid var(--border);padding:6px;vertical-align:top;white-space:nowrap">
-        <button type="button" class="ghost tiny" data-pd-adr-edit="${esc(d.docId)}" title="Éditer l'ADR">Éditer</button>
-        <button type="button" class="ghost tiny" data-pd-adr-view="${esc(d.docId)}" title="Voir le document">Regarder</button>
-        <button type="button" class="ghost tiny danger-text" data-pd-adr-del="${esc(d.docId)}" title="Supprimer l'ADR">Supprimer</button>
+  let visible = 0;
+  const rows = list.map((d) => {
+    const dRepos = Array.isArray(d.repos) ? d.repos : [];
+    const chips = dRepos.map((rid) => `<code class="chip-repo" title="Repo rattaché">${esc(repoName(rid))}</code>`).join(' ');
+    const attrs = {
+      status: d.status || '',
+      repos: dRepos.join(' '),
+      search: [d.title, d.context, d.decision, d.consequences, d.path, dRepos.join(' ')].filter(Boolean).join(' ').toLowerCase(),
+    };
+    const show = adrRowVisible(attrs, q, f.status || '', f.repo || '');
+    if (show) visible++;
+    const targetHtml = (d.isGlobal || chips)
+      ? `<div>${[adrGlobalBadge(d), chips].filter(Boolean).join(' ')}</div>`
+      : '<span class="muted-sm">—</span>';
+    return `<tr data-status="${esc(attrs.status)}" data-repos="${esc(attrs.repos)}" data-search="${esc(attrs.search)}"${show ? '' : ' hidden'}>
+      <td><strong>${esc(d.title || d.docId)}</strong>${d.description ? `<div class="muted-sm">${esc(d.description)}</div>` : ''}</td>
+      <td>${adrStatusBadge(d.status)}</td>
+      <td>${adrCellText(d.context)}</td>
+      <td>${adrCellText(d.decision)}</td>
+      <td>${adrCellText(d.consequences)}</td>
+      <td>${targetHtml}</td>
+      <td>${adrAttachmentsCell(d, prefix)}</td>
+      <td class="adr-actions">
+        <button type="button" class="ghost tiny" data-${prefix}-edit="${esc(d.docId)}" title="Éditer l'ADR">Éditer</button>
+        <button type="button" class="ghost tiny" data-${prefix}-view="${esc(d.docId)}" title="Voir le document">Regarder</button>
+        <button type="button" class="ghost tiny danger-text" data-${prefix}-del="${esc(d.docId)}" title="Supprimer l'ADR">Supprimer</button>
       </td>
     </tr>`;
   }).join('');
   return `
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
-      <select id="pd-adr-status-filter" title="Filtrer par statut">${statusOpts}</select>
-      <select id="pd-adr-repo-filter" title="Filtrer par repo rattaché">${repoOpts}</select>
-      <span class="muted-sm">${filtered.length} / ${list.length} ADR</span>
-      <button type="button" class="launch-btn" id="pd-adr-new" title="Créer une ADR">+ Nouvelle ADR</button>
+    <div class="adr-pane-filters">
+      <input type="search" id="${esc(prefix)}-search" class="adr-search" placeholder="Rechercher (titre, contexte, décision…)" value="${esc(f.q || '')}">
+      <select id="${esc(prefix)}-status-filter" title="Filtrer par statut">${statusOpts}</select>
+      <select id="${esc(prefix)}-repo-filter" title="Filtrer par repo rattaché">${repoOpts}</select>
+      <span class="muted-sm" id="${esc(prefix)}-count">${visible} / ${list.length} ADR</span>
+      <button type="button" class="launch-btn" id="${esc(prefix)}-new" title="Créer une ADR">+ Nouvelle ADR</button>
     </div>
-    <div style="overflow:auto;max-height:50vh;border:1px solid var(--border);border-radius:8px">
-      <table style="width:100%;border-collapse:collapse;font-size:12px">
-        <thead><tr style="background:rgba(255,255,255,.04)">
-          <th style="text-align:left;padding:7px">Titre</th>
-          <th style="text-align:left;padding:7px">Statut</th>
-          <th style="text-align:left;padding:7px">Contexte</th>
-          <th style="text-align:left;padding:7px">Décision</th>
-          <th style="text-align:left;padding:7px">Conséquences</th>
-          <th style="text-align:left;padding:7px">Pièces jointes</th>
-          <th style="text-align:left;padding:7px">Actions</th>
+    <div class="adr-table-wrap">
+      <table class="adr-table">
+        <thead><tr>
+          <th>Titre</th><th>Statut</th><th>Contexte</th><th>Décision</th><th>Conséquences</th>
+          <th>Repos rattachés</th><th>Pièces jointes</th><th>Actions</th>
         </tr></thead>
-        <tbody>${rows || `<tr><td colspan="7" class="muted-sm" style="padding:10px">Aucune ADR pour ce projet.</td></tr>`}</tbody>
+        <tbody>${rows || '<tr><td colspan="8" class="muted-sm" style="padding:10px">Aucune ADR pour ce projet.</td></tr>'}</tbody>
       </table>
     </div>`;
+}
+
+// Câblage MUTUALISÉ de la table ADR : CRUD + pièces jointes + filtres.
+// `ctx = { prefix, projectId, project, docs, repos, filter, onChange }` ;
+// `rootEl` borne les sélecteurs au conteneur de l'onglet. Réutilise
+// adrFormModal / adrAttachmentModal / viewRefDoc / api (aucune duplication).
+function bindAdrTable(rootEl, ctx = {}) {
+  const root = rootEl || document;
+  const prefix = ctx.prefix || 'adr';
+  const docs = () => ctx.docs || [];
+  const repos = ctx.repos || [];
+  const project = ctx.project || { id: ctx.projectId };
+  const filter = ctx.filter || {};
+  const onChange = typeof ctx.onChange === 'function' ? ctx.onChange : () => {};
+  const attr = (el, suffix) => el.getAttribute(`data-${prefix}-${suffix}`);
+
+  // CRUD.
+  const newBtn = root.querySelector(`#${prefix}-new`);
+  if (newBtn) newBtn.addEventListener('click', () => adrFormModal(project, repos, null, onChange));
+  root.querySelectorAll(`[data-${prefix}-edit]`).forEach((b) => b.addEventListener('click', () => {
+    const adr = docs().find((d) => d.docId === attr(b, 'edit'));
+    if (!adr) return;
+    adrFormModal(project, repos, adr, onChange);
+  }));
+  root.querySelectorAll(`[data-${prefix}-view]`).forEach((b) => b.addEventListener('click', () => viewRefDoc(attr(b, 'view'))));
+  root.querySelectorAll(`[data-${prefix}-del]`).forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm('Supprimer cette ADR ?')) return;
+    try { await api(`/api/docs/${encodeURIComponent(attr(b, 'del'))}`, { method: 'DELETE' }); await onChange(); }
+    catch (err) { alert('Suppression impossible : ' + (err.message || err)); }
+  }));
+
+  // Pièces jointes : ajout / retrait / lecture d'un document du registre.
+  root.querySelectorAll(`[data-${prefix}-att-add]`).forEach((b) => b.addEventListener('click', () => {
+    adrAttachmentModal(attr(b, 'att-add'), docs(), onChange);
+  }));
+  root.querySelectorAll(`[data-${prefix}-att-del]`).forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm('Retirer cette pièce jointe ?')) return;
+    try {
+      await api(`/api/docs/${encodeURIComponent(attr(b, 'att-doc'))}/attachments/${encodeURIComponent(attr(b, 'att-del'))}`, { method: 'DELETE' });
+      await onChange();
+    } catch (err) { alert('Retrait impossible : ' + (err.message || err)); }
+  }));
+  root.querySelectorAll(`[data-${prefix}-att-view]`).forEach((b) => b.addEventListener('click', (e) => {
+    e.preventDefault();
+    const id = attr(b, 'att-view');
+    if (id) viewRefDoc(id);
+  }));
+
+  // Filtres statut / repo / recherche — filtrage CLIENT sur les lignes rendues
+  // (aucune requête, aucun re-render : la saisie conserve le focus). L'état est
+  // conservé dans `ctx.filter` pour survivre aux re-rendus (CRUD).
+  const searchEl = root.querySelector(`#${prefix}-search`);
+  const statusEl = root.querySelector(`#${prefix}-status-filter`);
+  const repoEl = root.querySelector(`#${prefix}-repo-filter`);
+  const countEl = root.querySelector(`#${prefix}-count`);
+  const rows = [...root.querySelectorAll('.adr-table tbody tr[data-status]')];
+  const apply = () => {
+    const q = ((searchEl && searchEl.value) || '').trim().toLowerCase();
+    const st = (statusEl && statusEl.value) || '';
+    const rp = (repoEl && repoEl.value) || '';
+    filter.status = st; filter.repo = rp; filter.q = (searchEl && searchEl.value) || '';
+    let visible = 0;
+    for (const row of rows) {
+      const show = adrRowVisible(
+        { status: row.getAttribute('data-status'), repos: row.getAttribute('data-repos'), search: row.getAttribute('data-search') },
+        q, st, rp,
+      );
+      row.hidden = !show;
+      if (show) visible++;
+    }
+    if (countEl) countEl.textContent = `${visible} / ${rows.length} ADR`;
+  };
+  if (searchEl) searchEl.addEventListener('input', apply);
+  if (statusEl) statusEl.addEventListener('change', apply);
+  if (repoEl) repoEl.addEventListener('change', apply);
+  apply();
+}
+
+// ===========================================================================
+// Onglet ADR DU PROJET — rendu dédié (carte RENDER.adr). Table des ADR du
+// projet courant + filtres statut/repo + recherche + CRUD + pièces jointes.
+// Mutualise adrTableHtml + bindAdrTable (aucune duplication).
+// ===========================================================================
+let adrFilters = { status: '', repo: '', q: '' };
+
+async function renderAdrs() {
+  const pane = document.getElementById('pane-adr');
+  if (!pane) return;
+  if (!currentProject) {
+    pane.innerHTML = '<h2>ADR</h2><p class="muted-sm">Ouvrez un projet pour voir ses ADR.</p>';
+    return;
+  }
+  pane.innerHTML = `<h2>ADR — architecture du projet</h2><p class="muted-sm">Chargement…</p>`;
+  let adrs = [], repos = [], projects = [];
+  try { adrs = (((await api(`/api/docs?projectId=${encodeURIComponent(currentProject)}&includeRepoDocs=1`)).docs) || []).filter((d) => d.kind === 'adr-tech'); } catch { adrs = []; }
+  try { repos = ((await api(`/api/repos?project=${encodeURIComponent(currentProject)}`)).repos || []); } catch { repos = []; }
+  try { projects = ((await api('/api/projects')).projects || []); } catch { projects = []; }
+  const project = projects.find((p) => p.id === currentProject) || { id: currentProject };
+  pane.innerHTML = `
+    <h2>ADR — architecture du projet <span class="muted-sm">${esc(project.name || currentProject)}</span></h2>
+    <p class="muted-sm">Décisions d'architecture (<code>adr-tech</code>) du projet et de ses repos transverses.</p>
+    <div id="adr-table-wrap">${adrTableHtml({ projectId: currentProject, adrs, repos, filter: adrFilters, prefix: 'adr' })}</div>`;
+  bindAdrTable(pane, { prefix: 'adr', projectId: currentProject, project, docs: adrs, repos, filter: adrFilters, onChange: renderAdrs });
 }
 
 // ===========================================================================
@@ -5851,7 +5949,7 @@ function e2eVarModal(project, projects, existingName) {
 
 const RENDER = {
   overview: renderOverview, observability: renderObservability, projects: renderProjects, tasks: renderTasks, e2etests: renderE2ETests, e2esecrets: renderE2ESecrets, recettes: renderRecettes,
-  events: renderEvents, deployments: renderDeployments, decisions: renderDecisions, artifacts: renderArtifacts, plans: renderPlans, archives: renderArchives, ecosystem: renderEcosystem, workspaces: renderWorkspaces, users: renderUsers,
+  events: renderEvents, deployments: renderDeployments, decisions: renderDecisions, artifacts: renderArtifacts, adr: renderAdrs, plans: renderPlans, archives: renderArchives, ecosystem: renderEcosystem, workspaces: renderWorkspaces, users: renderUsers,
 };
 
 // --- Rafraîchissement automatique (polling, min 10 s) ----------------------

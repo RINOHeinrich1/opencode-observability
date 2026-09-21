@@ -1046,3 +1046,13 @@ body.readonly #agent-session-btn {
 .adr-table td { padding: 6px; border-bottom: 1px solid var(--border, #2b3242); vertical-align: top; }
 .adr-table tr:last-child td { border-bottom: none; }
 .adr-actions { white-space: nowrap; }
+
+/* ===== Sous-onglets internes de l'onglet « Fonctionnalités & Règles » =====
+   Les classes .pd-tabs/.pd-tab/.pd-panel ont été conçues pour la modale détail
+   projet ; ces ajustements ADDITIFS garantissent un rendu correct dans un pane
+   (marges + barre de filtres qui passe à la ligne sur écran étroit). */
+.fr-subtabs { margin: 10px 0 6px; }
+.fr-subpanel { min-height: 160px; }
+.fr-subtabs .pd-tab .muted-sm { margin-left: 4px; }
+.fr-filters { flex-wrap: wrap; }
+.fr-filters .adr-search { flex: 1 1 220px; }

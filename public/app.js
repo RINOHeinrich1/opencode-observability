@@ -125,7 +125,7 @@ const PROJECT_TABS = [
   ['artifacts', 'Artefacts'],
   ['adr', 'ADR'],
   ['sprints', 'Sprints'],
-  ['features', 'Fonctionnalités / Règles'],
+  ['features', 'Fonctionnalités & Règles'],
   ['e2esecrets', 'Vars & Secrets E2E'],
   ['archives', 'Archives'],
 ];
@@ -5023,6 +5023,16 @@ async function openSprintSession(sprintId, force, btn) {
 // CRUD (création / modification : l'agent propose, l'humain valide/ajuste).
 // ===========================================================================
 
+// Sous-onglet ACTIF (« features » | « rules ») + filtres PROPRES à chaque
+// sous-onglet. États module → ils survivent au polling `refreshActive()` (comme
+// `adrFilters`) : le sous-onglet actif n'est pas réinitialisé à chaque
+// rafraîchissement. Le sous-onglet est en plus persisté (localStorage) pour
+// survivre à un rechargement de page.
+let frSubTab = localStorage.getItem('panel_fr_subtab') === 'rules' ? 'rules' : 'features';
+let frFeatureFilters = { q: '', role: '', emergent: '', link: '' };
+let frRuleFilters = { q: '', emergent: '', link: '' };
+const persistFrSubTab = () => { localStorage.setItem('panel_fr_subtab', frSubTab); };
+
 // Relations affichables/créables depuis une fonctionnalité ou une règle.
 // `side` = position de l'entité courante dans le couple (a,b) du dispatcher.
 const LINK_PRESETS = {
@@ -5190,46 +5200,282 @@ async function ruleDetailModal(ruleId) {
   } catch (e) { alert('Détail indisponible : ' + (e.message || e)); }
 }
 
-// Colonnes « Liens » : enrichissement PARESSEUX (détail par entité, petite
-// concurrence) pour ne pas déclencher N appels MCP au rendu de la table.
-async function enrichLinkCells() {
-  const cells = [...document.querySelectorAll('[data-fr-links], [data-rule-links]')];
-  const run = async (cell) => {
-    const fid = cell.getAttribute('data-fr-links');
-    const rid = cell.getAttribute('data-rule-links');
+// Index DÉTERMINISTE des liens par entité (remplace l'ancien remplissage
+// PARESSEUX `enrichLinkCells`). Un seul passage à concurrence bornée (4) sur les
+// détails `/api/features/:id` et `/api/rules/:id` alimente À LA FOIS la colonne
+// « Liens » (`frLinkCellHtml`) ET les filtres « sans lien » (`frFilter*`).
+// Structure : { features: { id: { rules, gherkin, adrs, sprints, tasks, recettes } },
+//               rules:    { id: { features, sprints } } }.
+// Repli non bloquant : une entité dont le détail échoue est absente de l'index
+// → ses liens sont considérés comme absents (`—`), jamais d'exception remontée.
+async function loadFeatureRuleLinkIndex(features, rules) {
+  const index = { features: {}, rules: {} };
+  const jobs = [];
+  (features || []).forEach((f) => { if (f && f.id) jobs.push({ kind: 'feature', id: f.id }); });
+  (rules || []).forEach((r) => { if (r && r.id) jobs.push({ kind: 'rule', id: r.id }); });
+  const run = async (job) => {
     try {
-      const d = fid ? await api(`/api/features/${encodeURIComponent(fid)}`) : await api(`/api/rules/${encodeURIComponent(rid)}`);
-      const o = (fid ? d.feature : d.rule) || {};
-      const parts = [];
-      if (fid) {
-        if (o.regles && o.regles.length) parts.push(`${o.regles.length} règle(s)`);
-        if (o.gherkin && o.gherkin.length) parts.push(`${o.gherkin.length} Gherkin`);
-        if (o.adrs && o.adrs.length) parts.push(`${o.adrs.length} ADR`);
-        if (o.sprints && o.sprints.length) parts.push(`${o.sprints.length} sprint(s)`);
-        if (o.tasks && o.tasks.length) parts.push(`${o.tasks.length} tâche(s)`);
-        if (o.recettes && o.recettes.length) parts.push(`${o.recettes.length} recette(s)`);
+      const d = job.kind === 'feature'
+        ? await api(`/api/features/${encodeURIComponent(job.id)}`)
+        : await api(`/api/rules/${encodeURIComponent(job.id)}`);
+      const o = (job.kind === 'feature' ? d.feature : d.rule) || {};
+      if (job.kind === 'feature') {
+        index.features[job.id] = {
+          rules: (o.regles || []).length,
+          gherkin: (o.gherkin || []).length,
+          adrs: (o.adrs || []).length,
+          sprints: (o.sprints || []).length,
+          tasks: (o.tasks || []).length,
+          recettes: (o.recettes || []).length,
+        };
       } else {
-        if (o.fonctionnalites && o.fonctionnalites.length) parts.push(`${o.fonctionnalites.length} fonctionnalité(s)`);
-        if (o.sprints && o.sprints.length) parts.push(`${o.sprints.length} sprint(s)`);
+        index.rules[job.id] = {
+          features: (o.fonctionnalites || []).length,
+          sprints: (o.sprints || []).length,
+        };
       }
-      cell.innerHTML = parts.length ? parts.map((p) => `<span class="chip">${esc(p)}</span>`).join(' ') : '<span class="muted-sm">aucun lien</span>';
-    } catch { cell.innerHTML = '<span class="muted-sm">—</span>'; }
+    } catch { /* repli : liens considérés absents */ }
   };
-  const queue = cells.slice();
+  const queue = jobs.slice();
   const workers = Array.from({ length: Math.min(4, queue.length) }, async () => {
-    while (queue.length) { const c = queue.shift(); if (c) await run(c); }
+    while (queue.length) { const j = queue.shift(); if (j) await run(j); }
   });
   await Promise.all(workers);
+  return index;
+}
+
+// Cellule « Liens » d'une entité construite depuis l'index (AUCUN appel réseau).
+// `kind` = 'feature' | 'rule'.
+function frLinkCellHtml(kind, id, linkIndex) {
+  const bucket = (linkIndex && (kind === 'feature' ? linkIndex.features : linkIndex.rules)) || {};
+  const o = bucket[id];
+  if (!o) return '<span class="muted-sm">—</span>';
+  const parts = [];
+  if (kind === 'feature') {
+    if (o.rules) parts.push(`${o.rules} règle(s)`);
+    if (o.gherkin) parts.push(`${o.gherkin} Gherkin`);
+    if (o.adrs) parts.push(`${o.adrs} ADR`);
+    if (o.sprints) parts.push(`${o.sprints} sprint(s)`);
+    if (o.tasks) parts.push(`${o.tasks} tâche(s)`);
+    if (o.recettes) parts.push(`${o.recettes} recette(s)`);
+  } else {
+    if (o.features) parts.push(`${o.features} fonctionnalité(s)`);
+    if (o.sprints) parts.push(`${o.sprints} sprint(s)`);
+  }
+  return parts.length ? parts.map((p) => `<span class="chip">${esc(p)}</span>`).join(' ') : '<span class="muted-sm">aucun lien</span>';
+}
+
+// Filtrage CLIENT du sous-onglet Fonctionnalités (pur, sans effet de bord).
+// `filter` = { q, role, emergent, link } ; `link` ∈ '' | sans_regle | sans_gherkin
+// | sans_adr | sans_sprint (lien absent selon l'index A003).
+function frFilterFeatures(features, filter, linkIndex) {
+  const f = filter || {};
+  const q = (f.q || '').trim().toLowerCase();
+  const idx = (linkIndex && linkIndex.features) || {};
+  return (features || []).filter((x) => {
+    const hay = `${x.ref || ''} ${x.userStory || ''}`.toLowerCase();
+    if (q && !hay.includes(q)) return false;
+    if (f.role && (x.role || '') !== f.role) return false;
+    if (f.emergent === 'yes' && !x.emergent) return false;
+    if (f.emergent === 'no' && x.emergent) return false;
+    if (f.link) {
+      const l = idx[x.id] || {};
+      if (f.link === 'sans_regle' && l.rules) return false;
+      if (f.link === 'sans_gherkin' && l.gherkin) return false;
+      if (f.link === 'sans_adr' && l.adrs) return false;
+      if (f.link === 'sans_sprint' && l.sprints) return false;
+    }
+    return true;
+  });
+}
+
+// Filtrage CLIENT du sous-onglet Règles métier (pur, sans effet de bord).
+// `filter` = { q, emergent, link } ; `link` ∈ '' | sans_fonctionnalite | sans_sprint.
+function frFilterRules(rules, filter, linkIndex) {
+  const f = filter || {};
+  const q = (f.q || '').trim().toLowerCase();
+  const idx = (linkIndex && linkIndex.rules) || {};
+  return (rules || []).filter((x) => {
+    const hay = `${x.ref || ''} ${x.content || ''}`.toLowerCase();
+    if (q && !hay.includes(q)) return false;
+    if (f.emergent === 'yes' && !x.emergent) return false;
+    if (f.emergent === 'no' && x.emergent) return false;
+    if (f.link) {
+      const l = idx[x.id] || {};
+      if (f.link === 'sans_fonctionnalite' && l.features) return false;
+      if (f.link === 'sans_sprint' && l.sprints) return false;
+    }
+    return true;
+  });
+}
+
+// Table ISOLÉE du sous-onglet Fonctionnalités (US-xxx) — Ref (badge émergent),
+// Rôle, User story, Liens (index A003), Actions. Aucune règle métier ici.
+function frFeatureTableHtml(features, linkIndex) {
+  const rows = (features || []).map((f) => `<tr>
+    <td><strong>${esc(f.ref)}</strong>${f.emergent ? ' <span class="chip" title="émergent">émergent</span>' : ''}</td>
+    <td>${esc(f.role || '—')}</td>
+    <td>${adrCellText(f.userStory, 200)}</td>
+    <td class="fr-links">${frLinkCellHtml('feature', f.id, linkIndex)}</td>
+    <td class="e2e-actions">
+      <button type="button" class="ghost tiny" data-fr-edit="${esc(f.id)}">Éditer</button>
+      <button type="button" class="ghost tiny" data-fr-detail="${esc(f.id)}">Détail</button>
+      <button type="button" class="ghost tiny" data-fr-link="${esc(f.id)}">Lier</button>
+    </td>
+  </tr>`).join('');
+  return `<div class="adr-table-wrap"><table class="adr-table">
+    <thead><tr><th>Ref</th><th>Rôle</th><th>User story</th><th>Liens</th><th>Actions</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="5" class="muted-sm" style="padding:10px">Aucune fonctionnalité pour ce projet.</td></tr>'}</tbody>
+  </table></div>`;
+}
+
+// Table ISOLÉE du sous-onglet Règles métier (RM-xxxx) — Ref (badge émergente),
+// Contenu, Pièce source, Liens (index A003), Actions. Aucune fonctionnalité ici.
+function frRuleTableHtml(rules, linkIndex) {
+  const rows = (rules || []).map((r) => `<tr>
+    <td><strong>${esc(r.ref)}</strong>${r.emergent ? ' <span class="chip" title="émergente">émergente</span>' : ''}</td>
+    <td>${adrCellText(r.content, 220)}</td>
+    <td>${r.sourcedPieceId ? `<code class="chip">${esc(r.sourcedPieceId)}</code>` : '<span class="muted-sm">—</span>'}</td>
+    <td class="fr-links">${frLinkCellHtml('rule', r.id, linkIndex)}</td>
+    <td class="e2e-actions">
+      <button type="button" class="ghost tiny" data-rule-edit="${esc(r.id)}">Éditer</button>
+      <button type="button" class="ghost tiny" data-rule-detail="${esc(r.id)}">Détail</button>
+      <button type="button" class="ghost tiny" data-rule-link="${esc(r.id)}">Lier</button>
+    </td>
+  </tr>`).join('');
+  return `<div class="adr-table-wrap"><table class="adr-table">
+    <thead><tr><th>Ref</th><th>Contenu</th><th>Pièce source</th><th>Liens</th><th>Actions</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="5" class="muted-sm" style="padding:10px">Aucune règle métier pour ce projet.</td></tr>'}</tbody>
+  </table></div>`;
+}
+
+// Sous-panneau FONCTIONNALITÉS : toolbar de filtres PROPRES (recherche ref/user
+// story, rôle, émergence, sans règle/Gherkin/ADR/sprint) + table isolée +
+// bouton « + Nouvelle fonctionnalité ». Le filtrage est CLIENT : seule la table
+// est re-rendue au changement de filtre (la saisie de recherche garde le focus).
+function renderFrFeaturePanel(features, refs, pieces, linkIndex) {
+  const panel = document.getElementById('fr-subpanel');
+  if (!panel) return;
+  const f = frFeatureFilters;
+  const roles = [...new Set((features || []).map((x) => x.role).filter(Boolean))].sort();
+  const filtered = frFilterFeatures(features, f, linkIndex);
+  panel.innerHTML = `
+    <div class="adr-pane-filters fr-filters">
+      <span class="muted-sm" id="fr-f-count">${filtered.length} / ${(features || []).length} fonctionnalité(s)</span>
+      <input type="search" id="fr-f-q" class="adr-search" placeholder="Rechercher (ref, user story…)" value="${esc(f.q || '')}">
+      <select id="fr-f-role" title="Filtrer par rôle">
+        <option value="">Rôle : tous</option>
+        ${roles.map((r) => `<option value="${esc(r)}" ${f.role === r ? 'selected' : ''}>${esc(r)}</option>`).join('')}
+      </select>
+      <select id="fr-f-emergent" title="Filtrer par émergence">
+        <option value="">Émergence : toutes</option>
+        <option value="yes" ${f.emergent === 'yes' ? 'selected' : ''}>Émergentes</option>
+        <option value="no" ${f.emergent === 'no' ? 'selected' : ''}>Non émergentes</option>
+      </select>
+      <select id="fr-f-link" title="Filtrer par lien manquant (index des liens)">
+        <option value="">Liens : tous</option>
+        <option value="sans_regle" ${f.link === 'sans_regle' ? 'selected' : ''}>Sans règle métier</option>
+        <option value="sans_gherkin" ${f.link === 'sans_gherkin' ? 'selected' : ''}>Sans Gherkin</option>
+        <option value="sans_adr" ${f.link === 'sans_adr' ? 'selected' : ''}>Sans ADR</option>
+        <option value="sans_sprint" ${f.link === 'sans_sprint' ? 'selected' : ''}>Sans sprint</option>
+      </select>
+      <button type="button" class="launch-btn" id="fr-new-feat">+ Nouvelle fonctionnalité</button>
+    </div>
+    <div id="fr-feat-table">${frFeatureTableHtml(filtered, linkIndex)}</div>`;
+  const wireRows = () => {
+    panel.querySelectorAll('[data-fr-edit]').forEach((b) => b.addEventListener('click', () => featureFormModal(features.find((x) => x.id === b.dataset.frEdit), pieces, renderFeaturesRules)));
+    panel.querySelectorAll('[data-fr-detail]').forEach((b) => b.addEventListener('click', () => featureDetailModal(b.dataset.frDetail)));
+    panel.querySelectorAll('[data-fr-link]').forEach((b) => b.addEventListener('click', () => linkModal(LINK_PRESETS.feature, b.dataset.frLink, refs, renderFeaturesRules)));
+  };
+  const rerender = () => {
+    frFeatureFilters = {
+      q: (document.getElementById('fr-f-q') || {}).value || '',
+      role: (document.getElementById('fr-f-role') || {}).value || '',
+      emergent: (document.getElementById('fr-f-emergent') || {}).value || '',
+      link: (document.getElementById('fr-f-link') || {}).value || '',
+    };
+    const list = frFilterFeatures(features, frFeatureFilters, linkIndex);
+    const table = document.getElementById('fr-feat-table');
+    if (table) table.innerHTML = frFeatureTableHtml(list, linkIndex);
+    const cnt = document.getElementById('fr-f-count');
+    if (cnt) cnt.textContent = `${list.length} / ${(features || []).length} fonctionnalité(s)`;
+    wireRows();
+  };
+  ['fr-f-q', 'fr-f-role', 'fr-f-emergent', 'fr-f-link'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener(id === 'fr-f-q' ? 'input' : 'change', rerender);
+  });
+  const newBtn = document.getElementById('fr-new-feat');
+  if (newBtn) newBtn.addEventListener('click', () => featureFormModal(null, pieces, renderFeaturesRules));
+  wireRows();
+}
+
+// Sous-panneau RÈGLES MÉTIER : toolbar de filtres PROPRES (recherche ref/content,
+// émergence, sans fonctionnalité/sprint) + table isolée + bouton « + Nouvelle
+// règle ». Même mécanique de filtrage CLIENT que le sous-panneau Fonctionnalités.
+function renderFrRulePanel(rules, refs, pieces, linkIndex) {
+  const panel = document.getElementById('fr-subpanel');
+  if (!panel) return;
+  const f = frRuleFilters;
+  const filtered = frFilterRules(rules, f, linkIndex);
+  panel.innerHTML = `
+    <div class="adr-pane-filters fr-filters">
+      <span class="muted-sm" id="fr-r-count">${filtered.length} / ${(rules || []).length} règle(s)</span>
+      <input type="search" id="fr-r-q" class="adr-search" placeholder="Rechercher (ref, contenu…)" value="${esc(f.q || '')}">
+      <select id="fr-r-emergent" title="Filtrer par émergence">
+        <option value="">Émergence : toutes</option>
+        <option value="yes" ${f.emergent === 'yes' ? 'selected' : ''}>Émergentes</option>
+        <option value="no" ${f.emergent === 'no' ? 'selected' : ''}>Non émergentes</option>
+      </select>
+      <select id="fr-r-link" title="Filtrer par lien manquant (index des liens)">
+        <option value="">Liens : tous</option>
+        <option value="sans_fonctionnalite" ${f.link === 'sans_fonctionnalite' ? 'selected' : ''}>Sans fonctionnalité</option>
+        <option value="sans_sprint" ${f.link === 'sans_sprint' ? 'selected' : ''}>Sans sprint</option>
+      </select>
+      <button type="button" class="launch-btn" id="fr-new-rule">+ Nouvelle règle</button>
+    </div>
+    <div id="fr-rule-table">${frRuleTableHtml(filtered, linkIndex)}</div>`;
+  const wireRows = () => {
+    panel.querySelectorAll('[data-rule-edit]').forEach((b) => b.addEventListener('click', () => ruleFormModal(rules.find((x) => x.id === b.dataset.ruleEdit), pieces, renderFeaturesRules)));
+    panel.querySelectorAll('[data-rule-detail]').forEach((b) => b.addEventListener('click', () => ruleDetailModal(b.dataset.ruleDetail)));
+    panel.querySelectorAll('[data-rule-link]').forEach((b) => b.addEventListener('click', () => linkModal(LINK_PRESETS.rule, b.dataset.ruleLink, refs, renderFeaturesRules)));
+  };
+  const rerender = () => {
+    frRuleFilters = {
+      q: (document.getElementById('fr-r-q') || {}).value || '',
+      emergent: (document.getElementById('fr-r-emergent') || {}).value || '',
+      link: (document.getElementById('fr-r-link') || {}).value || '',
+    };
+    const list = frFilterRules(rules, frRuleFilters, linkIndex);
+    const table = document.getElementById('fr-rule-table');
+    if (table) table.innerHTML = frRuleTableHtml(list, linkIndex);
+    const cnt = document.getElementById('fr-r-count');
+    if (cnt) cnt.textContent = `${list.length} / ${(rules || []).length} règle(s)`;
+    wireRows();
+  };
+  ['fr-r-q', 'fr-r-emergent', 'fr-r-link'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener(id === 'fr-r-q' ? 'input' : 'change', rerender);
+  });
+  const newBtn = document.getElementById('fr-new-rule');
+  if (newBtn) newBtn.addEventListener('click', () => ruleFormModal(null, pieces, renderFeaturesRules));
+  wireRows();
+}
+
+// Dispatch du sous-onglet actif (A007 / A008) dans le panneau `#fr-subpanel`.
+function renderFrSubpanel(features, rules, refs, pieces, linkIndex) {
+  if (frSubTab === 'rules') renderFrRulePanel(rules, refs, pieces, linkIndex);
+  else renderFrFeaturePanel(features, refs, pieces, linkIndex);
 }
 
 async function renderFeaturesRules() {
   const pane = document.getElementById('pane-features');
   if (!pane) return;
   if (!currentProject) {
-    pane.innerHTML = '<h2>Fonctionnalités / Règles</h2><p class="muted-sm">Ouvrez un projet.</p>';
+    pane.innerHTML = '<h2>Fonctionnalités & Règles</h2><p class="muted-sm">Ouvrez un projet.</p>';
     return;
   }
-  pane.innerHTML = `<h2>Fonctionnalités / Règles métier <span class="muted-sm">${esc(currentProject)}</span></h2><p class="muted-sm">Chargement…</p>`;
+  pane.innerHTML = `<h2>Fonctionnalités & Règles métier <span class="muted-sm">${esc(currentProject)}</span></h2><p class="muted-sm">Chargement…</p>`;
   const [featRes, ruleRes, docRes, e2eRes, sprintRes, taskRes, recRes, pieceRes] = await Promise.all([
     api(`/api/features?projectId=${encodeURIComponent(currentProject)}`).catch(() => ({ features: [] })),
     api(`/api/rules?projectId=${encodeURIComponent(currentProject)}`).catch(() => ({ rules: [] })),
@@ -5252,56 +5498,25 @@ async function renderFeaturesRules() {
     task: (taskRes.tasks || []).filter((t) => !t.project || t.project === currentProject).map((t) => ({ id: t.id, label: `${t.id} — ${(t.title || t.request || '').slice(0, 50)}` })),
     recette: (recRes.recettes || []).map((r) => ({ id: r.recette_id, label: `${r.recette_id} — ${(r.title || '').slice(0, 50)}` })),
   };
-  const featRows = features.map((f) => `<tr>
-    <td><strong>${esc(f.ref)}</strong>${f.emergent ? ' <span class="chip" title="émergent">émergent</span>' : ''}</td>
-    <td>${esc(f.role || '—')}</td>
-    <td>${adrCellText(f.userStory, 200)}</td>
-    <td class="fr-links" data-fr-links="${esc(f.id)}"><span class="muted-sm">…</span></td>
-    <td class="e2e-actions">
-      <button type="button" class="ghost tiny" data-fr-edit="${esc(f.id)}">Éditer</button>
-      <button type="button" class="ghost tiny" data-fr-detail="${esc(f.id)}">Détail</button>
-      <button type="button" class="ghost tiny" data-fr-link="${esc(f.id)}">Lier</button>
-    </td>
-  </tr>`).join('');
-  const ruleRows = rules.map((r) => `<tr>
-    <td><strong>${esc(r.ref)}</strong>${r.emergent ? ' <span class="chip" title="émergente">émergente</span>' : ''}</td>
-    <td>${adrCellText(r.content, 220)}</td>
-    <td class="fr-links" data-rule-links="${esc(r.id)}"><span class="muted-sm">…</span></td>
-    <td class="e2e-actions">
-      <button type="button" class="ghost tiny" data-rule-edit="${esc(r.id)}">Éditer</button>
-      <button type="button" class="ghost tiny" data-rule-detail="${esc(r.id)}">Détail</button>
-      <button type="button" class="ghost tiny" data-rule-link="${esc(r.id)}">Lier</button>
-    </td>
-  </tr>`).join('');
+  // Index DÉTERMINISTE des liens (A003) : alimente la colonne « Liens » ET les
+  // filtres « sans lien » des DEUX sous-onglets (un seul passage réseau).
+  const linkIndex = await loadFeatureRuleLinkIndex(features, rules);
+  const subtabBtn = (tab, label, count) => `<button type="button" class="pd-tab ${frSubTab === tab ? 'active' : ''}" data-fr-subtab="${tab}">${esc(label)} <span class="muted-sm">(${count})</span></button>`;
   pane.innerHTML = `
-    <h2>Fonctionnalités / Règles métier <span class="muted-sm">${esc(currentProject)}</span></h2>
-    <p class="muted-sm">Table structurée (<code>Ref</code>, rôle, user story) + règles métier et leurs liens (règle / Gherkin / ADR) et rattachements (sprint / tâches / recettes). L'agent propose, l'humain valide/ajuste.</p>
-    <div class="adr-pane-filters">
-      <span class="muted-sm">${features.length} fonctionnalité(s) · ${rules.length} règle(s)</span>
-      <button type="button" class="launch-btn" id="fr-new-feat">+ Nouvelle fonctionnalité</button>
-      <button type="button" class="launch-btn" id="fr-new-rule">+ Nouvelle règle</button>
+    <h2>Fonctionnalités & Règles métier <span class="muted-sm">${esc(currentProject)}</span></h2>
+    <p class="muted-sm">Deux natures d'entités, deux sous-onglets : <strong>Fonctionnalités</strong> (<code>US-xxx</code>) et <strong>Règles métier</strong> (<code>RM-xxxx</code>). Chacun a ses propres filtres et son CRUD. L'agent propose, l'humain valide/ajuste.</p>
+    <div class="pd-tabs fr-subtabs">
+      ${subtabBtn('features', 'Fonctionnalités', features.length)}
+      ${subtabBtn('rules', 'Règles métier', rules.length)}
     </div>
-    <h3 style="margin-top:12px">Fonctionnalités</h3>
-    <div class="adr-table-wrap"><table class="adr-table">
-      <thead><tr><th>Ref</th><th>Rôle</th><th>User story</th><th>Liens</th><th>Actions</th></tr></thead>
-      <tbody>${featRows || '<tr><td colspan="5" class="muted-sm" style="padding:10px">Aucune fonctionnalité pour ce projet.</td></tr>'}</tbody>
-    </table></div>
-    <h3 style="margin-top:16px">Règles métier</h3>
-    <div class="adr-table-wrap"><table class="adr-table">
-      <thead><tr><th>Ref</th><th>Contenu</th><th>Liens</th><th>Actions</th></tr></thead>
-      <tbody>${ruleRows || '<tr><td colspan="4" class="muted-sm" style="padding:10px">Aucune règle métier pour ce projet.</td></tr>'}</tbody>
-    </table></div>`;
-  const newFeat = document.getElementById('fr-new-feat');
-  if (newFeat) newFeat.addEventListener('click', () => featureFormModal(null, pieces, renderFeaturesRules));
-  const newRule = document.getElementById('fr-new-rule');
-  if (newRule) newRule.addEventListener('click', () => ruleFormModal(null, pieces, renderFeaturesRules));
-  pane.querySelectorAll('[data-fr-edit]').forEach((b) => b.addEventListener('click', () => featureFormModal(features.find((f) => f.id === b.dataset.frEdit), pieces, renderFeaturesRules)));
-  pane.querySelectorAll('[data-rule-edit]').forEach((b) => b.addEventListener('click', () => ruleFormModal(rules.find((r) => r.id === b.dataset.ruleEdit), pieces, renderFeaturesRules)));
-  pane.querySelectorAll('[data-fr-detail]').forEach((b) => b.addEventListener('click', () => featureDetailModal(b.dataset.frDetail)));
-  pane.querySelectorAll('[data-rule-detail]').forEach((b) => b.addEventListener('click', () => ruleDetailModal(b.dataset.ruleDetail)));
-  pane.querySelectorAll('[data-fr-link]').forEach((b) => b.addEventListener('click', () => linkModal(LINK_PRESETS.feature, b.dataset.frLink, refs, renderFeaturesRules)));
-  pane.querySelectorAll('[data-rule-link]').forEach((b) => b.addEventListener('click', () => linkModal(LINK_PRESETS.rule, b.dataset.ruleLink, refs, renderFeaturesRules)));
-  enrichLinkCells();
+    <div class="pd-panel fr-subpanel" id="fr-subpanel"></div>`;
+  pane.querySelectorAll('[data-fr-subtab]').forEach((b) => b.addEventListener('click', () => {
+    frSubTab = b.dataset.frSubtab === 'rules' ? 'rules' : 'features';
+    persistFrSubTab();
+    pane.querySelectorAll('[data-fr-subtab]').forEach((x) => x.classList.toggle('active', x.dataset.frSubtab === frSubTab));
+    renderFrSubpanel(features, rules, refs, pieces, linkIndex);
+  }));
+  renderFrSubpanel(features, rules, refs, pieces, linkIndex);
 }
 
 // ===========================================================================

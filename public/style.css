@@ -955,3 +955,23 @@ body.readonly #agent-session-btn {
 }
 .adr-vig-block .adr-vig-reasons { margin: 8px 0 4px; padding-left: 18px; }
 .adr-vig-block .adr-vig-reasons li { margin-bottom: 4px; }
+
+/* --- Gestionnaire central d'artefacts (T-20260920-162801-jxtr) -------------
+   Onglet « Artefacts » : liste TOUTES les entités (tâche/recette/projet/ADR/E2E),
+   colonnes Entité / Type (doc_type) / Nature (kind), filtres + recherche. */
+.art-filters {
+  display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 10px 0 14px;
+}
+.art-filters select, .art-filters input { min-width: 150px; }
+.art-manager { width: 100%; border-collapse: collapse; font-size: 12px; }
+.art-manager th {
+  text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border, #2b3242);
+  color: var(--muted, #9aa4b2); font-weight: 600; white-space: nowrap;
+}
+.art-manager td { padding: 6px 8px; border-bottom: 1px solid var(--border, #2b3242); vertical-align: top; }
+.art-manager tr:last-child td { border-bottom: none; }
+.art-entity { display: inline-flex; align-items: center; gap: 6px; }
+.badge.art-entity-kind { background: #23324a; color: #9fc0ff; }
+.badge.art-type { background: #2a3a2a; color: var(--green, #6fdc8c); }
+.badge.art-nature { background: #3a3220; color: var(--yellow, #f0c040); }
+.art-actions { white-space: nowrap; }

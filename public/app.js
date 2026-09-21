@@ -102,7 +102,7 @@ const PROJECT_TABS = [
   ['decisions', 'Décisions'],
   ['plans', 'Plans'],
   ['events', 'Événements'],
-  ['artifacts', 'Documents'],
+  ['artifacts', 'Artefacts'],
   ['e2esecrets', 'Vars & Secrets E2E'],
   ['archives', 'Archives'],
 ];
@@ -1195,16 +1195,133 @@ async function userOrgsModal(userId, username) {
   };
 }
 
-// --- Documents (artifacts liés aux demandes) ------------------------------
+// --- Artefacts : gestionnaire central (toutes entités) ---------------------
+// Taxonomie doc_type (source de vérité : /docs/nomenclature-doc-type.md).
+const DOC_TYPE_LIST = ['adr', 'specs', 'gherkin', 'project_doc', 'adr_file', 'plan', 'task_synthese',
+  'task_report', 'audit_report', 'recette_report', 'recette_doc', 'e2e_report', 'e2e_video', 'autre'];
+const ARTIFACT_KIND_LIST = ['plan', 'audit', 'report', 'autre'];
+let artFilters = { docType: '', contentId: '', kind: '', q: '' };
+
+function artRow(a) {
+  const isMd = /\.md$/i.test(a.path || '');
+  return `<tr>
+    <td><span class="art-entity"><span class="badge art-entity-kind">${esc(a.entity_kind || 'entity')}</span> ${esc(a.entity_label || a.content_id || '')}</span><br><code class="muted-sm">${esc(a.content_id || '')}</code></td>
+    <td><span class="badge art-type">${esc(a.doc_type || '—')}</span></td>
+    <td><span class="badge art-nature">${esc(a.kind || '—')}</span></td>
+    <td>${esc(a.title || (a.path || '').split('/').pop() || a.artifact_id)}<br><span class="muted-sm">${esc(a.path || '')}</span></td>
+    <td class="code">${esc((a.created_at || '').replace('T', ' ').slice(0, 19))}</td>
+    <td class="art-actions">${isMd ? `<button class="ghost" data-art-view="${esc(a.artifact_id)}">Regarder</button> ` : ''}<button class="btn-dl" data-art-dl="${esc(a.artifact_id)}">Télécharger</button></td>
+  </tr>`;
+}
+
 async function renderArtifacts() {
-  const data = await api('/api/artifacts' + taskQuery());
-  const arts = data.artifacts || [];
-  document.getElementById('pane-artifacts').innerHTML = `
-    <h2>Documents liés aux demandes</h2>
-    ${filterBar()}
-    <table><thead><tr><th>Tâche</th><th>Type</th><th>Document</th><th>Ajouté</th><th></th></tr></thead>
-    <tbody>${arts.map((a) => `<tr><td class="code">${esc(a.task_id)}</td><td>${badge(a.kind)}</td><td>${esc(a.title || a.path)}</td><td class="code">${esc((a.created_at || '').replace('T', ' ').slice(0, 19))}</td><td>${/\.md$/i.test(a.path || '') ? `<a class="ghost" href="/view-md.html?task=${encodeURIComponent(a.task_id)}&art=${encodeURIComponent(a.artifact_id)}">Regarder</a> ` : ''}<a class="btn-dl" href="/api/tasks/${encodeURIComponent(a.task_id)}/artifacts/${encodeURIComponent(a.artifact_id)}/download" download>Télécharger</a></td></tr>`).join('') || '<tr><td colspan="5" class="muted">Aucun document</td></tr>'}</tbody></table>`;
-  bindTaskFilter();
+  const pane = document.getElementById('pane-artifacts');
+  const dtOpts = ['', ...DOC_TYPE_LIST].map((v) => `<option value="${esc(v)}"${artFilters.docType === v ? ' selected' : ''}>${v ? esc(v) : '— tous types —'}</option>`).join('');
+  const kOpts = ['', ...ARTIFACT_KIND_LIST].map((v) => `<option value="${esc(v)}"${artFilters.kind === v ? ' selected' : ''}>${v ? esc(v) : '— toutes natures —'}</option>`).join('');
+  pane.innerHTML = `
+    <h2>Artefacts — gestionnaire central</h2>
+    <p class="muted-sm">Tous les artefacts, toutes entités confondues (tâche / recette / projet / ADR / E2E). Type = <code>doc_type</code>, Nature = <code>kind</code>.</p>
+    <div class="art-filters">
+      <select id="art-f-doctype" title="Type (doc_type)">${dtOpts}</select>
+      <select id="art-f-kind" title="Nature (kind)">${kOpts}</select>
+      <input id="art-f-content" placeholder="Entité (content_id)" value="${esc(artFilters.contentId)}">
+      <input id="art-f-q" placeholder="Recherche (titre / chemin)" value="${esc(artFilters.q)}">
+      <button class="ghost" id="art-f-reset" type="button">Réinitialiser</button>
+      <button class="launch-btn" id="art-add" type="button">+ Ajouter un artefact</button>
+    </div>
+    <div id="art-list"><p class="muted-sm">Chargement…</p></div>`;
+
+  const readFilters = () => {
+    artFilters.docType = document.getElementById('art-f-doctype').value;
+    artFilters.kind = document.getElementById('art-f-kind').value;
+    artFilters.contentId = document.getElementById('art-f-content').value.trim();
+    artFilters.q = document.getElementById('art-f-q').value.trim();
+  };
+  const reload = async () => {
+    const q = new URLSearchParams();
+    if (artFilters.docType) q.set('docType', artFilters.docType);
+    if (artFilters.kind) q.set('kind', artFilters.kind);
+    if (artFilters.contentId) q.set('contentId', artFilters.contentId);
+    if (artFilters.q) q.set('q', artFilters.q);
+    if (currentProject) q.set('project', currentProject);
+    let arts = [];
+    try { arts = ((await api('/api/artifacts?' + q.toString())).artifacts || []); } catch (e) { /* liste vide */ }
+    document.getElementById('art-list').innerHTML = arts.length
+      ? `<table class="art-manager"><thead><tr><th>Entité</th><th>Type</th><th>Nature</th><th>Titre</th><th>Ajouté</th><th></th></tr></thead><tbody>${arts.map(artRow).join('')}</tbody></table>`
+      : '<p class="muted-sm">Aucun artefact pour ces filtres.</p>';
+    document.querySelectorAll('#art-list [data-art-view]').forEach((b) => b.addEventListener('click', () => artViewModal(b.dataset.artView)));
+    document.querySelectorAll('#art-list [data-art-dl]').forEach((b) => b.addEventListener('click', () => {
+      window.location.href = `/api/artifacts/${encodeURIComponent(b.dataset.artDl)}/download`;
+    }));
+  };
+  document.getElementById('art-f-doctype').addEventListener('change', () => { readFilters(); reload(); });
+  document.getElementById('art-f-kind').addEventListener('change', () => { readFilters(); reload(); });
+  document.getElementById('art-f-content').addEventListener('change', () => { readFilters(); reload(); });
+  document.getElementById('art-f-q').addEventListener('change', () => { readFilters(); reload(); });
+  document.getElementById('art-f-reset').addEventListener('click', () => { artFilters = { docType: '', contentId: '', kind: '', q: '' }; renderArtifacts(); });
+  document.getElementById('art-add').addEventListener('click', () => artAddModal(reload));
+  await reload();
+}
+
+// Visionneuse markdown in-app (évite de dépendre de view-md.html).
+async function artViewModal(artifactId) {
+  try {
+    const v = await api(`/api/artifacts/${encodeURIComponent(artifactId)}/view`);
+    showModal(`<div class="modal modal-wide modal-md">
+      <div class="md-head"><strong>${esc(v.title || 'Artefact')}</strong> <span class="badge art-type">${esc(v.docType || '')}</span> <span class="badge art-nature">${esc(v.kind || '')}</span></div>
+      <div class="md-body markdown-view">${v.html}</div>
+      <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div></div>`);
+    document.getElementById('modal-cancel').onclick = closeModal;
+  } catch (e) { alert('Impossible d\'ouvrir l\'artefact : ' + (e.message || e)); }
+}
+
+// Modale « Ajouter un artefact » (toute entité) → POST /api/artifacts.
+async function artAddModal(onSaved) {
+  const dtOpts = DOC_TYPE_LIST.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+  const kOpts = ARTIFACT_KIND_LIST.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+  // Autocomplétion des entités (tâches / recettes / projets / docs).
+  const entities = [];
+  try { for (const t of ((await api('/api/tasks')).tasks || [])) entities.push({ id: t.id, label: `${t.id} — ${(t.title || t.request || '').slice(0, 50)}` }); } catch {}
+  try { for (const r of ((await api('/api/recettes')).recettes || [])) entities.push({ id: r.recette_id, label: `${r.recette_id} — ${(r.title || '').slice(0, 50)}` }); } catch {}
+  try { for (const p of ((await api('/api/projects')).projects || [])) entities.push({ id: p.id, label: `${p.id} — ${p.name || ''}` }); } catch {}
+  const dlOpts = entities.map((e) => `<option value="${esc(e.id)}">${esc(e.label)}</option>`).join('');
+  showModal(`<div class="modal">
+    <h2>Ajouter un artefact</h2>
+    <form id="art-add-form" class="pilot-form">
+      <label class="modal-field">Type (doc_type)</label><select id="aa-doctype">${dtOpts}</select>
+      <label class="modal-field">Entité porteuse (content_id)</label>
+      <input id="aa-content" list="aa-entities" placeholder="T-… / RECT-… / projet / doc-…" required>
+      <datalist id="aa-entities">${dlOpts}</datalist>
+      <label class="modal-field">Nature (kind)</label><select id="aa-kind">${kOpts}</select>
+      <input id="aa-title" placeholder="titre (optionnel)">
+      <input id="aa-path" placeholder="chemin absolu du fichier" required>
+      <textarea id="aa-nature" class="modal-textarea" placeholder="nature / à quoi sert ce document (optionnel)"></textarea>
+      <div class="modal-actions">
+        <button type="button" class="ghost" id="modal-cancel">Annuler</button>
+        <button type="submit" class="launch-btn">Ajouter</button>
+      </div>
+    </form>
+    <div id="art-add-msg" class="msg"></div>
+  </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('art-add-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById('art-add-msg');
+    try {
+      const body = {
+        docType: document.getElementById('aa-doctype').value,
+        contentId: document.getElementById('aa-content').value.trim(),
+        kind: document.getElementById('aa-kind').value,
+        title: document.getElementById('aa-title').value.trim() || undefined,
+        path: document.getElementById('aa-path').value.trim(),
+        nature: document.getElementById('aa-nature').value.trim() || undefined,
+      };
+      await api('/api/artifacts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      closeModal();
+      msg('Artefact ajouté.');
+      if (onSaved) await onSaved();
+    } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
+  });
 }
 
 // --- Recettes (v0.8.0) : objet de projet -----------------------------------
@@ -3812,7 +3929,7 @@ async function projectDetailModal(projectId, tab = 'projet') {
     const tabs = [
       ['projet', 'Projet'],
       ['repos', `Repos (${pRepos.length})`],
-      ['docs', `Documents (${pDocs.length})`],
+      ['docs', `Documents de référence (${pDocs.length})`],
       ['adr', `ADR (${pAdrs.length})`],
     ];
     showModal(`
@@ -4136,10 +4253,19 @@ async function projectDetailModal(projectId, tab = 'projet') {
 
 // Libellé court d'un kind de document (ADR-12).
 function docKindLabel(kind) {
-  return { 'adr-tech': 'ADR tech', 'specs-fonctionnelles': 'Specs fonct.', 'scenarios-gherkin': 'Gherkin' }[kind] || kind;
+  return {
+    'adr-tech': 'ADR tech', 'specs-fonctionnelles': 'Specs fonct.', 'scenarios-gherkin': 'Gherkin',
+    // doc_type (taxonomie polymorphe — nomenclature-doc-type.md)
+    adr: 'ADR tech', specs: 'Specs fonct.', gherkin: 'Gherkin', project_doc: 'Doc projet',
+    adr_file: 'Pièce jointe ADR',
+  }[kind] || kind;
 }
 function docKindLabelLong(kind) {
-  return { 'adr-tech': 'ADR — Architecture technique', 'specs-fonctionnelles': 'Spécifications fonctionnelles (User stories / règles métier)', 'scenarios-gherkin': 'Scénarios (Gherkin)' }[kind] || kind;
+  return {
+    'adr-tech': 'ADR — Architecture technique', 'specs-fonctionnelles': 'Spécifications fonctionnelles (User stories / règles métier)', 'scenarios-gherkin': 'Scénarios (Gherkin)',
+    adr: 'ADR — Architecture technique', specs: 'Spécifications fonctionnelles (User stories / règles métier)', gherkin: 'Scénarios (Gherkin)',
+    project_doc: 'Document de référence du projet',
+  }[kind] || kind;
 }
 const DOC_KIND_ORDER = ['adr-tech', 'specs-fonctionnelles', 'scenarios-gherkin'];
 
@@ -4934,7 +5060,7 @@ async function taskActionsModal(taskId) {
       <div class="actions-section">
         <h3>Consulter</h3>
         <div class="actions-buttons">
-          <button class="ghost" data-goto="artifacts">Documents</button>
+          <button class="ghost" data-goto="artifacts">Artefacts</button>
           <button class="ghost" data-goto="events">Événements</button>
           <button class="ghost" data-goto="deployments">Déploiements</button>
           <button class="ghost" data-goto="decisions">Décisions</button>

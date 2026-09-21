@@ -443,24 +443,89 @@ async function registryDeployments(url) {
    return { decisions: rows.filter((d) => !archived.has(d.task_id)) };
  }
 
+// Taxonomie `doc_type` (source de vérité : public/docs/nomenclature-doc-type.md).
+const DOC_TYPES = ["adr", "specs", "gherkin", "project_doc", "adr_file", "plan", "task_synthese",
+  "task_report", "audit_report", "recette_report", "recette_doc", "e2e_report", "e2e_video", "autre"];
+const TASK_DOC_TYPES = ["plan", "task_synthese", "task_report", "audit_report", "autre"];
+const RECETTE_DOC_TYPES = ["recette_doc", "recette_report"];
+const DOCS_DOC_TYPES = ["adr", "specs", "gherkin", "project_doc"];
+const ARTIFACT_KINDS = ["plan", "audit", "report", "autre"];
+
+// Gestionnaire CENTRAL d'artefacts (T-20260920-162801-jxtr) : liste TOUS les
+// artefacts, toutes entités confondues, identifiés par (doc_type, content_id).
+// Filtres : docType, contentId, kind, q (titre/path), project, taskId (rétrocompat).
 async function registryArtifacts(url) {
   const db = registry();
   const archived = await archivedTaskIds();
   const taskId = url.searchParams.get("taskId");
   const project = url.searchParams.get("project");
+  const docType = url.searchParams.get("docType");
+  const contentId = url.searchParams.get("contentId");
+  const kind = url.searchParams.get("kind");
+  const qtext = url.searchParams.get("q");
+  const conds = [];
+  const params = [];
+  if (taskId) {
+    // Rétrocompat `artifact_list(taskId)` : famille task uniquement.
+    params.push(taskId); conds.push(`a.content_id = $${params.length}`);
+    params.push(TASK_DOC_TYPES); conds.push(`a.doc_type = ANY($${params.length})`);
+  }
+  if (docType) { params.push(docType); conds.push(`a.doc_type = $${params.length}`); }
+  if (contentId) { params.push(contentId); conds.push(`a.content_id = $${params.length}`); }
+  if (kind) { params.push(kind); conds.push(`a.kind = $${params.length}`); }
+  if (qtext) { params.push(`%${qtext}%`); conds.push(`(a.title ILIKE $${params.length} OR a.path ILIKE $${params.length})`); }
+  if (project) {
+    params.push(project);
+    conds.push(`(a.artifact_id IN (SELECT artifact_id FROM artifact_projects WHERE project_id = $${params.length}) OR a.content_id IN (SELECT id FROM tasks WHERE project = $${params.length}))`);
+  }
+  params.push(TASK_DOC_TYPES);
+  const taskTypeParam = params.length;
   let rows = [];
   try {
-    if (taskId) {
-      rows = (await db.query("SELECT * FROM artifacts WHERE task_id = $1 ORDER BY id DESC", [taskId])).rows;
-    } else if (project) {
-      rows = (await db.query(
-        `SELECT a.* FROM artifacts a JOIN tasks t ON t.id = a.task_id
-         WHERE t.project = $1 ORDER BY a.id DESC LIMIT 500`, [project])).rows;
-    } else {
-      rows = (await db.query("SELECT * FROM artifacts ORDER BY id DESC LIMIT 500")).rows;
-    }
+    rows = (await db.query(
+      `SELECT a.*, t.title AS task_title, r.title AS recette_title, p.name AS project_name
+       FROM artifacts a
+       LEFT JOIN tasks t ON t.id = a.content_id AND a.doc_type = ANY($${taskTypeParam})
+       LEFT JOIN recettes r ON r.recette_id = a.content_id
+       LEFT JOIN projects p ON p.id = a.content_id
+       ${conds.length ? "WHERE " + conds.join(" AND ") : ""}
+       ORDER BY a.id DESC LIMIT 1000`,
+      params,
+    )).rows;
   } catch { rows = []; }
-  return { artifacts: rows.filter((a) => !archived.has(a.task_id)) };
+  // Entité résolue (libellé) ; `archived` ne filtre QUE la famille task.
+  const artifacts = rows
+    .filter((a) => !(TASK_DOC_TYPES.includes(a.doc_type) && archived.has(a.content_id)))
+    .map((a) => ({
+      ...a,
+      entity: a.content_id,
+      entity_label: a.task_title || a.recette_title || a.project_name || a.content_id,
+      entity_kind: a.task_title ? "task" : (a.recette_title ? "recette" : (a.project_name ? "project" : (String(a.content_id || "").startsWith("doc-") ? "doc" : "entity"))),
+    }));
+  return { artifacts };
+}
+
+// Ajout d'un artefact depuis le gestionnaire central (toute entité).
+async function createArtifactCentral(b, user) {
+  const db = registry();
+  const docType = String(b.docType || "autre").trim();
+  const kind = String(b.kind || "autre").trim();
+  if (!DOC_TYPES.includes(docType)) throw new Error(`docType invalide : ${docType} (cf. public/docs/nomenclature-doc-type.md)`);
+  if (!ARTIFACT_KINDS.includes(kind)) throw new Error(`kind invalide : ${kind} (attendu : ${ARTIFACT_KINDS.join(" | ")})`);
+  if (!b.contentId || !String(b.contentId).trim()) throw new Error("contentId requis (entité porteuse)");
+  if (!b.path || !String(b.path).trim()) throw new Error("path requis (chemin absolu du fichier)");
+  const artifactId = `ART-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  const meta = b.meta && typeof b.meta === "object" ? b.meta : null;
+  await db.query(
+    `INSERT INTO artifacts (artifact_id, doc_type, content_id, kind, title, path, nature, source, meta, organization_id, created_at, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+    [artifactId, docType, String(b.contentId).trim(), kind, b.title ?? null, String(b.path).trim(),
+     b.nature ?? null, b.source || "import", meta,
+     b.organizationId || (user && (user.activeOrganizationId || user.organizationId)) || null,
+     new Date().toISOString(), (user && user.username) || null],
+  );
+  const artifact = (await db.query("SELECT * FROM artifacts WHERE artifact_id = $1", [artifactId])).rows[0];
+  return { ok: true, artifact };
 }
 
 async function registryPlans(url) {
@@ -544,8 +609,11 @@ async function downloadArtifact(res, taskId, artifactId) {
   const notFound = () => { res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }); return res.end("Document introuvable"); };
   let a;
   try {
-    a = (await db.query("SELECT * FROM artifacts WHERE artifact_id = $1 AND task_id = $2", [artifactId, taskId])).rows[0];
+    // Le téléchargement ne dépend plus de `task_id` (artefact polymorphe).
+    a = (await db.query("SELECT * FROM artifacts WHERE artifact_id = $1", [artifactId])).rows[0];
   } catch { return notFound(); }
+  // Rétrocompat route legacy : contrôle souple (famille task uniquement).
+  if (a && taskId && TASK_DOC_TYPES.includes(a.doc_type) && a.content_id !== taskId) return notFound();
   if (!a || !a.path) return notFound();
   if (!existsSync(a.path) || statSync(a.path).isDirectory()) return notFound();
   const filename = basename(a.path);
@@ -564,8 +632,10 @@ async function viewArtifact(res, taskId, artifactId) {
   const notFound = (msg) => sendJson(res, 404, { error: msg || "Document introuvable" });
   let a;
   try {
-    a = (await db.query("SELECT * FROM artifacts WHERE artifact_id = $1 AND task_id = $2", [artifactId, taskId])).rows[0];
+    // La visionneuse ne dépend plus de `task_id` (artefact polymorphe).
+    a = (await db.query("SELECT * FROM artifacts WHERE artifact_id = $1", [artifactId])).rows[0];
   } catch { return notFound(); }
+  if (a && taskId && TASK_DOC_TYPES.includes(a.doc_type) && a.content_id !== taskId) return notFound();
   if (!a || !a.path) return notFound();
   if (!existsSync(a.path) || statSync(a.path).isDirectory()) return notFound();
   if (extname(a.path).toLowerCase() !== ".md") {
@@ -573,7 +643,7 @@ async function viewArtifact(res, taskId, artifactId) {
   }
   const raw = readFileSync(a.path, "utf8");
   const html = marked.parse(raw);
-  return sendJson(res, 200, { artifactId, taskId, title: a.title || basename(a.path), html });
+  return sendJson(res, 200, { artifactId, taskId: a.content_id, docType: a.doc_type, kind: a.kind, title: a.title || basename(a.path), html });
 }
 
 async function registryArchives() {
@@ -1043,11 +1113,12 @@ async function registryE2ETestDetail(res, id) {
   ));
   // ADR-12 : documents de référence du projet (contexte test-agent / recette).
   const docs = (await q(
-    `SELECT DISTINCT d.id AS "docId", d.kind, d.title, d.path, d.description
-     FROM docs d
-     WHERE d.id IN (SELECT doc_id FROM doc_projects WHERE project_id = $1)
-        OR d.id IN (SELECT dr.doc_id FROM doc_repos dr JOIN project_repos pr ON pr.repo_id = dr.repo_id WHERE pr.project_id = $1)
-     ORDER BY d.kind, d.title NULLS LAST, d.created_at DESC`, [row.project],
+    `SELECT DISTINCT a.artifact_id AS "docId", a.doc_type AS kind, a.title, a.path, a.description
+     FROM artifacts a
+     WHERE a.doc_type IN ('adr','specs','gherkin','project_doc')
+       AND (a.artifact_id IN (SELECT artifact_id FROM artifact_projects WHERE project_id = $1)
+         OR a.artifact_id IN (SELECT ar.artifact_id FROM artifact_repos ar JOIN project_repos pr ON pr.repo_id = ar.repo_id WHERE pr.project_id = $1))
+     ORDER BY a.doc_type, a.title NULLS LAST, a.created_at DESC`, [row.project],
   ));
   const params = (await q("SELECT name, kind, default_value, secret_ref, required FROM e2e_test_params WHERE e2e_test_id = $1 ORDER BY name", [id])).map((x) => ({
     name: x.name,
@@ -1903,7 +1974,19 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, await pilot.resolveDecision({ decisionId: resolveMatch[1], status: b.status, resolution: b.resolution, by: user.username }));
     }
 
+    // Ajout d'un artefact pour TOUTE entité (gestionnaire central).
+    if (path === "/api/artifacts" && req.method === "POST") {
+      const b = await readBody(req);
+      try { return sendJson(res, 201, await createArtifactCentral(b, user)); }
+      catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
     if (path === "/api/artifacts") return sendJson(res, 200, await registryArtifacts(url));
+    // Gestionnaire central : « Regarder » / « Télécharger » pour TOUT artefact.
+    const artCentralView = path.match(/^\/api\/artifacts\/([^/]+)\/view$/);
+    if (artCentralView) return viewArtifact(res, null, decodeURIComponent(artCentralView[1]));
+    const artCentralDownload = path.match(/^\/api\/artifacts\/([^/]+)\/download$/);
+    if (artCentralDownload) return downloadArtifact(res, null, decodeURIComponent(artCentralDownload[1]));
+    // Routes legacy (rétrocompat `view-md.html`).
     const artDownload = path.match(/^\/api\/tasks\/([^/]+)\/artifacts\/([^/]+)\/download$/);
     if (artDownload) return downloadArtifact(res, artDownload[1], artDownload[2]);
     const artView = path.match(/^\/api\/tasks\/([^/]+)\/artifacts\/([^/]+)\/view$/);
@@ -2020,7 +2103,7 @@ const server = createServer(async (req, res) => {
         `SELECT r.*,
            (SELECT COUNT(*) FROM recette_tasks rt WHERE rt.recette_id = r.recette_id) AS tasks_count,
            (SELECT COUNT(*) FROM recette_items i WHERE i.recette_id = r.recette_id) AS items_count,
-           (SELECT COUNT(*) FROM recette_documents d WHERE d.recette_id = r.recette_id) AS documents_count,
+           (SELECT COUNT(*) FROM artifacts a WHERE a.content_id = r.recette_id AND a.doc_type IN ('recette_doc','recette_report')) AS documents_count,
            (SELECT COUNT(*) FROM adr_vigilances v WHERE v.recette_id = r.recette_id AND v.status = 'open') AS adr_vigilances_count
          FROM recettes r
          ${conds.length ? "WHERE " + conds.join(" AND ") : ""}
@@ -2112,7 +2195,7 @@ const server = createServer(async (req, res) => {
     }
     const recetteDocView = path.match(/^\/api\/recettes\/([^/]+)\/documents\/([0-9]+)\/view$/);
     if (recetteDocView && req.method === "GET") {
-      const d = (await registry().query("SELECT * FROM recette_documents WHERE id = $1", [Number(recetteDocView[2])])).rows[0];
+      const d = (await registry().query("SELECT * FROM artifacts WHERE id = $1 AND doc_type = ANY($2)", [Number(recetteDocView[2]), RECETTE_DOC_TYPES])).rows[0];
       if (!d || !d.path || !existsSync(d.path)) return sendJson(res, 404, { error: "document introuvable" });
       const raw = readFileSync(d.path, "utf8");
       const html = /\.md$/i.test(d.path) ? marked.parse(raw) : null;
@@ -2143,9 +2226,10 @@ const server = createServer(async (req, res) => {
          WHERE rt.recette_id = $1 ORDER BY rt.task_id`, [r.recette_id],
       )).rows.map((x) => ({ taskId: x.task_id, project: x.project || '', title: x.title || x.task_id, request: x.request || '' }));
       const docs = (await registry().query(
-        `SELECT d.id, d.title, d.nature, d.source, d.path, d.artifact_id, d.created_at, a.title AS artifact_title, a.task_id AS artifact_task
-         FROM recette_documents d LEFT JOIN artifacts a ON a.artifact_id = d.artifact_id
-         WHERE d.recette_id = $1 ORDER BY d.id ASC`, [r.recette_id],
+        `SELECT d.id, d.artifact_id, d.title, d.nature, d.source, d.path, d.created_at,
+                a.title AS artifact_title, a.content_id AS artifact_task
+         FROM artifacts d LEFT JOIN artifacts a ON a.artifact_id = (d.meta->>'artifactId')
+         WHERE d.content_id = $1 AND d.doc_type = ANY($2) ORDER BY d.id ASC`, [r.recette_id, RECETTE_DOC_TYPES],
       )).rows;
       // Points de vigilance ADR (item 126) — historique + points OUVERTs qui
       // BLOQUENT la terminaison (la modale de clôture les affiche avec la raison).

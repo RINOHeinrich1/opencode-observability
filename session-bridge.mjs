@@ -332,11 +332,16 @@ export function buildReworkPrompt({ taskId, remarks, by }) {
  * La recette est un objet de PROJET (titre + 0..N tâches couvertes).
  * Mission + cadre, jamais méthode.
  */
-export function buildRecettePrompt({ project, repos, title, taskIds, docs = [] }) {
+export function buildRecettePrompt({ project, repos, title, taskIds, docs = [], adrContext = "" }) {
   const proj = (project && String(project).trim()) || "";
   const repoBlock = (repos && repos.length)
     ? `  Repos transverses du projet (portée réelle — ADR 11) : ${repos.map((x) => x.repoId || x.id || x).join(", ")}`
     : "";
+  // Bloc ADR (item 125) : « ## ADR de référence » construit par `adr_context`
+  // (sélection ADR du panneau ou ADR actives du projet). Additif et non cassant.
+  const adrBlock = (adrContext && String(adrContext).trim())
+    ? ["", String(adrContext).trim(), ""]
+    : [];
   const docBlock = (docs && docs.length)
     ? [
         "",
@@ -352,6 +357,7 @@ export function buildRecettePrompt({ project, repos, title, taskIds, docs = [] }
     taskIds && taskIds.length ? `Tâches couvertes par cette recette : ${taskIds.join(", ")}.` : "Cette recette ne couvre aucune tâche (parcours global / exploratoire).",
     "Une recette = **un seul projet** (produit). Sa portée réelle est couverte par les **repos transverses du projet** (ex: le projet mada-talk traverse les repos mada-talk et oniria). Chaque élément relevé est rattaché au **projet de la recette** (la future tâche y sera créée) — le `project` de `recette_item_add` doit être le projet de la recette, jamais un repo transverse.",
     "Les tâches couvertes restent HISTORIQUEMENT INTACTES : tu ne les modifies jamais (aucune transition, aucun rework direct).",
+    ...adrBlock,
     ...docBlock,
     "Mission :",
     "- Récupère le contexte : `recette_get(<recetteId>)` (titre, projet, repos transverses, tâches couvertes, éléments), et pour chaque tâche couverte `task_get` (plans, commits, artefacts, tâches liées), `artifact_list`, `events_list`.",
@@ -368,9 +374,13 @@ export function buildRecettePrompt({ project, repos, title, taskIds, docs = [] }
 // (agent `test-agent`). Le test est une entité de 1er niveau : la session est
 // rattachée au test (e2e_tests.session_id). mission ≠ méthode : le prompt porte
 // la mission et le cadre, jamais la méthode d'écriture du spec.
-export function buildTestPrompt({ e2eTestId, project, projects, title, description, mode = "create", specFile, scenario, docs = [] }) {
+export function buildTestPrompt({ e2eTestId, project, projects, title, description, mode = "create", specFile, scenario, docs = [], adrContext = "" }) {
   const projs = (projects && projects.length ? projects : (project ? [project] : []));
   const first = projs[0] || project || "";
+  // Bloc ADR (item 125) : « ## ADR de référence » (adr_context). Additif.
+  const adrBlock = (adrContext && String(adrContext).trim())
+    ? ["", String(adrContext).trim(), ""]
+    : [];
   const header =
     mode === "create"
       ? `Ouvre la session de CRÉATION du test E2E **« ${title || first} »** (projet repo source : ${projs.join(", ")}) (cadrage 08). Le test n'existe pas encore — tu vas le créer de bout en bout.`
@@ -391,6 +401,7 @@ export function buildTestPrompt({ e2eTestId, project, projects, title, descripti
     description ? `Comportement à couvrir : ${description}.` : "Comportement à couvrir : à préciser avec l'utilisateur.",
     specFile ? `Emplacement du spec : \`${specFile}\`.` : "Emplacement du spec : à déterminer (tests/playwright/ ou testDir de la config du dépôt).",
     scenario ? `Scénario cible : ${scenario}.` : "",
+    ...adrBlock,
     ...docBlock,
     "",
     "Mission :",
@@ -407,9 +418,13 @@ export function buildTestPrompt({ e2eTestId, project, projects, title, descripti
 // Prompt d'une session test-agent LIBRE (hors entité test) : l'utilisateur veut
 // dialoguer avec l'agent de test sans forcément créer de test (questions,
 // diagnostic, conseils, exploration). Mission + cadre, jamais méthode.
-export function buildFreeTestPrompt({ project, projects, message, docs = [] }) {
+export function buildFreeTestPrompt({ project, projects, message, docs = [], adrContext = "" }) {
   const projs = (projects && projects.length ? projects : (project ? [project] : []));
   const first = projs[0] || project || "";
+  // Bloc ADR (item 125) : « ## ADR de référence » (adr_context). Additif.
+  const adrBlock = (adrContext && String(adrContext).trim())
+    ? ["", String(adrContext).trim(), ""]
+    : [];
   const docBlock = (docs && docs.length)
     ? [
         "",
@@ -424,6 +439,7 @@ export function buildFreeTestPrompt({ project, projects, message, docs = [] }) {
     "",
     "Tu es l'agent dédié au cycle de vie des tests E2E Playwright (entités de 1er niveau) : tu aides l'utilisateur à créer/mettre à jour/supprimer un test, à comprendre le référentiel, à diagnostiquer un écart ou à préparer un spec. Cette session est LIBRE : aucun test n'est nécessairement créé — suis la demande de l'utilisateur.",
     message ? `Demande de l'utilisateur : ${message}` : "Demande de l'utilisateur : à préciser.",
+    ...adrBlock,
     ...docBlock,
     "Contexte utile :",
     "- `e2e_list` (référentiel des tests existants, éviter les doublons), `e2e_test_get` (détail d'un test), `doc_list` (documents de référence ADR/specs/Gherkin du projet), `e2e_var_list` (variables & secrets E2E déclarés pour le projet — nécessaires au run d'un spec).",

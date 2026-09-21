@@ -590,6 +590,33 @@ export async function docGet(docId) {
   return (r && r.doc) || null;
 }
 
+// --- Famille ADR `adr_*` (item 125) : lecture condensée + bloc de contexte ---
+// `listAdrs` : vue condensée des ADR d'un projet (titre, statut, repos, décision).
+export async function listAdrs(args = {}) {
+  return taskOrchestrator("adr_list", {
+    projectId: args.projectId || undefined,
+    repoIds: Array.isArray(args.repoIds) && args.repoIds.length ? args.repoIds : undefined,
+    status: args.status || undefined,
+    search: args.search || undefined,
+    includeRepoDocs: args.includeRepoDocs,
+  });
+}
+
+// `adrContext` : bloc « ## ADR de référence » prêt à injecter dans un prompt.
+// `adrIds` FOURNI vide = sélection explicite vide → aucun ADR (bloc vide) ;
+// `adrIds` absent = ADR actives du projet (filtrage éventuel par `scope`).
+export async function adrContext(args = {}) {
+  if (Array.isArray(args.adrIds) && args.adrIds.length === 0) {
+    return { projectId: args.projectId || null, count: 0, adrs: [], context: "" };
+  }
+  return taskOrchestrator("adr_context", {
+    projectId: args.projectId || undefined,
+    scope: Array.isArray(args.scope) ? args.scope : undefined,
+    adrIds: Array.isArray(args.adrIds) && args.adrIds.length ? args.adrIds : undefined,
+    taskId: args.taskId || undefined,
+  });
+}
+
 // Pièces jointes d'ADR (item 122) : rattacher un document/fichier à une ADR.
 // 3 sources : 'registry' (targetDocId), 'import' (path stocké storage/ref-docs)
 // ou 'ref' (path référencé workspace/checkout).
@@ -664,7 +691,7 @@ export function refDocRelPath(absPath) {
   return String(absPath).replace("/root/orchestrator-panel/storage/", "");
 }
 
-export async function createRecette({ project, title, description, taskIds, documents, docIds, by, organizationId }) {
+export async function createRecette({ project, title, description, taskIds, documents, adrIds, by, organizationId }) {
   if (!project || !String(project).trim()) throw new Error("un projet (produit) requis pour créer une recette — ses repos transverses couvrent la portée");
   if (!title || !String(title).trim()) throw new Error("titre requis pour créer une recette");
   const r = await taskOrchestrator("recette_start", {
@@ -692,25 +719,26 @@ export async function createRecette({ project, title, description, taskIds, docu
       });
     } catch {}
   }
-  // ADR-12 : docs de référence cochées (cases à cocher) → rattachées à la recette
-  // comme documents à lire (chemin existant, nature par kind). L'agent de recette
-  // les liste via recette_get et les lit pour confronter le constat.
-  if (Array.isArray(docIds) && docIds.length) {
-    const wanted = new Set(docIds.map((x) => String(x).trim()).filter(Boolean));
-    const allDocs = [];
+  // ADR (item 125) : ADR sélectionnées (lignes multi-sélection du panneau) →
+  // rattachées à la recette comme documents à lire (chemin existant, nature
+  // `[adr-tech] …`). L'agent de recette les liste via recette_get et les lit
+  // pour confronter le constat. Le module doc_* n'est pas sollicité ici.
+  if (Array.isArray(adrIds) && adrIds.length) {
+    const wanted = new Set(adrIds.map((x) => String(x).trim()).filter(Boolean));
+    let allAdrs = [];
     try {
-      const rl = await taskOrchestrator("doc_list", { projectId: project, includeRepoDocs: true });
-      for (const d of ((rl && rl.docs) || [])) if (d && !allDocs.some((x) => x.docId === d.docId)) allDocs.push(d);
+      const rl = await listAdrs({ projectId: project, includeRepoDocs: true });
+      allAdrs = (rl && rl.adrs) || [];
     } catch {}
-    for (const d of allDocs) {
-      if (!wanted.has(d.docId)) continue;
+    for (const a of allAdrs) {
+      if (!a || !wanted.has(a.adrId)) continue;
       try {
         await taskOrchestrator("recette_doc_add", {
           recetteId,
           source: "import",
-          path: d.path,
-          title: d.title || d.docId,
-          nature: `[${d.kind}] ${d.kind === "adr-tech" ? "Architecture technique" : d.kind === "specs-fonctionnelles" ? "Specs fonctionnelles (User stories/règles métier)" : "Scénarios Gherkin"} — document de référence du projet à lire pour la recette.`,
+          path: a.path,
+          title: a.title || a.adrId,
+          nature: `[adr-tech] Architecture technique — ADR ${a.status || "(sans statut)"}${a.isGlobal ? " (globale)" : ""} à lire pour la recette.`,
         });
       } catch {}
     }
@@ -720,7 +748,7 @@ export async function createRecette({ project, title, description, taskIds, docu
 
 // Lance (ou reprend) la session dédiée de l'agent-recette pour une recette.
 // `force = true` : ignore la session rattachée et en démarre une nouvelle.
-export async function launchRecetteSession({ recetteId, force = false }) {
+export async function launchRecetteSession({ recetteId, force = false, adrIds }) {
   if (!recetteId) throw new Error("recetteId requis");
   return withLaunchLock(`recette:${recetteId}`, async () => {
     const r = await taskOrchestrator("recette_get", { recetteId });
@@ -740,14 +768,12 @@ export async function launchRecetteSession({ recetteId, force = false }) {
         return { recetteId, sessionId: rec.sessionId, resumed: true };
       }
     }
-    // ADR-12 : documents de référence du projet couvert (adr-tech, specs,
-    // gherkin) — lus en contexte par l'agent de recette pour confronter le constat.
-    let recDocs = [];
-    try {
-      const rd = await taskOrchestrator("doc_list", { projectId: proj, includeRepoDocs: true });
-      recDocs = (rd && rd.docs) || [];
-    } catch {}
-    const prompt = buildRecettePrompt({ project: proj, repos: rec.repos || [], title: rec.title, taskIds: rec.tasks || [], docs: recDocs });
+    // ADR (item 125) : bloc de contexte ADR du projet — `adrIds` = sélection du
+    // panneau, sinon les ADR ACTIVES (Proposé/Accepté) du projet. L'agent de
+    // recette confronte le constat à ces décisions (statut + décision + conséquence).
+    let adrCtx = { context: "", adrs: [] };
+    try { adrCtx = await adrContext({ projectId: proj, adrIds, scope: [] }); } catch {}
+    const prompt = buildRecettePrompt({ project: proj, repos: rec.repos || [], title: rec.title, taskIds: rec.tasks || [], adrContext: adrCtx.context || "" });
     const { sessionId } = await launchSession({ dir, agent: "agent-recette", prompt, title: `Recette ${rec.title || proj}` });
     if (!sessionId || !/^ses_/.test(sessionId)) {
       throw new Error("échec de lancement de la session de recette (agent-recette indisponible ?)");
@@ -883,9 +909,10 @@ export async function listTestAgentSessions() {
 
 // Ouvre une session test-agent LIBRE (aucun test créé) dans le workspace d'un
 // projet/repo. Retourne { sessionId } (l'utilisateur reprendra via l'UI).
-// `docIds` (optionnel) : documents de référence (ADR-12) du projet à fournir en
-// contexte (cases à cocher) — défaut : tous les docs du projet.
-export async function launchFreeTestSession({ project, repoId, message, docIds }) {
+// `adrIds` (optionnel) : ADR (item 125) à fournir en contexte (lignes
+// multi-sélection du panneau). Tableau FOURNI vide = aucun ADR ; absent = ADR
+// ACTIVES (Proposé/Accepté) du projet.
+export async function launchFreeTestSession({ project, repoId, message, adrIds }) {
   // Résolution du répertoire d'ancrage : le repo donné (sinon le projet → 1er repo).
   let dir = null;
   if (repoId) {
@@ -893,29 +920,19 @@ export async function launchFreeTestSession({ project, repoId, message, docIds }
   }
   if (!dir && project) dir = await projectGitPath(project);
   const projects = project ? [project] : [];
-  // ADR-12 : documents de référence du projet (+ ses repos), filtrés par docIds.
-  let sessionDocs = [];
+  // ADR (item 125) : bloc de contexte ADR — `adrIds` = sélection du panneau,
+  // sinon les ADR actives du projet. Le module doc_* reste consultable à la demande.
+  let adrCtx = { context: "", adrs: [] };
   if (project) {
-    try {
-      const dr = await taskOrchestrator("doc_list", { projectId: project, includeRepoDocs: true });
-      sessionDocs = (dr && dr.docs) || [];
-    } catch {}
-    if (Array.isArray(docIds)) {
-      if (docIds.length) {
-        const wanted = new Set(docIds.map((x) => String(x).trim()).filter(Boolean));
-        sessionDocs = sessionDocs.filter((d) => d && wanted.has(d.docId));
-      } else {
-        sessionDocs = []; // tableau fourni vide = aucun doc
-      }
-    }
+    try { adrCtx = await adrContext({ projectId: project, adrIds, scope: [] }); } catch {}
   }
   const title = `Session test-agent ${project ? "— " + project : ""}`;
-  const prompt = buildFreeTestPrompt({ project, projects, message, docs: sessionDocs });
+  const prompt = buildFreeTestPrompt({ project, projects, message, adrContext: adrCtx.context || "" });
   const { sessionId } = await launchSession({ dir, agent: "test-agent", prompt, title });
   if (!sessionId || !/^ses_/.test(sessionId)) {
     throw new Error("échec de lancement de la session test-agent (agent indisponible ?)");
   }
-  return { sessionId, resumed: false, dir, docsProvided: sessionDocs.map((d) => d.docId) };
+  return { sessionId, resumed: false, dir, adrProvided: (adrCtx.adrs || []).map((a) => a.adrId) };
 }
 
 // Relance/reprend une session test-agent existante (la continue via injectMessage).
@@ -928,10 +945,11 @@ export async function continueFreeTestSession({ sessionId, message }) {
 
 // Lance (ou reprend) la session de CRÉATION / MISE À JOUR d'un test E2E (entité
 // 1er niveau) via l'agent `test-agent`. `force = true` : nouvelle session.
-// `docIds` (optionnel) : sous-ensemble de documents de référence (ADR-12) à
-// fournir en contexte (les cases à cocher du panneau). Défaut : tous les docs
-// du projet.
-export async function launchTestSession({ e2eTestId, force = false, mode, docIds }) {
+// `adrIds` (optionnel) : ADR (item 125) à fournir en contexte — lignes
+// multi-sélection du panneau (elles PRIMENT sur le filtre de scope). Tableau
+// FOURNI vide = aucun ADR ; absent = ADR actives du projet applicables au
+// scope du test (specFile).
+export async function launchTestSession({ e2eTestId, force = false, mode, adrIds }) {
   if (!e2eTestId) throw new Error("e2eTestId requis");
   const r = await taskOrchestrator("e2e_test_get", { e2eTestId });
   const t = r && r.test;
@@ -956,17 +974,17 @@ export async function launchTestSession({ e2eTestId, force = false, mode, docIds
     const g = await projectGitPath(p);
     if (g) { dir = g; break; }
   }
-  // ADR-12 : docs de référence — toutes celles du projet (défaut), ou seulement
-  // la sous-sélection cochée (docIds). Un tableau FOURNI même vide = aucun doc.
-  let sessionDocs = t.docs || [];
-  if (Array.isArray(docIds)) {
-    if (docIds.length) {
-      const wanted = new Set(docIds.map((x) => String(x).trim()).filter(Boolean));
-      sessionDocs = (t.docs || []).filter((d) => d && wanted.has(d.docId));
-    } else {
-      sessionDocs = [];
-    }
-  }
+  // ADR (item 125) : bloc de contexte ADR applicables — `adrIds` = sélection du
+  // panneau (prime sur le scope), sinon ADR actives du projet filtrées par le
+  // scope du test (specFile). Le module doc_* reste consultable à la demande.
+  let adrCtx = { context: "", adrs: [] };
+  try {
+    adrCtx = await adrContext({
+      projectId: projs[0] || t.project || null,
+      adrIds,
+      scope: t.specFile ? [t.specFile] : [],
+    });
+  } catch {}
   const testMode = mode || (t.status === "DRAFT" ? "create" : "update");
   const prompt = buildTestPrompt({
     e2eTestId: t.e2eTestId,
@@ -977,7 +995,7 @@ export async function launchTestSession({ e2eTestId, force = false, mode, docIds
     mode: testMode,
     specFile: t.specFile,
     scenario: t.scenario,
-    docs: sessionDocs,   // ADR-12 : docs de référence du projet (contexte)
+    adrContext: adrCtx.context || "",   // ADR (item 125) : bloc de contexte
   });
   const { sessionId } = await launchSession({ dir, agent: "test-agent", prompt, title: `${testMode === "create" ? "Création" : "MAJ"} test ${t.title || t.e2eTestId}` });
   if (!sessionId || !/^ses_/.test(sessionId)) {

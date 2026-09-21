@@ -1432,9 +1432,9 @@ async function agentSessionModal() {
           <label class="modal-field">Projet (contexte) <span class="muted-sm">— ancre la session, liste les documents &amp; variables du projet</span>
             <select id="as-project"><option value="">— aucun —</option>${projects.map((p) => `<option value="${esc(p.id)}">${esc(p.name || p.id)}</option>`).join('')}</select>
           </label>
-          <fieldset id="as-docs-fieldset" class="pilot-fieldset">
-            <legend>Documents de référence — contexte de l'agent <span class="muted-sm">(ADR technique, User stories + règles métier, scénarios Gherkin). Tous cochés par défaut.</span></legend>
-            <div id="as-docs-list"><p class="muted-sm">Sélectionnez un projet pour afficher ses documents de référence.</p></div>
+          <fieldset id="as-adr-fieldset" class="pilot-fieldset">
+            <legend>ADR en contexte — décisions d'architecture <span class="muted-sm">(sélection multi-lignes ; le bloc « ADR de référence » est injecté dans le prompt). Toutes cochées par défaut.</span></legend>
+            <div id="as-adr-pick"><p class="muted-sm">Sélectionnez un projet pour afficher ses ADR.</p></div>
           </fieldset>
           <fieldset id="as-vars-fieldset" class="pilot-fieldset">
             <legend>Variables &amp; secrets E2E disponibles <span class="muted-sm">(confirmés au run — injectés automatiquement selon leur type)</span></legend>
@@ -1454,24 +1454,14 @@ async function agentSessionModal() {
   document.getElementById('modal-cancel').onclick = closeModal;
   document.querySelectorAll('#modal-backdrop [data-reopen-session]').forEach((b) => b.addEventListener('click', () => openSid(b.dataset.reopenSession)));
 
-  // --- Projet → documents de référence + variables/secrets ---
-  const docsList = document.getElementById('as-docs-list');
+  // --- Projet → ADR en contexte + variables/secrets ---
+  const adrBox = document.getElementById('as-adr-pick');
   const varsList = document.getElementById('as-vars-list');
   const projSel = document.getElementById('as-project');
-  const KINDS = DOC_KIND_ORDER;
-  const renderDocs = (docs) => {
-    const byKind = {};
-    for (const d of docs) (byKind[d.kind] = byKind[d.kind] || []).push(d);
-    docsList.innerHTML = KINDS.map((k) => {
-      const items = byKind[k] || [];
-      const inner = items.length
-        ? `<div style="padding-left:22px">${items.map((d) => `<label class="filter-check"><input type="checkbox" class="as-doc" data-kind="${esc(k)}" value="${esc(d.docId)}" checked title="${esc(d.path)}"> ${esc(d.title || d.docId)} <span class="muted-sm" style="font-size:11px">${esc(d.path)}</span></label>`).join('')}</div>`
-        : `<p class="muted-sm" style="font-size:11px;padding-left:22px">Aucun document enregistré de ce type — ajoutez-le via <em>Projets → 📄 Docs de référence</em>.</p>`;
-      return `<div><label class="filter-check"><input type="checkbox" class="as-kind" data-kind="${esc(k)}" checked> <code class="chip">${esc(docKindLabel(k))}</code> ${esc(docKindLabelLong(k))}</label>${inner}</div>`;
-    }).join('');
-    document.querySelectorAll('#modal-backdrop .as-kind').forEach((cb) => cb.addEventListener('change', () => {
-      document.querySelectorAll(`#modal-backdrop .as-doc[data-kind="${cb.dataset.kind}"]`).forEach((d) => { d.checked = cb.checked; });
-    }));
+  const reposForProject = (pid) => { const p = projects.find((x) => x.id === pid); return (p && p.repos) || []; };
+  const renderAdrs = (adrs, pid) => {
+    adrBox.innerHTML = adrSelectorHtml(adrs, { prefix: 'as-adr-pick', repos: reposForProject(pid) });
+    bindAdrSelector('as-adr-pick');
   };
   const renderVars = (vars) => {
     if (!vars.length) { varsList.innerHTML = '<p class="muted-sm">Aucune variable ni secret déclaré pour ce projet — les comptes par défaut (e2e.env) s\'appliquent.</p>'; return; }
@@ -1484,20 +1474,20 @@ async function agentSessionModal() {
   const reloadProject = async () => {
     const pid = projSel.value;
     if (!pid) {
-      docsList.innerHTML = '<p class="muted-sm">Sélectionnez un projet pour afficher ses documents de référence.</p>';
+      adrBox.innerHTML = '<p class="muted-sm">Sélectionnez un projet pour afficher ses ADR.</p>';
       varsList.innerHTML = '<p class="muted-sm">Sélectionnez un projet pour confirmer ses variables &amp; secrets.</p>';
       return;
     }
-    docsList.innerHTML = '<p class="muted-sm">Chargement…</p>';
+    adrBox.innerHTML = '<p class="muted-sm">Chargement…</p>';
     varsList.innerHTML = '<p class="muted-sm">Chargement…</p>';
     try {
       const [dd, vd] = await Promise.all([
         api(`/api/docs?projectId=${encodeURIComponent(pid)}&includeRepoDocs=1`).catch(() => ({ docs: [] })),
         api(`/api/e2e-vars?project=${encodeURIComponent(pid)}`).catch(() => ({ vars: [] })),
       ]);
-      renderDocs(dd.docs || []);
+      renderAdrs((dd.docs || []).filter((d) => d && d.kind === 'adr-tech'), pid);
       renderVars(vd.vars || []);
-    } catch (e) { docsList.innerHTML = '<p class="muted-sm">Erreur de chargement.</p>'; }
+    } catch (e) { adrBox.innerHTML = '<p class="muted-sm">Erreur de chargement.</p>'; }
   };
   projSel.addEventListener('change', reloadProject);
 
@@ -1507,10 +1497,10 @@ async function agentSessionModal() {
     msg.textContent = 'Ouverture de la session…'; msg.className = 'msg';
     try {
       const project = document.getElementById('as-project').value;
-      const docIds = [...document.querySelectorAll('#modal-backdrop .as-doc:checked')].map((c) => c.value);
+      const adrIds = selectedAdrIds('as-adr-pick'); // toujours un tableau (vide = aucune ADR)
       const r = await api('/api/e2e/agent-sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         action: 'new', project: project || undefined,
-        docIds, // toujours un tableau (vide = aucun doc)
+        adrIds, // ADR sélectionnées → bloc « ADR de référence » injecté
         message: document.getElementById('as-message').value.trim() || undefined,
       }) });
       if (r && r.sessionId && /^ses_/.test(r.sessionId)) {
@@ -2078,8 +2068,8 @@ async function e2eRegisterModal(projects, projOpts) {
 // --- Cas « Non » : le test n'existe pas → création via session test-agent ---
 // Champs minimaux : projet (produit) + titre/comportement. Le spec file et
 // scénario seront définis pendant la session test-agent. Les repos de code
-// associés (couverture) et les documents de référence (ADR/specs/Gherkin,
-// ADR-12) sont choisis dès maintenant (transmis au test-agent).
+// associés (couverture) et les ADR en contexte (sélection multi-lignes, item 125
+// → bloc « ADR de référence ») sont choisis dès maintenant (transmis au test-agent).
 async function e2eCreateViaAgentModal(projects, projOpts) {
   const reposRes = await api('/api/repos').catch(() => ({ repos: [] }));
   const reposById = new Map((reposRes.repos || []).map((r) => [r.id, r]));
@@ -2102,9 +2092,9 @@ async function e2eCreateViaAgentModal(projects, projOpts) {
           <legend>Repos de code associés <span class="muted-sm">— couverture du test : repos traversés par le comportement (ex. parcours client + console = mada-talk ET oniria). Le test-agent écrira le spec dans l'un d'eux. Défaut : tous les repos du projet.</span></legend>
           <div id="ea-repos-list"></div>
         </fieldset>
-        <fieldset id="ea-docs-fieldset" class="pilot-fieldset">
-          <legend>Documents de référence — contexte du test-agent <span class="muted-sm">(ADR technique, User stories + règles métier, scénarios Gherkin). Tous cochés par défaut.</span></legend>
-          <div id="ea-docs-list"></div>
+        <fieldset id="ea-adr-fieldset" class="pilot-fieldset">
+          <legend>ADR en contexte — décisions d'architecture <span class="muted-sm">(sélection multi-lignes ; le bloc « ADR de référence » est injecté dans le prompt). Toutes cochées par défaut.</span></legend>
+          <div id="ea-adr-pick"></div>
         </fieldset>
         <label class="modal-field">Comportement à tester (titre) <span class="muted-sm">— requis</span>
           <input id="ea-title" placeholder="ex: Connexion puis création d'une demande de chatbot" required>
@@ -2122,10 +2112,9 @@ async function e2eCreateViaAgentModal(projects, projOpts) {
   document.getElementById('modal-cancel').onclick = closeModal;
   const reposList = document.getElementById('ea-repos-list');
   const reposFieldset = document.getElementById('ea-repos-fieldset');
-  const docsFieldset = document.getElementById('ea-docs-fieldset');
-  const docsList = document.getElementById('ea-docs-list');
+  const adrBox = document.getElementById('ea-adr-pick');
   const projSel = document.getElementById('ea-project');
-  docsList.innerHTML = '<p class="muted-sm">Sélectionnez un projet pour afficher ses documents de référence (ADR technique, User stories + règles métier, scénarios Gherkin).</p>';
+  adrBox.innerHTML = '<p class="muted-sm">Sélectionnez un projet pour afficher ses ADR (décisions d\'architecture).</p>';
   const renderRepoChecks = (pid) => {
     const reps = reposOf(pid);
     if (!reps.length) { reposFieldset.hidden = true; reposList.innerHTML = ''; return; }
@@ -2137,37 +2126,25 @@ async function e2eCreateViaAgentModal(projects, projOpts) {
         <code>${esc(r.id)}</code>${r.workspace ? ` <span class="muted-sm">· ${esc(r.workspace)}</span>` : ''}${r.mainBranch ? ` <span class="muted-sm">· ${esc(r.mainBranch)}</span>` : ''}
       </label>`).join('');
   };
-  const renderDocChecks = async () => {
-    const KINDS = DOC_KIND_ORDER;
-    docsList.innerHTML = KINDS.map(() => `<p class="muted-sm">Chargement des documents de référence…</p>`).join('');
+  // ADR en contexte (item 125) : sélection multi-lignes des ADR du projet.
+  const renderAdrs = async () => {
     const pid = projSel.value;
-    if (!pid) { docsList.innerHTML = '<p class="muted-sm">Sélectionnez un projet pour lister ses documents de référence.</p>'; return; }
-    let docs = [];
-    try { const dr = await api(`/api/docs?projectId=${encodeURIComponent(pid)}&includeRepoDocs=1`); docs = dr.docs || []; } catch { docs = []; }
-    const byKind = {};
-    for (const d of docs) (byKind[d.kind] = byKind[d.kind] || []).push(d);
-    docsList.innerHTML = KINDS.map((k) => {
-      const items = byKind[k] || [];
-      const inner = items.length
-        ? `<div style="padding-left:22px">${items.map((d) => `<label class="filter-check"><input type="checkbox" class="ea-doc" data-kind="${esc(k)}" value="${esc(d.docId)}" checked title="${esc(d.path)}"> ${esc(d.title || d.docId)} <span class="muted-sm" style="font-size:11px">${esc(d.path)}</span></label>`).join('')}</div>`
-        : `<p class="muted-sm" style="font-size:11px;padding-left:22px">Aucun document enregistré de ce type — ajoutez-le via <em>Projets → 📄 Docs de référence</em>.</p>`;
-      return `<div><label class="filter-check"><input type="checkbox" class="ea-kind" data-kind="${esc(k)}" checked> <code class="chip">${esc(docKindLabel(k))}</code> ${esc(docKindLabelLong(k))}</label>${inner}</div>`;
-    }).join('');
-    bindKindToggle();
-  };
-  // Coche/décoche tous les docs d'une catégorie quand sa case kind change.
-  const bindKindToggle = () => {
-    document.querySelectorAll('#modal-backdrop .ea-kind').forEach((cb) => cb.addEventListener('change', () => {
-      document.querySelectorAll(`#modal-backdrop .ea-doc[data-kind="${cb.dataset.kind}"]`).forEach((d) => { d.checked = cb.checked; });
-    }));
+    if (!pid) { adrBox.innerHTML = '<p class="muted-sm">Sélectionnez un projet pour lister ses ADR.</p>'; return; }
+    adrBox.innerHTML = '<p class="muted-sm">Chargement des ADR…</p>';
+    let adrs = [];
+    try {
+      const dr = await api(`/api/docs?projectId=${encodeURIComponent(pid)}&includeRepoDocs=1`);
+      adrs = (dr.docs || []).filter((d) => d && d.kind === 'adr-tech');
+    } catch { adrs = []; }
+    adrBox.innerHTML = adrSelectorHtml(adrs, { prefix: 'ea-adr-pick', repos: reposOf(pid) });
+    bindAdrSelector('ea-adr-pick');
   };
   projSel.addEventListener('change', () => {
     const pid = projSel.value;
     if (pid) projRepoIds[pid] = selectedRepoIds();
     renderRepoChecks(pid);
-    renderDocChecks();
+    renderAdrs();
   });
-  const selectedDocIds = () => [...document.querySelectorAll('#modal-backdrop .ea-doc:checked')].map((c) => c.value);
   document.getElementById('e2e-agent-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const msg = document.getElementById('ea-msg');
@@ -2184,7 +2161,7 @@ async function e2eCreateViaAgentModal(projects, projOpts) {
         description: document.getElementById('ea-description').value.trim() || undefined,
         viaAgent: true,
         repoIds: projRepoIds[pid] && projRepoIds[pid].length ? projRepoIds[pid] : undefined,
-        docIds: selectedDocIds(), // toujours un tableau (vide = aucun doc en contexte)
+        adrIds: selectedAdrIds('ea-adr-pick'), // toujours un tableau (vide = aucune ADR en contexte)
         organizationId: currentOrg || undefined,
       }) });
       closeModal();
@@ -2585,9 +2562,9 @@ async function recetteCreateModal() {
           <div id="rm-repos-hint" class="muted-sm" style="margin-top:6px"></div>
           <button type="button" class="ghost" id="rm-load-cands">Charger les tâches disponibles</button>
         </fieldset>
-        <fieldset id="rm-docs-ref-fieldset" class="pilot-fieldset">
-          <legend>Documents de référence — contexte de l'agent de recette <span class="muted-sm">(ADR technique, User stories + règles métier, scénarios Gherkin — ADR-12). Tous cochés par défaut.</span></legend>
-          <div id="rm-docs-ref-list"><p class="muted-sm">Choisissez un projet pour afficher ses documents de référence.</p></div>
+        <fieldset id="rm-adr-fieldset" class="pilot-fieldset">
+          <legend>ADR rattachées à la recette — contexte de l'agent <span class="muted-sm">(sélection multi-lignes ; rattachées à la recette + bloc « ADR de référence » injecté). Toutes cochées par défaut.</span></legend>
+          <div id="rm-adr-pick"><p class="muted-sm">Choisissez un projet pour afficher ses ADR.</p></div>
         </fieldset>
         <input id="rm-title" placeholder="titre court (ex: Recette du module chatbot)" required>
         <textarea id="rm-description" class="modal-textarea" placeholder="description longue (détail du périmètre vérifié) — optionnel"></textarea>
@@ -2631,33 +2608,22 @@ async function recetteCreateModal() {
     } catch (e) { candBox.innerHTML = '<p class="muted-sm">Erreur de chargement : ' + esc(e.message || e) + '</p>'; }
   };
   document.getElementById('rm-load-cands').addEventListener('click', loadCandidates);
-  const refDocsBox = document.getElementById('rm-docs-ref-list');
-  const selectedRefDocIds = () => [...document.querySelectorAll('#modal-backdrop .rm-refdoc:checked')].map((c) => c.value);
-  const renderRefDocs = (docs) => {
-    const KINDS = DOC_KIND_ORDER;
-    const byKind = {};
-    for (const d of docs) (byKind[d.kind] = byKind[d.kind] || []).push(d);
-    refDocsBox.innerHTML = KINDS.map((k) => {
-      const items = byKind[k] || [];
-      const inner = items.length
-        ? `<div style="padding-left:22px">${items.map((d) => `<label class="filter-check"><input type="checkbox" class="rm-refdoc" data-kind="${esc(k)}" value="${esc(d.docId)}" checked title="${esc(d.path)}"> ${esc(d.title || d.docId)} <span class="muted-sm" style="font-size:11px">${esc(d.path)}</span></label>`).join('')}</div>`
-        : `<p class="muted-sm" style="font-size:11px;padding-left:22px">Aucun document enregistré de ce type pour ce projet — ajoutez-le via <em>Projets → 📄 Docs de référence</em>.</p>`;
-      return `<div><label class="filter-check"><input type="checkbox" class="rm-refkind" data-kind="${esc(k)}" checked> <code class="chip">${esc(docKindLabel(k))}</code> ${esc(docKindLabelLong(k))}</label>${inner}</div>`;
-    }).join('');
-    document.querySelectorAll('#modal-backdrop .rm-refkind').forEach((cb) => cb.addEventListener('change', () => {
-      document.querySelectorAll(`#modal-backdrop .rm-refdoc[data-kind="${cb.dataset.kind}"]`).forEach((d) => { d.checked = cb.checked; });
-    }));
-  };
-  const loadRefDocs = async () => {
+  // ADR rattachées à la recette (item 125) : sélection multi-lignes des ADR du
+  // projet (+ repos transverses). Les ADR cochées sont rattachées à la recette
+  // (recette_doc_add côté pilot) ET leur bloc est injecté dans le prompt.
+  const adrBox = document.getElementById('rm-adr-pick');
+  const reposForProject = (pid) => { const p = projects.find((x) => x.id === pid); return (p && p.repos) || []; };
+  const loadAdrs = async () => {
     const proj = currentProject();
-    if (!proj) { refDocsBox.innerHTML = '<p class="muted-sm">Choisissez un projet pour afficher ses documents de référence.</p>'; return; }
-    refDocsBox.innerHTML = '<p class="muted-sm">Chargement des documents de référence…</p>';
+    if (!proj) { adrBox.innerHTML = '<p class="muted-sm">Choisissez un projet pour afficher ses ADR.</p>'; return; }
+    adrBox.innerHTML = '<p class="muted-sm">Chargement des ADR…</p>';
     const seen = new Map();
     try {
       const d = await api(`/api/docs?projectId=${encodeURIComponent(proj)}&includeRepoDocs=1`);
-      for (const doc of (d.docs || [])) if (!seen.has(doc.docId)) seen.set(doc.docId, doc);
+      for (const doc of (d.docs || [])) if (doc && doc.kind === 'adr-tech' && !seen.has(doc.docId)) seen.set(doc.docId, doc);
     } catch {}
-    renderRefDocs([...seen.values()]);
+    adrBox.innerHTML = adrSelectorHtml([...seen.values()], { prefix: 'rm-adr-pick', repos: reposForProject(proj) });
+    bindAdrSelector('rm-adr-pick');
   };
   const renderReposHint = () => {
     const proj = projects.find((p) => p.id === currentProject());
@@ -2669,7 +2635,7 @@ async function recetteCreateModal() {
   projectSel.addEventListener('change', () => {
     candBox.innerHTML = '<p class="muted-sm">Choisissez un projet puis « Charger les tâches disponibles ».</p>';
     renderReposHint();
-    loadRefDocs();
+    loadAdrs();
   });
   renderReposHint();
 
@@ -2737,7 +2703,7 @@ async function recetteCreateModal() {
         description: document.getElementById('rm-description').value.trim() || undefined,
         taskIds,
         documents,
-        docIds: selectedRefDocIds(), // toujours un tableau (vide = aucun doc en contexte)
+        adrIds: selectedAdrIds('rm-adr-pick'), // toujours un tableau (vide = aucune ADR en contexte)
         organizationId: currentOrg || undefined,
       }) });
       closeModal();
@@ -4181,6 +4147,95 @@ function adrTabHtml(p, adrs, repos, filter = {}) {
         <tbody>${rows || `<tr><td colspan="7" class="muted-sm" style="padding:10px">Aucune ADR pour ce projet.</td></tr>`}</tbody>
       </table>
     </div>`;
+}
+
+// ===========================================================================
+// Sélecteur ADR multi-lignes (item 125) — remplace l'ancienne liste BRUTE de
+// documents (.as-doc / .ea-doc / .rm-refdoc). Lignes COMPACTES et structurées :
+// case à cocher + titre + badge de statut + chips repos + badge globale +
+// décision condensée. Filtres statut/repo + recherche. Réutilise ADR_STATUS,
+// adrStatusBadge, adrGlobalBadge, adrCellText.
+//   adrs : docs kind='adr-tech' (adr_list ou GET /api/docs filtré kind)
+//   opts : { prefix, repos, selected } — prefix = id du bloc ; selected = ids
+//          cochés (null/absent = toutes cochées) ; repos = repos du projet (noms).
+// L'appelant lit la sélection via selectedAdrIds(prefix).
+// ===========================================================================
+function adrSelectorHtml(adrs, opts = {}) {
+  const prefix = opts.prefix || 'adr-pick';
+  const repos = opts.repos || [];
+  const repoName = (rid) => {
+    const r = repos.find((x) => (x && (x.id || x.repoId || x)) === rid);
+    return r ? (r.name || r.id || r.repoId || rid) : rid;
+  };
+  const selected = Array.isArray(opts.selected) ? opts.selected : null; // null = toutes cochées
+  const list = adrs || [];
+  const statusOpts = ['', ...ADR_STATUS]
+    .map((s) => `<option value="${esc(s)}">${s ? esc(s) : '— tous les statuts —'}</option>`).join('');
+  const repoIds = [...new Set(list.flatMap((d) => (Array.isArray(d.repos) ? d.repos : [])))];
+  const repoOpts = ['', ...repoIds]
+    .map((r) => `<option value="${esc(r)}">${r ? esc(repoName(r)) : '— tous les repos —'}</option>`).join('');
+  const rows = list.map((d) => {
+    const id = d.adrId || d.docId;
+    const checked = (!selected || selected.includes(id)) ? 'checked' : '';
+    const chips = (Array.isArray(d.repos) ? d.repos : [])
+      .map((rid) => `<code class="chip-repo" title="Repo rattaché">${esc(repoName(rid))}</code>`).join(' ');
+    const meta = [adrStatusBadge(d.status), d.isGlobal ? adrGlobalBadge(d) : '', chips].filter(Boolean).join(' ');
+    const dec = d.decision ? adrCellText(d.decision, 120) : '<span class="muted-sm">—</span>';
+    const hay = [d.title, d.status, (d.repos || []).join(' '), d.decision, d.path].filter(Boolean).join(' ').toLowerCase();
+    return `<label class="adr-pick-row" data-search="${esc(hay)}" data-status="${esc(d.status || '')}" data-repos="${esc((d.repos || []).join(' '))}">
+      <input type="checkbox" class="adr-pick-cb" value="${esc(id)}" ${checked} title="${esc(d.path || '')}">
+      <span class="adr-pick-head"><strong>${esc(d.title || id)}</strong> ${meta}</span>
+      <span class="adr-pick-meta">${dec}</span>
+    </label>`;
+  }).join('');
+  return `
+    <div class="adr-pick" id="${esc(prefix)}">
+      <div class="adr-pick-filters">
+        <input type="search" class="adr-pick-search" placeholder="Rechercher une ADR…">
+        <select class="adr-pick-status">${statusOpts}</select>
+        <select class="adr-pick-repo">${repoOpts}</select>
+        <span class="muted-sm adr-pick-count">${list.length} ADR</span>
+      </div>
+      <div class="adr-pick-list">${rows || '<p class="muted-sm">Aucune ADR pour ce projet — créez-en une via l\'onglet ADR du projet.</p>'}</div>
+    </div>`;
+}
+
+// Sélection courante (ids cochés) du sélecteur ADR de préfixe `prefix`.
+function selectedAdrIds(prefix = 'adr-pick') {
+  return [...document.querySelectorAll(`#modal-backdrop #${prefix} .adr-pick-cb:checked`)].map((c) => c.value);
+}
+
+// Câble les filtres (recherche + statut + repo) du sélecteur ADR — à appeler
+// après insertion du HTML dans la modale.
+function bindAdrSelector(prefix = 'adr-pick') {
+  const root = document.getElementById(prefix);
+  if (!root) return;
+  const search = root.querySelector('.adr-pick-search');
+  const status = root.querySelector('.adr-pick-status');
+  const repo = root.querySelector('.adr-pick-repo');
+  const count = root.querySelector('.adr-pick-count');
+  const rows = [...root.querySelectorAll('.adr-pick-row')];
+  const apply = () => {
+    const q = ((search && search.value) || '').trim().toLowerCase();
+    const st = (status && status.value) || '';
+    const rp = (repo && repo.value) || '';
+    let visible = 0;
+    for (const row of rows) {
+      const okQ = !q || (row.dataset.search || '').includes(q);
+      const okS = !st || row.dataset.status === st;
+      const okR = !rp || (row.dataset.repos || '').split(/\s+/).includes(rp);
+      const show = okQ && okS && okR;
+      row.hidden = !show;
+      if (show) visible++;
+    }
+    if (count) count.textContent = `${visible} / ${rows.length} ADR`;
+  };
+  [search, status, repo].forEach((el) => {
+    if (!el) return;
+    el.addEventListener('input', apply);
+    el.addEventListener('change', apply);
+  });
+  apply();
 }
 
 // ===========================================================================

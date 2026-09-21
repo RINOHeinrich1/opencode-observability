@@ -3990,39 +3990,36 @@ async function renderProjects() {
 // ===========================================================================
 // Modale DÉTAIL PROJET UNIQUE (responsive, bon UX) : regroupe TOUT en onglets
 // internes — Projet (modifier/supprimer), Repos (associer/éditer/retirer),
-// Documents de référence (ajouter/voir/supprimer). Aucune sous-modale.
+// Pièces client (ajouter/supprimer/télécharger). Aucune sous-modale.
+// (L'onglet « Documents de référence » a été retiré : doublon avec « Pièces
+//  client », les documents ADR-12 étant désormais requalifiés en pièces client.)
 // ===========================================================================
 async function projectDetailModal(projectId, tab = 'projet') {
-  let projects = [], repos = [], allDocs = [], allPieces = [];
+  // Onglets valides après retrait de « Documents de référence » : tout onglet
+  // inconnu (ex. ancien deep-link 'docs') retombe sur « projet ».
+  if (!['projet', 'repos', 'pieces'].includes(tab)) tab = 'projet';
+  let projects = [], repos = [], allPieces = [];
   try { projects = ((await api('/api/projects')).projects || []); } catch {}
   try { repos = ((await api(`/api/repos?project=${encodeURIComponent(projectId)}`)).repos || []); } catch {}
   const p0 = projects.find((x) => x.id === projectId);
   if (!p0) { alert('Projet introuvable'); return; }
 
-  const loadDocs = async () => {
-    try { allDocs = ((await api(`/api/docs?projectId=${encodeURIComponent(projectId)}&includeRepoDocs=1`)).docs || []); }
-    catch { allDocs = []; }
-  };
   const loadPieces = async () => {
     try { allPieces = ((await api(`/api/pieces?projectId=${encodeURIComponent(projectId)}`)).pieces || []); }
     catch { allPieces = []; }
   };
-  await loadDocs();
   await loadPieces();
 
-  const kindOpts = `<option value="adr-tech">ADR — Architecture technique</option><option value="specs-fonctionnelles">Specs fonctionnelles</option><option value="scenarios-gherkin">Scénarios (Gherkin)</option>`;
   const repoMap = () => new Map(repos.map((r) => [r.id, r]));
 
   const render = () => {
     const p = projects.find((x) => x.id === projectId) || p0;
     const rm = repoMap();
     const pRepos = (p.repos || []).map((rid) => rm.get(rid)).filter(Boolean);
-    const pDocs = allDocs;
     const pPieces = allPieces;
     const tabs = [
       ['projet', 'Projet'],
       ['repos', `Repos (${pRepos.length})`],
-      ['docs', `Documents de référence (${pDocs.length})`],
       ['pieces', `Pièces client (${pPieces.length})`],
     ];
     showModal(`
@@ -4042,7 +4039,7 @@ async function projectDetailModal(projectId, tab = 'projet') {
     if (tab === 'projet') panel.innerHTML = projetTabHtml(p);
     else if (tab === 'repos') panel.innerHTML = reposTabHtml(p, pRepos);
     else if (tab === 'pieces') panel.innerHTML = piecesTabHtml(p, pPieces);
-    else panel.innerHTML = docsTabHtml(p, pDocs);
+    else panel.innerHTML = projetTabHtml(p);
     wire();
   };
 
@@ -4116,35 +4113,6 @@ async function projectDetailModal(projectId, tab = 'projet') {
           <div class="actions-buttons"><button type="submit" class="ghost">+ Créer et associer</button></div>
         </form>
       </div>`;
-  };
-
-  // --- Onglet DOCUMENTS : ajouter / voir / supprimer ------------------------
-  const docsTabHtml = (p, pDocs) => {
-    const rm = repoMap();
-    const targets = [{ v: 'project:' + p.id, l: 'Projet ' + (p.name || p.id) }, ...(p.repos || []).map((rid) => { const r = rm.get(rid); return { v: 'repo:' + rid, l: 'Repo ' + (r ? (r.name || r.id) : rid) }; })];
-    return `
-      <p class="muted-sm">ADR-12 — documents (adr-tech / specs-fonctionnelles / scenarios-gherkin) fournis en contexte aux agents. Importez un fichier ou référencez un chemin existant.</p>
-      <div id="pd-list" class="recette-list" style="max-height:30vh;overflow:auto">
-        ${pDocs.length ? pDocs.map((d) => `<div class="recette-item">
-          <div><code class="chip">${esc(docKindLabel(d.kind))}</code> <strong>${esc(d.title || d.docId)}</strong>
-            <span class="muted-sm">${d.projects && d.projects.length ? '· projets ' + esc(d.projects.join(', ')) : ''}${d.repos && d.repos.length ? '· repos ' + esc(d.repos.join(', ')) : ''}</span></div>
-          <div class="muted-sm">${esc(d.path)}</div>
-          <div class="e2e-actions"><button type="button" class="ghost tiny" data-pd-view-doc="${esc(d.docId)}">Regarder</button><button type="button" class="ghost tiny danger-text" data-pd-del-doc="${esc(d.docId)}">Supprimer</button></div>
-        </div>`).join('') : '<p class="muted-sm">Aucun document de référence.</p>'}
-      </div>
-      <form id="pd-doc-form" class="pilot-form" style="border-top:1px solid var(--border);padding-top:10px">
-        <div class="pd-inline">
-          <select id="pd-d-kind">${kindOpts}</select>
-          <select id="pd-d-target">${targets.map((t) => `<option value="${esc(t.v)}">${esc(t.l)}</option>`).join('')}</select>
-        </div>
-        <input id="pd-d-title" placeholder="titre (ex. ADR — Architecture madatalk)">
-        <div class="pd-inline">
-          <select id="pd-d-mode"><option value="upload">Importer depuis mon PC</option><option value="path">Référencer un chemin</option></select>
-          <input id="pd-d-file" type="file" accept=".md,.markdown,.txt,.feature,.adoc">
-          <input id="pd-d-path" placeholder="chemin existant (ex. /home/coder/mada-talk/docs/adr.md)" hidden>
-        </div>
-        <div class="actions-buttons"><button type="submit" class="launch-btn">+ Ajouter le document</button></div>
-      </form>`;
   };
 
   // --- Onglet PIÈCES CLIENT (ADR-001, item 4) : ajouter / voir / supprimer ---
@@ -4264,41 +4232,6 @@ async function projectDetailModal(projectId, tab = 'projet') {
         } else { msg('Repo créé et associé.'); render(); }
       } catch (err) { msg(err.message || String(err), false); }
     });
-    // DOCUMENTS : ajouter / voir / supprimer.
-    const dMode = document.getElementById('pd-d-mode');
-    if (dMode) {
-      const fileEl = document.getElementById('pd-d-file');
-      const pathEl = document.getElementById('pd-d-path');
-      const sync = () => { const up = dMode.value === 'upload'; fileEl.hidden = !up; pathEl.hidden = up; fileEl.required = up; pathEl.required = !up; };
-      dMode.addEventListener('change', sync); sync();
-    }
-    const dForm = document.getElementById('pd-doc-form');
-    if (dForm) dForm.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      try {
-        const [tt, tid] = document.getElementById('pd-d-target').value.split(':');
-        const body = { kind: document.getElementById('pd-d-kind').value, title: document.getElementById('pd-d-title').value.trim() || undefined, organizationId: currentOrg || undefined };
-        if (tt === 'project') body.projectId = tid; else body.repoId = tid;
-        if (dMode.value === 'upload') {
-          const f = document.getElementById('pd-d-file').files[0];
-          if (!f) throw new Error('Choisissez un fichier.');
-          if (f.size > 2 * 1024 * 1024) throw new Error('Fichier trop volumineux (max 2 Mo).');
-          const buf = await f.arrayBuffer();
-          body.filename = f.name; body.dataBase64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
-        } else {
-          body.path = document.getElementById('pd-d-path').value.trim();
-          if (!body.path) throw new Error('Chemin requis.');
-        }
-        await api('/api/docs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-        await loadDocs(); msg('Document enregistré.'); render();
-      } catch (err) { msg(err.message || String(err), false); }
-    });
-    panel.querySelectorAll('[data-pd-view-doc]').forEach((b) => b.addEventListener('click', () => viewRefDoc(b.dataset.pdViewDoc)));
-    panel.querySelectorAll('[data-pd-del-doc]').forEach((b) => b.addEventListener('click', async () => {
-      if (!confirm('Supprimer ce document de référence ?')) return;
-      try { await api(`/api/docs/${encodeURIComponent(b.dataset.pdDelDoc)}`, { method: 'DELETE' }); await loadDocs(); msg('Document supprimé.'); render(); }
-      catch (err) { msg(err.message || String(err), false); }
-    }));
     // PIÈCES CLIENT : mode + ajout / suppression / téléchargement.
     const pcMode = document.getElementById('pd-pc-mode');
     if (pcMode) {
@@ -4398,7 +4331,6 @@ async function projectDetailModal(projectId, tab = 'projet') {
   const refreshDetailData = async () => {
     try { projects = ((await api('/api/projects')).projects || []); } catch {}
     try { repos = ((await api('/api/repos')).repos || []); } catch {}
-    await loadDocs();
     await loadPieces();
   };
 

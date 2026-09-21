@@ -18,9 +18,15 @@ les tâches, sans jamais écrire directement dans le registre.
 - **Écosystème** : l'onglet Écosystème liste les agents et permet d'éditer leur `model`
   globalement (relu au lancement de session via `--model`).
 
-**Onglets** : Vue d'ensemble, **Observabilité** (v0.2.0+), Projets, Tâches,
-Événements, Déploiements, Décisions, Documents, Plans, Archives, Écosystème,
-Utilisateurs.
+**Onglets** — *globaux* (aucun projet ouvert, `GLOBAL_TABS`) : Projets,
+Vue d'ensemble, Écosystème, Workspaces (admin), Utilisateurs (admin). *D'un
+projet ouvert* (`PROJECT_TABS`) : Vue d'ensemble, Tâches, Recettes, Tests E2E,
+Décisions, **Artefacts**, **ADR**, Vars & Secrets E2E, Archives.
+
+> Les onglets **Déploiements**, **Événements** et **Plans** ne figurent plus dans
+> la barre : ils sont accessibles via la section **« Consulter »** du **modal de
+> détail d'une tâche** (boutons `data-goto`). Voir
+> [`13-adr-et-artefacts.md`](13-adr-et-artefacts.md) §5.
 
 **Observabilité** (v0.2.0 → v0.4.0) : dashboard KPI système (Flow ·
 Orchestration · Agents · Quality) — KPI cards (Lead Time P50/moyen/P95, Cycle
@@ -91,16 +97,26 @@ via `plan_commit_add` (sha + fichiers + diff).
 Git.
 
 - Base PostgreSQL `task_registry` (migrée depuis SQLite).
-- Tables : `tasks`, `projects`, `executions`, `task_sessions`, `worktrees`, `events`,
-  `deployments`, `decisions`, `participants`, `artifacts`, `plans`, `plan_steps`,
+- Tables (principales) : `tasks`, `projects`, `repos`, `project_repos`, `task_repos`,
+  `executions`, `task_sessions`, `task_links`, `worktrees`, `events`,
+  `deployments`, `decisions`, `participants`, **`artifacts`** (gestionnaire central
+  polymorphe) + `artifact_projects` / `artifact_repos`, `plans`, `plan_steps`,
   `plan_incidents`, `plan_inconsistencies`, `plan_counters`, `plan_executions`,
-  `plan_commits`.
-- **Machines à états** : tâche (phases grossières) + plan (cycle complet) — voir
-  `05-reference.md`.
+  `plan_commits`, `recettes`, `recette_items`, `recette_tasks`, `e2e_tests`,
+  `e2e_test_projects` / `e2e_test_repos` / `e2e_test_params` / `e2e_vars`,
+  `task_e2e`, `e2e_executions`, **`adr_conflicts`**, **`adr_vigilances`**.
+- **Machines à états** : tâche (phases grossières) + plan (cycle complet) + **ADR**
+  (`Proposé → Accepté → Déprécié → Remplacé`) — voir `05-reference.md`.
 
 **Outils MCP clés** : `task_register`, `task_transition`, `plan_transition`,
 `task_event`, `decision_request`, `decision_resolve`, `task_recette`, `task_get`,
-`task_link_session`, `plan_commit_add`, `plan_commits_list`, …
+`task_link_session`, `plan_commit_add`, `plan_commits_list`, **`artifact_add` /
+`artifact_list`** (gestionnaire central d'artefacts), **famille `adr_*`**
+(ADR structurées : `adr_list`, `adr_get`, `adr_search`, `adr_context`,
+`adr_register`, `adr_set_status`, `adr_update`, `adr_attach`,
+`adr_report_conflict`, `adr_report_missing`, `adr_vigilance_list`,
+`adr_vigilance_resolve`), `doc_*` (documents de référence) — voir
+[`13-adr-et-artefacts.md`](13-adr-et-artefacts.md) §2 et §4.
 
 ## 5. MCP métier & Skills
 
@@ -143,8 +159,11 @@ Git.
 supervise and pilot tasks, never writing directly to the registry. PM2 process, port
 4000, behind a reverse proxy. Auth (users/sessions), dedicated `panel` database
 (PostgreSQL). Read-only access to the registry (`task_registry`, via `pg`); writes go
-through the MCP `task-orchestrator`. Tabs: Overview, Projects, Tasks, Events,
-Deployments, Decisions, Documents, Plans, Archives, Ecosystem, Users. The **Ecosystem**
+through the MCP `task-orchestrator`. Tabs — *global* (no project open): Projects,
+Overview, Ecosystem, Workspaces (admin), Users (admin); *project sub-tabs*
+(`PROJECT_TABS`): Overview, Tasks, Recettes, E2E Tests, Decisions, **Artifacts**,
+**ADR**, E2E Vars & Secrets, Archives. The Deployments/Events/Plans tabs were
+removed and are reachable from the **task detail modal** ("Consulter"). The **Ecosystem**
 tab lists agents and lets you edit their `model` globally. Pilot functions:
 `createTask`, `launchTask` (`queued → started` + orchestrator session), `reworkTask`,
 `killTaskSession`, `relaunchTask`, `resolveRecette`, `resolveDecision`. The session
@@ -175,13 +194,18 @@ LISTEN/NOTIFY + polling (high-water marks in `notifier_state`, dedup in
 `scripts/send-mail.mjs`. The MCP `notify` tools were removed.
 
 **5. Task registry** (MCP `task-orchestrator` + PostgreSQL) — logical source of truth.
-Tables: `tasks`, `projects`, `executions`, `task_sessions`, `worktrees`, `events`,
-`deployments`, `decisions`, `participants`, `artifacts`, `plans`, `plan_steps`,
-`plan_incidents`, `plan_inconsistencies`, `plan_counters`, `plan_executions`,
-`plan_commits`. Two state machines: task (coarse phases) + plan (full cycle). Key
+Tables: `tasks`, `projects`, `repos`, `project_repos`, `task_repos`, `executions`,
+`task_sessions`, `task_links`, `worktrees`, `events`, `deployments`, `decisions`,
+`participants`, **`artifacts`** (central polymorphic manager) + `artifact_projects` /
+`artifact_repos`, `plans`, `plan_steps`, `plan_incidents`, `plan_inconsistencies`,
+`plan_counters`, `plan_executions`, `plan_commits`, `recettes`, `recette_items`,
+`recette_tasks`, `e2e_tests`, `e2e_test_*`, `task_e2e`, `e2e_executions`,
+**`adr_conflicts`**, **`adr_vigilances`**. State machines: task (coarse phases) +
+plan (full cycle) + **ADR** (`Proposed → Accepted → Deprecated → Replaced`). Key
 tools: `task_register`, `task_transition`, `plan_transition`, `task_event`,
 `decision_request`, `decision_resolve`, `task_recette`, `task_get`, `task_link_session`,
-`plan_commit_add`, `plan_commits_list`.
+`plan_commit_add`, `plan_commits_list`, **`artifact_add`/`artifact_list`**, the
+**`adr_*` family**, `doc_*`.
 
 **6. Business MCP & Skills** — `plan-manager` (plans persistence/tracking),
 `audit-manager` (audit reports treatment, file-based), `coder-workspaces` (Coder

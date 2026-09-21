@@ -25,9 +25,15 @@ DOCUMENT de référence  (kind, titre, chemin)   ── N:N ──▶ PROJET (pr
                                                    N:N ──▶ REPO (dépôt de code)
 ```
 
-`docs` : entité document (kind, title, **path**, description). `doc_projects` /
-`doc_repos` : rattachements N:N. Le fichier est lu **au chemin indiqué** par
-l'agent — jamais stocké/copié en base.
+**Stockage** : ces documents sont des artefacts de la table **polymorphe
+`artifacts`** — `doc_type` ∈ {`adr`, `specs`, `gherkin`, `project_doc`},
+`content_id` = identifiant du document (`docId`), `kind` = **nature**
+(`autre` pour cette famille). Les rattachements N:N sont portés par
+**`artifact_projects`** / **`artifact_repos`** (qui remplacent
+`doc_projects` / `doc_repos`). Le fichier est lu **au chemin indiqué** par
+l'agent — jamais stocké/copié en base. Voir
+[`13-adr-et-artefacts.md`](13-adr-et-artefacts.md) §4 et la taxonomie dans
+[`nomenclature-doc-type.md`](nomenclature-doc-type.md).
 
 ### Kinds (vocabulaire)
 - `adr-tech` — **Architecture technique** du projet/repo : stack, architectures
@@ -71,13 +77,23 @@ cocher au lancement :
 
 ## 4. MCP / données
 
-- `doc_register({ kind, title, path, projectId?, repoId? })`, `doc_update`,
-  `doc_delete`, `doc_get`, `doc_list({ kind?, projectId?, repoId?, includeRepoDocs })`.
+- `doc_register({ kind, title, path, projectId?, repoId?, repoIds?, global? })`,
+  `doc_update`, `doc_delete`, `doc_get`,
+  `doc_list({ kind?, status?, projectId?, repoId?, includeRepoDocs })` — tous
+  **rebasés sur la table polymorphe `artifacts`** (`doc_type` = `adr` | `specs` |
+  `gherkin` | `project_doc`).
+- Famille ADR **structurée** (sur-ensemble, mêmes données) :
+  `adr_list` / `adr_get` / `adr_search` / `adr_context` (lecture),
+  `adr_register` / `adr_set_status` / `adr_update` / `adr_attach` (cycle de vie),
+  `adr_report_conflict` / `adr_report_missing` / `adr_vigilance_list` /
+  `adr_vigilance_resolve` (signalement & vigilances) — voir
+  [`13-adr-et-artefacts.md`](13-adr-et-artefacts.md) §2.
 - `project_list` / `project_get` → `projects[].docs` (docs du projet + de ses
   repos) ; `repo_get` / `repo_list` → `repos[].docs` ; `e2e_test_get` →
   `test.docs` (docs du projet du test).
 - `recette_doc_add` accepte un `path` existant (les docs de référence sélectionnés
-  y sont attachés).
+  y sont attachés ; stockés en `artifacts`, `doc_type` = `recette_doc` /
+  `recette_report`).
 
 ## 5. Panel
 

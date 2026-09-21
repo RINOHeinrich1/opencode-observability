@@ -21,7 +21,8 @@ Base `task_registry` :
 | `deployments` | Suivi CI/CD | `deployment_id`, `task_id`, `status` |
 | `decisions` | Décisions humaines | `decision_id`, `task_id`, `kind`, `status`, `plan_id`, `resolution` |
 | `participants` | Agents participants | `task_id`, `agent`, `role` |
-| `artifacts` | Documents liés | `artifact_id`, `task_id`, `kind`, `path` |
+| `artifacts` | **Gestionnaire central polymorphe** (tous artefacts) | `artifact_id`, `doc_type`, `content_id`, `kind` (nature), `nature`, `source`, `meta`, `title`, `path`, + champs ADR (`status`, `context`, `decision`, `consequences`, `replaced_by`, `is_global`) |
+| `artifact_projects` / `artifact_repos` | Rattachement N:N artefact ⇄ projet / repo | `artifact_id`, `project_id` / `repo_id` |
 | `worktrees` | Worktrees (legacy) | `worktree_id`, `project`, `status` |
 | `plans` | Plans d'action | `id`, `task_id`, `objective`, `branch` |
 | `plan_steps` | Étapes d'un plan | `plan_id`, `step_id`, `status` |
@@ -33,6 +34,13 @@ Base `task_registry` :
 | `notifier_state` | High-water marks du notifier (v0.1.0) | `stream`, `last_id`, `last_ts` |
 | `notifier_dedup` | Déduplication des envois (v0.1.0) | `stream`, `key`, `sent_at` |
 | `audit_notifications` | Miroir des incidents/incohérences d'audit (v0.1.0) | `id`, `kind`, `audit_id`, `status`, `resolved_at` |
+| `adr_conflicts` | Conflits code ↔ ADR (persistés, « pas de violation silencieuse ») | `conflict_id`, `adr_id` (→ `artifacts`), `task_id` (nullable), `description`, `status` (open/resolved), `decision_id` (décision `kind='conflict'`) |
+| `adr_vigilances` | Points de vigilance ADR en recette/test (append-only, bloquants) | `vigilance_id`, `project`, `recette_id`, `task_id`, `session_id`, `type` (missing/conflict), `status` (open/resolved), `entity`, `description`, `adr_id`, `related_adr_id`, `conflict_id`, `resolution`, `resolution_kind`, `resolved_at`, `resolved_by` |
+
+> **Tables legacy neutralisées** (`legacy_*`, jamais supprimées) : `docs`,
+> `doc_projects`, `doc_repos`, `doc_attachments`, `recette_documents` — fusionnées
+> dans `artifacts` par `scripts/artifacts-fusion-migration.mjs` puis renommées
+> `legacy_*`. Voir [`13-adr-et-artefacts.md`](13-adr-et-artefacts.md) §4.
 
 Base `panel` : `users`, `sessions`, `archives`.
 
@@ -59,6 +67,18 @@ une **opération de vérification** distincte — `pending` (pas faite) →
 intacte ; les travaux découverts deviennent de **nouvelles tâches** typées
 (`recette_class` : rework/bug/improvement/feature) liées à la tâche
 (`task_links`). `approved`/`rejected` (legacy) sont gérés en lecture.
+
+**ADR** (`ADR_TRANSITIONS`) — cycle de vie **structuré** (table `artifacts`,
+`doc_type='adr'`) :
+```
+Proposé  → Accepté | Déprécié
+Accepté  → Déprécié | Remplacé
+Déprécié → Remplacé
+Remplacé → (terminal)
+```
+Statut initial **`Proposé`** ; l'**acceptation est une décision humaine**.
+`Remplacé` exige `replacedBy` (docId existant, ≠ l'ADR). Voir
+[`13-adr-et-artefacts.md`](13-adr-et-artefacts.md) §1.
 
 ## 3. Endpoints observabilité (panneau, v0.2.0 → v0.7.4)
 
@@ -102,6 +122,9 @@ en cache au démarrage, le `--model` explicite garantit la prise en compte).
 | État / State | Statut d'exécution (tâche ou plan). |
 | Agrégation | Transition de tâche déclenchée quand toutes les décisions d'un type sont résolues. |
 | Branche principale | `main_branch` d'un projet — obligatoire pour autoriser le déploiement (pull avant push). |
+| ADR structurée | Décision d'architecture (`artifacts.doc_type='adr'`) à champs structurés (statut/contexte/décision/conséquences), rattachée à un projet + 1..N repos, avec 0..N pièces jointes. |
+| Artefact | Document/livrable polymorphe de la table `artifacts`, identifié par (`doc_type`, `content_id`) ; `kind` = nature. |
+| Point de vigilance ADR | Constat **bloquant** remonté en recette/test (ADR manquante ou conflit), levé de façon **tracée** (raison obligatoire). |
 
 ---
 
@@ -122,7 +145,8 @@ en cache au démarrage, le `--model` explicite garantit la prise en compte).
 | `deployments` | CI/CD tracking | `deployment_id`, `task_id`, `status` |
 | `decisions` | Human decisions | `decision_id`, `task_id`, `kind`, `status`, `plan_id`, `resolution` |
 | `participants` | Participating agents | `task_id`, `agent`, `role` |
-| `artifacts` | Linked documents | `artifact_id`, `task_id`, `kind`, `path` |
+| `artifacts` | **Central polymorphic manager** (all artifacts) | `artifact_id`, `doc_type`, `content_id`, `kind` (nature), `nature`, `source`, `meta`, `title`, `path`, + ADR fields (`status`, `context`, `decision`, `consequences`, `replaced_by`, `is_global`) |
+| `artifact_projects` / `artifact_repos` | Artifact ⇄ project / repo N:N attachment | `artifact_id`, `project_id` / `repo_id` |
 | `worktrees` | Worktrees (legacy) | `worktree_id`, `project`, `status` |
 | `plans` | Action plans | `id`, `task_id`, `objective`, `branch` |
 | `plan_steps` | Plan steps | `plan_id`, `step_id`, `status` |
@@ -134,6 +158,13 @@ en cache au démarrage, le `--model` explicite garantit la prise en compte).
 | `notifier_state` | Notifier high-water marks (v0.1.0) | `stream`, `last_id`, `last_ts` |
 | `notifier_dedup` | Send dedup (v0.1.0) | `stream`, `key`, `sent_at` |
 | `audit_notifications` | Audit incidents/inconsistencies mirror (v0.1.0) | `id`, `kind`, `audit_id`, `status`, `resolved_at` |
+| `adr_conflicts` | Code ↔ ADR conflicts (persisted, "no silent violation") | `conflict_id`, `adr_id` (→ `artifacts`), `task_id` (nullable), `description`, `status` (open/resolved), `decision_id` (decision `kind='conflict'`) |
+| `adr_vigilances` | ADR vigilance points in acceptance/test (append-only, blocking) | `vigilance_id`, `project`, `recette_id`, `task_id`, `session_id`, `type` (missing/conflict), `status` (open/resolved), `entity`, `description`, `adr_id`, `related_adr_id`, `conflict_id`, `resolution`, `resolution_kind`, `resolved_at`, `resolved_by` |
+
+> **Legacy tables neutralized** (`legacy_*`, never dropped): `docs`,
+> `doc_projects`, `doc_repos`, `doc_attachments`, `recette_documents` — merged
+> into `artifacts` by `scripts/artifacts-fusion-migration.mjs` then renamed
+> `legacy_*`.
 
 Database `panel`: `users`, `sessions`, `archives`.
 
@@ -144,7 +175,10 @@ awaiting_validation → planned → in_progress → done` (+ `blocked`/`failed`/
 `planned → in_progress → validating → review → approved → merge_pending → merged →
 deploy_pending → deploying → deployed → post_deploy_verified → done` (+ `rejected →
 rework`). **Acceptance** (`recette_status`): `pending → approved/rejected`, independent
-of execution status.
+of execution status. **ADR** (`ADR_TRANSITIONS`): `Proposed → Accepted|Deprecated`,
+`Accepted → Deprecated|Replaced`, `Deprecated → Replaced`, `Replaced` terminal
+(`Replaced` requires `replacedBy`); initial status `Proposed`, acceptance is a human
+decision.
 
 **3. Observability endpoints** (panel, v0.2.0 → v0.4.0) — authenticated
 `GET /api/metrics/*`: `summary` · `status` · `throughput` · `leadtime` · `agents` ·
@@ -159,4 +193,4 @@ of execution status.
 agent definitions at startup), `docker-compose.yml` (PostgreSQL).
 
 **4. Glossary** — Task, Plan/sub-task, Decision, Acceptance (recette), Session,
-Worktree, State, Aggregation.
+Worktree, State, Aggregation, Structured ADR, Artifact, ADR vigilance point.

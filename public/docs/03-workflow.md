@@ -60,6 +60,28 @@ via sa propre table, pas une décision — v0.7.5).
   **nature de liaison** (« c'est là que le package a été créé ») — exploitées par
   atomic-plan (commits, plans, docs).
 
+### Gouvernance ADR en recette (points de vigilance bloquants)
+
+Une recette peut révéler qu'une **décision d'architecture est manquante** ou
+**contredite**. Le framework en fait un **point de vigilance global** qui **bloque
+la terminaison** de la recette — jamais de validation silencieuse :
+
+- **Signalement** : `adr_report_missing` (ADR manquante pour une entité
+  réellement discutée) ou `adr_report_conflict` (conflit code ↔ ADR, `recetteId`
+  fourni) → point persisté dans `adr_vigilances` (`type` = `missing`/`conflict`,
+  `status` = `open`, `reason` explicite).
+- **Blocage** : `recette_confirm` est **REFUSÉ** tant qu'un point est `open`, avec
+  la **raison explicite** (« ADR manquant pour [entité] » / « Conflit d'ADR :
+  [ancienne] vs [nouvelle] »). Le panneau effectue le **même pré-check** avant
+  toute création de tâches et **bloque** le bouton « Terminer la recette ».
+- **Levée tracée (2 canaux)** : `adr_vigilance_resolve` (raison **obligatoire**,
+  `resolutionKind` = `adr_created`/`adr_deprecated`/`decision`/`manual`), ou la
+  résolution de la **décision humaine** `kind='conflict'` (qui clôt le conflit).
+- **Historique append-only filtrable** : `adr_vigilance_list` /
+  `GET /api/adr-vigilances` (projet, recette, type, statut, dates).
+
+Voir [`13-adr-et-artefacts.md`](13-adr-et-artefacts.md) §3.
+
 ## 2. Cycle de vie d'un plan (sous-tâche)
 
 Chaque plan suit **son propre cycle**, en parallèle des autres :
@@ -179,6 +201,13 @@ decision has `kind`, `detail`, `planId`, `status`, `resolution`.
 watches registry state changes (events, decisions, deployments, incidents) and
 emails the user with database data. Agents never send emails; the MCP `notify`
 tool was removed.
+
+**4bis. ADR governance in acceptance** — a missing/conflicting architecture
+decision detected during a recette/test becomes an **open global vigilance**
+(`adr_vigilances`, `type` = `missing`/`conflict`) that **blocks** `recette_confirm`
+(registry guard + panel pre-check) with an explicit reason. It is lifted in a
+**traced** way (mandatory `resolution` via `adr_vigilance_resolve`, or by
+resolving the human `conflict` decision). History is append-only and filterable.
 
 **5. Example sequence (2 plans)** — human creates task → panel launches (`started`) →
 orchestrator plans (`planning`) → atomic-plan produces 2 plans → `awaiting_validation`

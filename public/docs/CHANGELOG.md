@@ -5,6 +5,36 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## 2026-09-21 · ADR structurées, famille `adr_*`, gestionnaire central d'artefacts & gouvernance ADR
+
+Documentation d'écosystème mise à jour pour refléter le **code déployé** (MCP
+`task-orchestrator` + panneau `orchestrator-panel`) :
+
+- **ADR structurées** : `artifacts.doc_type='adr'` porte des champs dédiés
+  (statut `Proposé`/`Accepté`/`Déprécié`/`Remplacé`, contexte, décision,
+  conséquences, `replaced_by`, `is_global`), un rattachement projet + **1..N
+  repos** (`artifact_projects`/`artifact_repos`), des **pièces jointes 0..N**
+  (`adr_file`) et un cycle de vie gardé (`ADR_TRANSITIONS`).
+- **Famille MCP `adr_*`** (12 outils) : lecture/contexte (`adr_list`, `adr_get`,
+  `adr_search`, `adr_context`), cycle de vie (`adr_register`, `adr_set_status`,
+  `adr_update`, `adr_attach`), signalement/vigilances (`adr_report_conflict`,
+  `adr_report_missing`, `adr_vigilance_list`, `adr_vigilance_resolve`).
+- **Gouvernance ADR en recette/test** : points de vigilance globaux
+  (`adr_vigilances`) **bloquants** — `recette_confirm` refusé (+ pré-check
+  panneau) avec raison explicite ; levée **tracée** (2 canaux) ; historique
+  append-only filtrable.
+- **Gestionnaire central d'artefacts** : table **polymorphe `artifacts`**
+  (`doc_type`/`content_id`, `kind` = nature, `nature`, `source`, `meta`) —
+  fusion physique des 3 silos (artefacts de tâche, `recette_documents`, `docs`
+  ADR-12) ; tables legacy neutralisées en `legacy_*`.
+- **Panneau** : onglet **ADR** du projet + onglet **Artefacts** ; retrait des
+  onglets **Déploiements / Événements / Plans** (accès via le modal de détail
+  d'une tâche).
+- **Documentation** : nouveau doc `13-adr-et-artefacts.md` ; mises à jour de
+  `01-architecture.md`, `02-composants.md`, `03-workflow.md`, `05-reference.md`,
+  `09-modele-projets-repos.md`, `12-documents-reference-projets-repos.md`,
+  `README.md`.
+
 ## 2026-09-17 · Email de notification par utilisateur (v0.9.65)
 
 Les emails du daemon `opencode-notifier` partaient tous vers une adresse globale

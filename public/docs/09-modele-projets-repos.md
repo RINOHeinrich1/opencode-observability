@@ -55,6 +55,12 @@ Projet ──────── N:N ──────── Repo
                                      ex. onirtech-* (outillage)
 ```
 
+> **Rattachement des ADR (2026-09-21)** — le rattachement N:N **ADR ⇄ projet/repo**
+> est porté par les tables **`artifact_projects`** / **`artifact_repos`** (qui
+> remplacent `doc_projects` / `doc_repos`) ; l'ADR est un artefact
+> `artifacts.doc_type='adr'` (champs structurés + pièces jointes 0..N). Voir
+> [`13-adr-et-artefacts.md`](13-adr-et-artefacts.md) §1.
+
 ### Règles du modèle
 
 1. **Projet** = unité **métier** (ex. `madatalk`, `oniria`).

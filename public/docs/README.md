@@ -23,6 +23,8 @@
 | 10 | [10-cadrage-maj-packages-e2e-postdeploiement.md](10-cadrage-maj-packages-e2e-postdeploiement.md) | **Cadrage** : mise à jour auto des packages ONIRIA (mécanisme /v2/packages) + E2E post-déploiement (à valider) |
 | 11 | [11-tests-e2e-projet-repos.md](11-tests-e2e-projet-repos.md) | **Tests E2E** : rattachement à un PROJET unique + repos traversés (N:N) (à implémenter) |
 | 12 | [12-documents-reference-projets-repos.md](12-documents-reference-projets-repos.md) | **Documents de référence** projets/repos : ADR technique, specs fonctionnelles, scénarios Gherkin — chemins fournis en contexte (ADR-12) |
+| 13 | [13-adr-et-artefacts.md](13-adr-et-artefacts.md) | **ADR structurées, famille `adr_*`, gouvernance ADR en recette & gestionnaire central d'artefacts** (table polymorphe `artifacts`) |
+| — | [nomenclature-doc-type.md](nomenclature-doc-type.md) | **Nomenclature `doc_type`** — taxonomie du gestionnaire central d'artefacts (référentiel) |
 | — | [CHANGELOG.md](CHANGELOG.md) | Historique des versions / Version history |
 
 ## À qui s'adresse ce document / Who this is for

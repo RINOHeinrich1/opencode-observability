@@ -1812,6 +1812,237 @@ const server = createServer(async (req, res) => {
         return;
       } catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
     }
+    // --- SPRINTS (ADR-001, T4) : CRUD + RAPPORT DE SPRINT téléchargeable ------
+    // La clôture (manuelle via le panneau, ou automatique à l'échéance appliquée
+    // par le registre AVANT lecture) est l'action OFFICIELLE qui bascule la garde
+    // d'émergence : le panneau ne recalcule jamais l'émergence.
+    // GET /api/sprints?projectId=&status= — liste (statut + dates).
+    if (path === "/api/sprints" && req.method === "GET") {
+      try {
+        const r = await pilot.listSprints({
+          projectId: url.searchParams.get("projectId") || undefined,
+          status: url.searchParams.get("status") || undefined,
+        });
+        return sendJson(res, 200, {
+          sprints: (r && r.sprints) || [],
+          count: (r && r.count) || 0,
+          autoClosed: (r && r.autoClosed) || [],
+        });
+      } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    // POST /api/sprints — création à DURÉE PARAMÉTRABLE (startDate/endDate ISO).
+    if (path === "/api/sprints" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        if (!b.projectId) return sendJson(res, 400, { error: "projectId requis" });
+        return sendJson(res, 201, await pilot.createSprint({
+          projectId: b.projectId,
+          title: b.title,
+          startDate: b.startDate || undefined,
+          endDate: b.endDate || undefined,
+          autoClose: typeof b.autoClose === "boolean" ? b.autoClose : undefined,
+          pieces: Array.isArray(b.pieces) ? b.pieces : undefined,
+          createdBy: user.username,
+        }));
+      } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    // GET /api/sprints/:id — détail complet (pièces/fonctionnalités/règles/tâches/recettes).
+    const sprintGetMatch = path.match(/^\/api\/sprints\/([^/]+)$/);
+    if (sprintGetMatch && req.method === "GET") {
+      try { return sendJson(res, 200, await pilot.getSprintDetail({ sprintId: decodeURIComponent(sprintGetMatch[1]) })); }
+      catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    // POST /api/sprints/:id/close — CLÔTURE manuelle (déclenche l'émergence).
+    const sprintCloseMatch = path.match(/^\/api\/sprints\/([^/]+)\/close$/);
+    if (sprintCloseMatch && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        return sendJson(res, 200, await pilot.closeSprint({
+          sprintId: decodeURIComponent(sprintCloseMatch[1]),
+          reason: b.reason || undefined,
+        }));
+      } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    // POST /api/sprints/:id/reopen — REPRISE (réouverture, suspend l'émergence).
+    const sprintReopenMatch = path.match(/^\/api\/sprints\/([^/]+)\/reopen$/);
+    if (sprintReopenMatch && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        return sendJson(res, 200, await pilot.reopenSprint({
+          sprintId: decodeURIComponent(sprintReopenMatch[1]),
+          endDate: b.endDate || undefined,
+          autoClose: typeof b.autoClose === "boolean" ? b.autoClose : undefined,
+          by: user.username,
+        }));
+      } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    // POST /api/sprints/:id/pieces — rattachement de pièces client (atInit=true
+    // pour un rattachement à la création, NON émergent).
+    const sprintPiecesMatch = path.match(/^\/api\/sprints\/([^/]+)\/pieces$/);
+    if (sprintPiecesMatch && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        return sendJson(res, 200, await pilot.attachSprintPieces({
+          sprintId: decodeURIComponent(sprintPiecesMatch[1]),
+          pieceIds: Array.isArray(b.pieceIds) ? b.pieceIds : (b.pieceId ? [b.pieceId] : []),
+          atInit: b.atInit === true,
+          by: user.username,
+        }));
+      } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    // GET /api/sprints/:id/report[?download=1] — RAPPORT DE SPRINT généré par le
+    // registre (`sprint_report`). `download=1` → pièce jointe markdown.
+    const sprintReportMatch = path.match(/^\/api\/sprints\/([^/]+)\/report$/);
+    if (sprintReportMatch && req.method === "GET") {
+      const sprintId = decodeURIComponent(sprintReportMatch[1]);
+      try {
+        const r = await pilot.sprintReport({ sprintId, format: "markdown" });
+        const markdown = typeof r === "string" ? r : ((r && r.markdown) || "");
+        if (url.searchParams.get("download") === "1") {
+          const filename = `rapport-sprint-${sprintId}.md`;
+          res.writeHead(200, {
+            "Content-Type": "text/markdown; charset=utf-8",
+            "Content-Disposition": `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+            "Cache-Control": "no-store",
+          });
+          return res.end(markdown);
+        }
+        return sendJson(res, 200, { sprintId, markdown });
+      } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    // --- FONCTIONNALITÉS / RÈGLES MÉTIER (ADR-001, T5) : CRUD + liens N:N ----
+    // GET /api/features?projectId=&emergent=&search=&limit=
+    if (path === "/api/features" && req.method === "GET") {
+      try {
+        const r = await pilot.listFeatures({
+          projectId: url.searchParams.get("projectId") || undefined,
+          emergent: url.searchParams.get("emergent") === "1" ? true : (url.searchParams.get("emergent") === "0" ? false : undefined),
+          search: url.searchParams.get("search") || undefined,
+          limit: url.searchParams.get("limit") ? Number(url.searchParams.get("limit")) : undefined,
+        });
+        return sendJson(res, 200, { features: (r && r.features) || [], count: (r && r.count) || 0 });
+      } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    // POST /api/features — création (l'agent propose, l'humain valide/ajuste).
+    if (path === "/api/features" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        if (!b.projectId) return sendJson(res, 400, { error: "projectId requis" });
+        return sendJson(res, 201, await pilot.createFeature({
+          projectId: b.projectId, ref: b.ref, role: b.role, userStory: b.userStory,
+          sourcedPieceId: b.sourcedPieceId || undefined, recetteId: b.recetteId || undefined,
+          createdBy: user.username,
+        }));
+      } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    const featureMatch = path.match(/^\/api\/features\/([^/]+)$/);
+    if (featureMatch && req.method === "GET") {
+      try { return sendJson(res, 200, await pilot.getFeature({ featureId: decodeURIComponent(featureMatch[1]) })); }
+      catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    if (featureMatch && req.method === "PUT") {
+      const b = await readBody(req);
+      try {
+        return sendJson(res, 200, await pilot.updateFeature({
+          featureId: decodeURIComponent(featureMatch[1]),
+          ref: b.ref, role: b.role, userStory: b.userStory,
+          sourcedPieceId: b.sourcedPieceId != null ? b.sourcedPieceId : undefined,
+          by: user.username,
+        }));
+      } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    // GET /api/rules?projectId=&emergent=&search=&limit=
+    if (path === "/api/rules" && req.method === "GET") {
+      try {
+        const r = await pilot.listRules({
+          projectId: url.searchParams.get("projectId") || undefined,
+          emergent: url.searchParams.get("emergent") === "1" ? true : (url.searchParams.get("emergent") === "0" ? false : undefined),
+          search: url.searchParams.get("search") || undefined,
+          limit: url.searchParams.get("limit") ? Number(url.searchParams.get("limit")) : undefined,
+        });
+        return sendJson(res, 200, { rules: (r && r.rules) || [], count: (r && r.count) || 0 });
+      } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    // POST /api/rules — création d'une règle métier.
+    if (path === "/api/rules" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        if (!b.projectId) return sendJson(res, 400, { error: "projectId requis" });
+        return sendJson(res, 201, await pilot.createRule({
+          projectId: b.projectId, ref: b.ref, content: b.content,
+          sourcedPieceId: b.sourcedPieceId || undefined, recetteId: b.recetteId || undefined,
+          createdBy: user.username,
+        }));
+      } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    const ruleMatch = path.match(/^\/api\/rules\/([^/]+)$/);
+    if (ruleMatch && req.method === "GET") {
+      try { return sendJson(res, 200, await pilot.getRule({ ruleId: decodeURIComponent(ruleMatch[1]) })); }
+      catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    if (ruleMatch && req.method === "PUT") {
+      const b = await readBody(req);
+      try {
+        return sendJson(res, 200, await pilot.updateRule({
+          ruleId: decodeURIComponent(ruleMatch[1]),
+          ref: b.ref, content: b.content,
+          sourcedPieceId: b.sourcedPieceId != null ? b.sourcedPieceId : undefined,
+          by: user.username,
+        }));
+      } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    // POST /api/links — dispatcher de LIAISON N:N ({ kind, a, b }).
+    if (path === "/api/links" && req.method === "POST") {
+      const b = await readBody(req);
+      try { return sendJson(res, 200, await pilot.linkEntities({ kind: b.kind, a: b.a, b: b.b })); }
+      catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    // DELETE /api/links/:kind/:a/:b — retrait d'un lien N:N.
+    const linkDelMatch = path.match(/^\/api\/links\/([^/]+)\/([^/]+)\/([^/]+)$/);
+    if (linkDelMatch && req.method === "DELETE") {
+      try {
+        return sendJson(res, 200, await pilot.unlinkEntities({
+          kind: decodeURIComponent(linkDelMatch[1]),
+          a: decodeURIComponent(linkDelMatch[2]),
+          b: decodeURIComponent(linkDelMatch[3]),
+        }));
+      } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    // --- CARDINALITÉS / ÉMERGENCE (ADR-001 §5, T6) : lecture + clôture tracée -
+    // GET /api/cardinality?projectId=&view= — agrégat (10 vues + signaux).
+    if (path === "/api/cardinality" && req.method === "GET") {
+      try {
+        return sendJson(res, 200, await pilot.cardinalityReport({
+          projectId: url.searchParams.get("projectId") || undefined,
+          view: url.searchParams.get("view") || undefined,
+        }));
+      } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    // GET /api/cardinality/signals?projectId=&entityType=&entityId=&status=
+    if (path === "/api/cardinality/signals" && req.method === "GET") {
+      try {
+        const r = await pilot.listCardinalitySignals({
+          projectId: url.searchParams.get("projectId") || undefined,
+          entityType: url.searchParams.get("entityType") || undefined,
+          entityId: url.searchParams.get("entityId") || undefined,
+          status: url.searchParams.get("status") || undefined,
+          limit: url.searchParams.get("limit") ? Number(url.searchParams.get("limit")) : undefined,
+        });
+        return sendJson(res, 200, { signals: (r && r.signals) || [], count: (r && r.count) || 0 });
+      } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    // POST /api/cardinality/signals/:id/resolve — clôture TRACÉE (résolution obligatoire).
+    const cardSignalResolveMatch = path.match(/^\/api\/cardinality\/signals\/([^/]+)\/resolve$/);
+    if (cardSignalResolveMatch && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        return sendJson(res, 200, await pilot.resolveCardinalitySignal({
+          signalId: decodeURIComponent(cardSignalResolveMatch[1]),
+          resolution: b.resolution,
+          resolvedBy: user.username,
+        }));
+      } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
     // --- Pièces jointes d'ADR (item 122) : 0..N documents/fichiers par ADR ----
     // Ajout : import PC (filename+dataBase64 → storage/ref-docs), document du
     // registre (targetDocId) ou fichier référencé par chemin (path).

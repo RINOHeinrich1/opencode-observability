@@ -12,6 +12,7 @@ import { currentUser, sessionToken, cookieHeader, clearCookieHeader } from "./au
 import { scanEcosystem, updateAgentModel } from "./ecosystem.mjs";
 import { loadEnv } from "./env.mjs";
 import * as pilot from "./pilot.mjs";
+import { closeAllMcpClients } from "./mcp-client.mjs";
 import { sessionUsage, taskConsumption } from "./usage.mjs";
 import * as metrics from "./metrics.mjs";
 import { marked } from "marked";
@@ -2915,3 +2916,14 @@ await openDb(); // init panel.db (users/sessions/archives) + bootstrap admin
 server.listen(PORT, HOST, () => {
   console.log(`[orchestrator-panel] écoute sur http://${HOST}:${PORT}`);
 });
+
+// Arrêt propre : fermer les clients MCP persistants (aucun process MCP orphelin
+// au redémarrage PM2), puis quitter. Filet de sécurité : le hook `exit` du
+// client MCP tue aussi les process de façon synchrone.
+async function shutdown(signal) {
+  console.log(`[orchestrator-panel] ${signal} reçu — arrêt propre…`);
+  try { await closeAllMcpClients(); } catch {}
+  process.exit(0);
+}
+process.on("SIGTERM", () => { shutdown("SIGTERM"); });
+process.on("SIGINT", () => { shutdown("SIGINT"); });

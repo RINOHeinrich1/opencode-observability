@@ -5177,47 +5177,22 @@ async function ruleDetailModal(ruleId) {
   } catch (e) { alert('Détail indisponible : ' + (e.message || e)); }
 }
 
-// Index DÉTERMINISTE des liens par entité (remplace l'ancien remplissage
-// PARESSEUX `enrichLinkCells`). Un seul passage à concurrence bornée (4) sur les
-// détails `/api/features/:id` et `/api/rules/:id` alimente À LA FOIS la colonne
-// « Liens » (`frLinkCellHtml`) ET les filtres « sans lien » (`frFilter*`).
+// Index DÉTERMINISTE des liens par entité, dérivé du PAYLOAD des listes
+// (`feature_list`/`rule_list` renvoient `links` = compteurs calculés en UNE
+// requête bulk côté registre). PLUS AUCUN appel réseau ici : les 55 appels
+// `/api/features/:id` + `/api/rules/:id` (N+1) ont disparu. L'index alimente À
+// LA FOIS la colonne « Liens » (`frLinkCellHtml`) ET les filtres « sans lien »
+// (`frFilter*`).
 // Structure : { features: { id: { rules, gherkin, adrs, sprints, tasks, recettes } },
 //               rules:    { id: { features, sprints } } }.
-// Repli non bloquant : une entité dont le détail échoue est absente de l'index
-// → ses liens sont considérés comme absents (`—`), jamais d'exception remontée.
-async function loadFeatureRuleLinkIndex(features, rules) {
+// Repli non bloquant : une entité SANS `links` (registre non encore déployé) est
+// ABSENTE de l'index → ses liens s'affichent `—`/« aucun lien », jamais
+// d'exception remontée.
+let frLinkWarned = false;
+function buildFeatureRuleLinkIndex(features, rules) {
   const index = { features: {}, rules: {} };
-  const jobs = [];
-  (features || []).forEach((f) => { if (f && f.id) jobs.push({ kind: 'feature', id: f.id }); });
-  (rules || []).forEach((r) => { if (r && r.id) jobs.push({ kind: 'rule', id: r.id }); });
-  const run = async (job) => {
-    try {
-      const d = job.kind === 'feature'
-        ? await api(`/api/features/${encodeURIComponent(job.id)}`)
-        : await api(`/api/rules/${encodeURIComponent(job.id)}`);
-      const o = (job.kind === 'feature' ? d.feature : d.rule) || {};
-      if (job.kind === 'feature') {
-        index.features[job.id] = {
-          rules: (o.regles || []).length,
-          gherkin: (o.gherkin || []).length,
-          adrs: (o.adrs || []).length,
-          sprints: (o.sprints || []).length,
-          tasks: (o.tasks || []).length,
-          recettes: (o.recettes || []).length,
-        };
-      } else {
-        index.rules[job.id] = {
-          features: (o.fonctionnalites || []).length,
-          sprints: (o.sprints || []).length,
-        };
-      }
-    } catch { /* repli : liens considérés absents */ }
-  };
-  const queue = jobs.slice();
-  const workers = Array.from({ length: Math.min(4, queue.length) }, async () => {
-    while (queue.length) { const j = queue.shift(); if (j) await run(j); }
-  });
-  await Promise.all(workers);
+  (features || []).forEach((f) => { if (f && f.id && f.links) index.features[f.id] = f.links; });
+  (rules || []).forEach((r) => { if (r && r.id && r.links) index.rules[r.id] = r.links; });
   return index;
 }
 
@@ -5565,9 +5540,14 @@ async function renderFeaturesRules() {
     task: (taskRes.tasks || []).filter((t) => !t.project || t.project === currentProject).map((t) => ({ id: t.id, label: `${t.id} — ${(t.title || t.request || '').slice(0, 50)}` })),
     recette: (recRes.recettes || []).map((r) => ({ id: r.recette_id, label: `${r.recette_id} — ${(r.title || '').slice(0, 50)}` })),
   };
-  // Index DÉTERMINISTE des liens (A003) : alimente la colonne « Liens » ET les
-  // filtres « sans lien » des DEUX sous-onglets (un seul passage réseau).
-  const linkIndex = await loadFeatureRuleLinkIndex(features, rules);
+  // Index DÉTERMINISTE des liens : alimente la colonne « Liens » ET les filtres
+  // « sans lien » des DEUX sous-onglets — désormais SANS appel réseau (dérivé du
+  // payload des listes qui portent `links`, calculés en 1 requête bulk).
+  const linkIndex = buildFeatureRuleLinkIndex(features, rules);
+  if (features.length && !features[0].links && !frLinkWarned) {
+    frLinkWarned = true;
+    console.warn('[orchestrator-panel] feature_list/rule_list ne renvoient pas `links` : colonne « Liens » en repli — le registre MCP n\'est probablement pas déployé.');
+  }
   const subtabBtn = (tab, label, count) => `<button type="button" class="pd-tab ${frSubTab === tab ? 'active' : ''}" data-fr-subtab="${tab}">${esc(label)} <span class="muted-sm">(${count})</span></button>`;
   pane.innerHTML = `
     <h2>Fonctionnalités & Règles métier <span class="muted-sm">${esc(currentProject)}</span></h2>

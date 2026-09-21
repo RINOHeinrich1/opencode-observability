@@ -639,6 +639,43 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 .markdown-view table { border-collapse: collapse; margin: 0.8em 0; }
 .markdown-view th,.markdown-view td { border: 1px solid var(--border); padding: 5px 9px; }
 
+/* ===== Visionneuse document de référence PLEIN ÉCRAN (ADR-12) =====
+   La modale couvre tout l'écran (position fixe, indépendante du padding du
+   voile) : en-tête figé (titre/chemin + actions), corps scrollable. */
+.modal.modal-doc-fullscreen {
+  position: fixed;
+  inset: 0;
+  max-width: none;
+  width: auto;
+  height: auto;
+  max-height: none;
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 18px 22px;
+}
+.doc-view-head {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 12px;
+  border-bottom: 1px solid var(--border); padding-bottom: 10px;
+}
+.doc-view-title { min-width: 0; }
+.doc-view-title h3 { margin: 0; word-break: break-word; }
+.doc-view-title .muted-sm { margin: 4px 0 0; word-break: break-all; }
+.doc-view-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.doc-view-body {
+  flex: 1; min-height: 0; overflow: auto;
+  background: rgba(255,255,255,.04);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 18px 20px;
+}
+.doc-view-pre {
+  white-space: pre-wrap; word-break: break-word;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px;
+  margin: 0;
+}
+
 /* ===== Sélecteur de tâches couvertes (v0.8.1) ===== */
 .recette-candidates { margin: 6px 0 10px; }
 .recette-cand-list { max-height: 240px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }

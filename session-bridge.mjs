@@ -370,6 +370,72 @@ export function buildRecettePrompt({ project, repos, title, taskIds, docs = [], 
   ].join("\n");
 }
 
+/**
+ * Prompt d'ouverture d'une session de SPRINT (agent-sprint) — v0.1.0.
+ * Le sprint est un objet de PROJET (titre + durée + pièces client). La session
+ * est rattachée au sprint (sprints.session_id). Mission + cadre, jamais méthode.
+ * L'agent lit les pièces client → dialogue → PROPOSE puis REMPLIT les
+ * fonctionnalités/règles métier (feature_* / rule_*) avec pièce source + émergence.
+ * Il n'écrit JAMAIS d'ADR (les ADR restent à la charge des utilisateurs en recette).
+ */
+export function buildSprintPrompt({ sprintId, project, repos, title, startDate, endDate, pieces = [], docs = [], adrContext = "" }) {
+  const proj = (project && String(project).trim()) || "";
+  const repoBlock = (repos && repos.length)
+    ? `  Repos transverses du projet (portée réelle — ADR 11) : ${repos.map((x) => x.repoId || x.id || x).join(", ")}`
+    : "";
+  // Bloc ADR (item 125) : « ## ADR de référence » construit par `adr_context`.
+  // Les ADR servent d'ancrage (statut Accepté = fait de référence) — l'agent de
+  // sprint ne les ÉCRIT jamais, il les CITE au plus.
+  const adrBlock = (adrContext && String(adrContext).trim())
+    ? ["", String(adrContext).trim(), ""]
+    : [];
+  const pieceBlock = (pieces && pieces.length)
+    ? [
+        "",
+        "PIÈCES CLIENT du sprint (à LIRE avant toute proposition) :",
+        ...pieces.map((p, i) => {
+          const where = p.path ? `chemin : \`${p.path}\`` : (p.url ? `lien (lecture) : ${p.url}` : "localisation : à demander");
+          const em = p.emergent ? ` · ÉMERGENTE${p.emergentOrigin ? ` (${p.emergentOrigin})` : ""}` : "";
+          return `  ${i + 1}. [${p.nature || "pièce"}] ${p.title || p.pieceId || ""} — ${where}${em}`;
+        }),
+        "Lis chaque pièce (markdown/pdf/docx via son chemin ; lien Drive en LECTURE via son url). Classe son contenu : DÉJÀ EN PLACE (non à traiter) vs À FAIRE vs AMBIGU (à clarifier).",
+        "",
+      ]
+    : [
+        "",
+        "Ce sprint n'a AUCUNE pièce client rattachée pour l'instant : demande à l'utilisateur de rattacher les pièces (onglet Sprints → bouton « Pièces ») avant de proposer, ou précise le besoin de vive voix.",
+        "",
+      ];
+  const docBlock = (docs && docs.length)
+    ? [
+        "",
+        "Documents de référence du projet (à LIRE — ils décrivent l'EXISTANT) :",
+        ...docs.map((d, i) => `  ${i + 1}. [${d.kind}] ${d.title || d.docId || ""} — chemin : \`${d.path}\``),
+        "Ils t'aident à trancher « déjà en place » (documenté/implémenté) vs « à faire » et à éviter les doublons. Les ADR Accepté sont des faits de référence ; les ADR Proposé ne sont pas actées.",
+        "",
+      ]
+    : [];
+  return [
+    `Ouvre la **session de sprint** « ${title || sprintId || proj} » — projet : \`${proj}\`${repoBlock ? `\n${repoBlock}` : ""} (v0.1.0).`,
+    "",
+    `Sprint : \`${sprintId || "(non précisé)"}\`${startDate || endDate ? ` — période ${startDate || "?"} → ${endDate || "?"}` : ""}.`,
+    "Un sprint est l'unité de temps d'UN SEUL projet (le produit) ; sa portée réelle est couverte par les repos transverses du projet (ADR 11). La session est RATTACHÉE au sprint (`sprints.session_id`) : elle se reprend.",
+    ...adrBlock,
+    ...pieceBlock,
+    ...docBlock,
+    "Mission :",
+    "- Récupère le contexte : `sprint_get(<sprintId>)` (sprint, pièces client, fonctionnalités/règles déjà enregistrées, tâches et recettes rattachées), `feature_list({ projectId })` / `rule_list({ projectId })` (inventaire AVANT de proposer, éviter les doublons), `doc_list({ projectId, includeRepoDocs: true })` (documents de référence).",
+    "- **Pipeline** : (1) LIRE les pièces client et en faire la synthèse (déjà en place / à faire / ambigu) → (2) DIALOGUER avec l'utilisateur (confirmations, clarifications — admin dans un premier temps) → (3) PROPOSER fonctionnalités (`US-xxx`) et règles métier (`RM-xxxx`) → (4) REMPLIR après validation.",
+    "- **Remplissage** via le MCP : `feature_register` / `rule_register` (avec `sourcedPieceId` = pièce SOURCE), liaisons `feature_rule_link`, rattachements `feature_sprint_link` / `rule_sprint_link` ; corrections via `feature_update` / `rule_update`. Le registre calcule lui-même l'ÉMERGENCE.",
+    "- **Distinguer « déjà en place » vs « à faire »** : ne génère JAMAIS une fonctionnalité pour un comportement existant (vérifie `feature_list`/`rule_list` + documents de référence + ADR Accepté). En cas de doute : `question` avant d'écrire.",
+    "- **N'écris JAMAIS d'ADR** (interdit) : les ADR restent à la charge des utilisateurs lors des recettes. Tu peux au plus CITER une ADR existante (`adr_list`/`adr_get`).",
+    "- **Émergents** (tâches sans fonctionnalité, règles apparues en recette, pièces après clôture) : SIGNALÉS et TRACÉS par le registre, JAMAIS bloqués. `cardinality_report` / `cardinality_signals_list` sont informatifs ; leur résolution est une décision humaine tracée.",
+    "- Ne crée aucune tâche, aucun test, aucun code : tu remplis les Fonctionnalités et Règles métier du sprint, rien d'autre.",
+    "",
+    "Cadre : session dédiée au sprint ; à la fin, résume ce qui a été lu, ce qui est « déjà en place », les fonctionnalités/règles proposées puis créées (refs + pièces sources), les émergents signalés et les questions restantes.",
+  ].join("\n");
+}
+
 // Prompt de mission pour la session de CRÉATION / MISE À JOUR d'un test E2E
 // (agent `test-agent`). Le test est une entité de 1er niveau : la session est
 // rattachée au test (e2e_tests.session_id). mission ≠ méthode : le prompt porte

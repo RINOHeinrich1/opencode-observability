@@ -4776,6 +4776,7 @@ async function renderSprints() {
       <button type="button" class="ghost tiny" data-sp-detail="${esc(s.id)}">Détail</button>
       <button type="button" class="ghost tiny" data-sp-report="${esc(s.id)}">Rapport</button>
       <button type="button" class="ghost tiny" data-sp-pieces="${esc(s.id)}">Pièces</button>
+      <button type="button" class="launch-btn tiny" data-sp-session="${esc(s.id)}" title="${s.sessionId ? 'Reprendre la session de sprint en cours' : 'Démarrer la session de sprint (agent-sprint : pièces → discussion → fonctionnalités/règles)'}">Session de sprint</button>
       ${s.status === 'open'
         ? `<button type="button" class="ghost tiny danger-text" data-sp-close="${esc(s.id)}">CLÔTURER</button>`
         : `<button type="button" class="ghost tiny" data-sp-reopen="${esc(s.id)}">REPRENDRE</button>`}
@@ -4796,6 +4797,7 @@ async function renderSprints() {
   pane.querySelectorAll('[data-sp-detail]').forEach((b) => b.addEventListener('click', () => sprintDetailModal(b.dataset.spDetail)));
   pane.querySelectorAll('[data-sp-report]').forEach((b) => b.addEventListener('click', () => sprintReportModal(b.dataset.spReport)));
   pane.querySelectorAll('[data-sp-pieces]').forEach((b) => b.addEventListener('click', () => sprintPiecesModal(b.dataset.spPieces, pieces, renderSprints)));
+  pane.querySelectorAll('[data-sp-session]').forEach((b) => b.addEventListener('click', () => openSprintSession(b.dataset.spSession, false, b)));
   pane.querySelectorAll('[data-sp-close]').forEach((b) => b.addEventListener('click', async () => {
     if (!confirm('Clôturer ce sprint ? Les éléments suivants seront marqués émergents (traçage, non bloquant).')) return;
     try {
@@ -4851,6 +4853,23 @@ async function sprintReportModal(sprintId) {
     </div>`);
     document.getElementById('modal-cancel').onclick = closeModal;
   } catch (e) { alert('Rapport indisponible : ' + (e.message || e)); }
+}
+
+// Ouvre la session de sprint (agent-sprint) : reprend la session rattachée au
+// sprint si elle existe (jamais de doublon) ; `force = true` en démarre une
+// nouvelle. Miroir de `openRecetteSession` (route POST /api/sprints/:id/session).
+async function openSprintSession(sprintId, force, btn) {
+  const original = btn ? btn.innerHTML : null;
+  setBtnBusy(btn, 'Ouverture');
+  try {
+    const r = await api(`/api/sprints/${encodeURIComponent(sprintId)}/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: !!force }) });
+    if (r.sessionId && /^ses_/.test(r.sessionId)) window.open(sessionHref(r.sessionId), '_blank');
+    else alert(r.error || (force ? 'Impossible de lancer une nouvelle session de sprint.' : 'Aucune session de sprint disponible.'));
+    refreshActive();
+  } catch (e) {
+    if (btn && original != null) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+    alert('Échec de la session de sprint : ' + (e.message || e));
+  }
 }
 
 // ===========================================================================

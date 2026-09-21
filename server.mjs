@@ -1910,6 +1910,22 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 200, { sprintId, markdown });
       } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
     }
+    // POST /api/sprints/:id/session — LANCE (ou REPREND) la session IA dédiée de
+    // l'agent-sprint rattachée au sprint (`sprints.session_id`). Miroir de
+    // `/api/recettes/:id/session`. Corps `{ force }` : force=true démarre une
+    // nouvelle session. Ne touche pas au statut open/close du sprint.
+    const sprintSessionMatch = path.match(/^\/api\/sprints\/([^/]+)\/session$/);
+    if (sprintSessionMatch && req.method === "POST") {
+      let sb = {};
+      try { sb = await readBody(req); } catch {}
+      try {
+        return sendJson(res, 200, await pilot.launchSprintSession({
+          sprintId: decodeURIComponent(sprintSessionMatch[1]),
+          force: !!(sb && sb.force),
+          adrIds: (sb && sb.adrIds) || undefined,
+        }));
+      } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
     // --- FONCTIONNALITÉS / RÈGLES MÉTIER (ADR-001, T5) : CRUD + liens N:N ----
     // GET /api/features?projectId=&emergent=&search=&limit=
     if (path === "/api/features" && req.method === "GET") {

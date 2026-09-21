@@ -5,7 +5,7 @@
 // sessions opencode est délégué au bridge `session-bridge.mjs` (Plan C).
 
 import { taskOrchestrator, coderWorkspaces } from "./mcp-client.mjs";
-import { launchSession, injectMessage, buildLaunchPrompt, buildReworkPrompt, buildRecettePrompt, buildTestPrompt, buildFreeTestPrompt, buildBatchSessionPrompt, listSessions, killSession, sessionExists, sessionExistsById } from "./session-bridge.mjs";
+import { launchSession, injectMessage, buildLaunchPrompt, buildReworkPrompt, buildRecettePrompt, buildSprintPrompt, buildTestPrompt, buildFreeTestPrompt, buildBatchSessionPrompt, listSessions, killSession, sessionExists, sessionExistsById } from "./session-bridge.mjs";
 import { existsSync } from "node:fs";
 
 // Décision n°7 : agents contraints par type de tâche.
@@ -1132,6 +1132,67 @@ export async function launchRecetteSession({ recetteId, force = false, adrIds })
     }
     await taskOrchestrator("recette_session_set", { recetteId, sessionId });
     return { recetteId, sessionId, resumed: false };
+  });
+}
+
+// Lance (ou reprend) la session dédiée de l'agent-sprint pour un sprint.
+// `force = true` : ignore la session rattachée et en démarre une nouvelle.
+// Anti-doublon : dès qu'une session est rattachée au sprint (`sprints.session_id`),
+// on la REPREND (vérifiée par identifiant auprès du serveur opencode). La session
+// est ancrée sur le projet du sprint ; le prompt injecte les PIÈCES CLIENT et les
+// documents de référence. Le rattachement passe par `sprint_session_set` (T8) —
+// qui ne touche PAS au statut open/close du sprint.
+export async function launchSprintSession({ sprintId, force = false, adrIds }) {
+  if (!sprintId) throw new Error("sprintId requis");
+  return withLaunchLock(`sprint:${sprintId}`, async () => {
+    const d = await taskOrchestrator("sprint_get", { sprintId });
+    const sprint = d && d.sprint;
+    if (!sprint) throw new Error(`sprint inconnu : ${sprintId}`);
+
+    const proj = sprint.project;
+    const dir = await projectAnchorDir(proj);
+
+    // REPRISE : session rattachée au sprint (vérifiée par identifiant). Pour
+    // repartir de zéro : `force = true`.
+    if (!force && sprint.sessionId && /^ses_/.test(sprint.sessionId)) {
+      if (await sessionAlive(sprint.sessionId, dir)) {
+        return { sprintId, sessionId: sprint.sessionId, resumed: true };
+      }
+    }
+    // ADR (item 125) : bloc de contexte ADR du projet — ancrage (l'agent de
+    // sprint ne les écrit jamais ; il les cite au plus).
+    let adrCtx = { context: "", adrs: [] };
+    try { adrCtx = await adrContext({ projectId: proj, adrIds, scope: [] }); } catch {}
+    // Repos transverses du projet (ADR 11) — portée réelle du sprint.
+    let repos = [];
+    try {
+      const pr = await listProjects();
+      const project = ((pr && pr.projects) || []).find((x) => x.id === proj);
+      repos = ((project && project.repos) || []).map((id) => ({ repoId: id }));
+    } catch { repos = []; }
+    // Documents de référence du projet (ADR-12) — décrivent l'EXISTANT.
+    let docs = [];
+    try {
+      const dl = await listDocs({ projectId: proj, includeRepoDocs: true });
+      docs = ((dl && dl.docs) || []).filter((x) => x && x.path);
+    } catch { docs = []; }
+    const prompt = buildSprintPrompt({
+      sprintId,
+      project: proj,
+      repos,
+      title: sprint.title,
+      startDate: sprint.startDate,
+      endDate: sprint.endDate,
+      pieces: (d && d.pieces) || [],
+      docs,
+      adrContext: adrCtx.context || "",
+    });
+    const { sessionId } = await launchSession({ dir, agent: "agent-sprint", prompt, title: `Sprint ${sprint.title || sprintId}` });
+    if (!sessionId || !/^ses_/.test(sessionId)) {
+      throw new Error("échec de lancement de la session de sprint (agent-sprint indisponible ?)");
+    }
+    await taskOrchestrator("sprint_session_set", { sprintId, sessionId });
+    return { sprintId, sessionId, resumed: false };
   });
 }
 

@@ -1765,6 +1765,27 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 200, { title: doc.title || doc.docId, kind: doc.kind, path: abs, html, raw: html ? null : raw.slice(0, 300000) });
       } catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
     }
+    // Téléchargement d'un document de référence (ADR-12) : renvoie le fichier
+    // en pièce jointe (Content-Disposition) pour l'enregistrer depuis le panel.
+    const docDownloadMatch = path.match(/^\/api\/docs\/([^/]+)\/download$/);
+    if (docDownloadMatch && req.method === "GET") {
+      try {
+        const doc = await pilot.docGet(docDownloadMatch[1]);
+        if (!doc) return sendJson(res, 404, { error: "document inconnu" });
+        const abs = doc.path;
+        if (!abs || !existsSync(abs) || statSync(abs).isDirectory()) return sendJson(res, 404, { error: "fichier introuvable au chemin : " + (abs || "—") });
+        const ext = extname(abs) || "";
+        const base = ((doc.title || basename(abs, ext)) || "document").replace(/[^\w.\- ]+/g, "_").trim() || "document";
+        const filename = base.toLowerCase().endsWith(ext.toLowerCase()) ? base : base + ext;
+        const ct = MIME[ext.toLowerCase()] || (ext.toLowerCase() === ".feature" ? "text/plain; charset=utf-8" : "application/octet-stream");
+        res.writeHead(200, {
+          "Content-Type": ct,
+          "Content-Disposition": `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+          "Cache-Control": "no-store",
+        });
+        createReadStream(abs).pipe(res);
+      } catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
+    }
     if (path === "/api/projects" && req.method === "POST") {
       const b = await readBody(req);
       return sendJson(res, 200, await pilot.createProject({ ...b, organizationId: b.organizationId || user.activeOrganizationId || user.organizationId, createdBy: user.username }));

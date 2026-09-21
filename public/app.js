@@ -4115,10 +4115,24 @@ async function viewRefDoc(docId) {
   try {
     const d = await api(`/api/docs/${encodeURIComponent(docId)}/content`);
     const html = d.html
-      ? `<div style="background:rgba(255,255,255,.04);padding:14px;border-radius:8px;max-height:70vh;overflow:auto">${d.html}</div>`
-      : `<pre style="background:rgba(255,255,255,.04);padding:14px;border-radius:8px;max-height:70vh;overflow:auto;white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:12px">${esc(d.raw || '')}</pre>`;
+      ? `<div class="doc-view-body markdown-view">${d.html}</div>`
+      : `<pre class="doc-view-body doc-view-pre">${esc(d.raw || '')}</pre>`;
     const kindTag = d.kind ? `<code class="chip">${esc(docKindLabel(d.kind))}</code> ` : '';
-    showModal(`<div class="modal modal-wide"><h3>${kindTag}${esc(d.title || 'Document')}</h3><p class="muted-sm">${esc(d.path || '')}</p>${html}<div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div></div>`);
+    const dlUrl = `/api/docs/${encodeURIComponent(docId)}/download`;
+    showModal(`
+      <div class="modal modal-doc-fullscreen">
+        <div class="doc-view-head">
+          <div class="doc-view-title">
+            <h3>${kindTag}${esc(d.title || 'Document')}</h3>
+            <p class="muted-sm">${esc(d.path || '')}</p>
+          </div>
+          <div class="doc-view-actions">
+            <a class="btn-dl" href="${dlUrl}" download title="Télécharger le document">Télécharger</a>
+            <button class="ghost" id="modal-cancel">Fermer</button>
+          </div>
+        </div>
+        ${html}
+      </div>`);
     document.getElementById('modal-cancel').onclick = closeModal;
   } catch (e) { alert('Lecture impossible : ' + (e.message || e)); }
 }

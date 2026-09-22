@@ -3118,10 +3118,11 @@ const server = createServer(async (req, res) => {
     if (evalFinish && req.method === "POST") {
       return sendJson(res, 200, await pilot.confirmEvaluation({ evaluationId: evalFinish[1], by: user.username }));
     }
-    // TEST DE PERFORMANCE (préprod) lancé depuis le panneau : ASYNCHRONE. Le POST
+    // TESTS STANDARD (préprod) lancés depuis le panneau : ASYNCHRONE. Le POST
     // retourne immédiatement (202 {jobId}) ; un worker détaché relaie l'appel MCP
-    // `evaluation_perf_run` (navigation + stress, plusieurs minutes) et écrit un
-    // marqueur de fin. Le front suit l'état via GET .../perf-jobs/:jobId.
+    // `evaluation_perf_run` (parcours de pages + erreurs console/réseau + stress
+    // des routes d'API, plusieurs minutes) et écrit un marqueur de fin. Le front
+    // suit l'état via GET .../perf-jobs/:jobId.
     const evalPerfRun = path.match(/^\/api\/evaluations\/([^/]+)\/perf-run$/);
     if (evalPerfRun && req.method === "POST") {
       const evaluationId = decodeURIComponent(evalPerfRun[1]);
@@ -3135,6 +3136,8 @@ const server = createServer(async (req, res) => {
       const payload = {
         evaluationId,
         url: String(b.url),
+        pages: Array.isArray(b.pages) && b.pages.length ? b.pages : undefined,
+        routes: Array.isArray(b.routes) && b.routes.length ? b.routes : undefined,
         repoDir: b.repoDir ? String(b.repoDir) : undefined,
         baseUrl: b.baseUrl ? String(b.baseUrl) : undefined,
         concurrency: b.concurrency,

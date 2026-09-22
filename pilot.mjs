@@ -1713,18 +1713,23 @@ export async function removeEvaluationDocument({ documentId }) {
   return taskOrchestrator("evaluation_doc_remove", { documentId });
 }
 
-// Lance un TEST DE PERFORMANCE préprod (durées réseau type Network + timings +
-// Core Web Vitals + stress BORNÉ) et rattache le rapport à la recette comme
-// pièce `performance`. Contrat MCP `evaluation_perf_run`. `repoDir` = checkout
-// applicatif contenant Playwright (pour les Core Web Vitals) ; `e2eTestId`
-// (optionnel) rattache la mesure à un test Playwright. Le stress est plafonné
-// côté MCP (concurrency ≤ 10, requests ≤ 200) pour ne pas dégrader la préprod.
-export async function runEvaluationPerf({ evaluationId, url, repoDir, baseUrl, concurrency, requests, itemId, e2eTestId, title, timeoutMs }) {
+// Lance des TESTS STANDARD préprod (parcours de pages + erreurs console/réseau +
+// timings + Core Web Vitals + stress BORNÉ des routes d'API) et rattache le
+// rapport à la recette comme pièce `performance`. Contrat MCP
+// `evaluation_perf_run`. `pages` = parcours multi-pages (défaut : `url`) ;
+// `routes` = routes d'API à stresser (relatives à `baseUrl` ou absolues).
+// `repoDir` = checkout applicatif contenant Playwright (pour Core Web Vitals et
+// capture console) ; `e2eTestId` (optionnel) rattache la mesure à un test
+// Playwright. Le stress est plafonné côté MCP (routes ≤ 20, concurrency ≤ 10,
+// requests ≤ 200) pour ne pas dégrader la préprod.
+export async function runEvaluationPerf({ evaluationId, url, pages, routes, repoDir, baseUrl, concurrency, requests, itemId, e2eTestId, title, timeoutMs }) {
   if (!evaluationId) throw new Error("evaluationId requis");
   if (!url || !/^https?:\/\//i.test(String(url))) throw new Error("url préprod requise (http/https)");
   return taskOrchestrator("evaluation_perf_run", {
     evaluationId,
     url: String(url),
+    pages: Array.isArray(pages) && pages.length ? pages.map((p) => String(p)) : undefined,
+    routes: Array.isArray(routes) && routes.length ? routes : undefined,
     repoDir: repoDir || undefined,
     baseUrl: baseUrl || undefined,
     concurrency: concurrency !== undefined && concurrency !== null ? Number(concurrency) : undefined,

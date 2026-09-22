@@ -2904,14 +2904,35 @@ function evalDocDetailsHtml(doc) {
     return `<a class="ghost" href="${esc(meta.url)}" target="_blank" rel="noopener" title="Ouvrir la maquette (page statique servie par le panneau)">Ouvrir la maquette</a>`;
   }
   if (doc.nature === 'performance') {
-    if (meta.summary) return `<span class="muted-sm" title="Résumé du test de performance">${esc(meta.summary)}</span>`;
     const m = meta.metrics || {};
     const bits = [];
-    if (m.timings && m.timings.ttfbMs != null) bits.push(`TTFB ${Math.round(m.timings.ttfbMs)}ms`);
-    if (m.vitals && m.vitals.lcpMs != null) bits.push(`LCP ${m.vitals.lcpMs}ms`);
-    if (m.vitals && m.vitals.cls != null) bits.push(`CLS ${m.vitals.cls}`);
-    if (m.stress) bits.push(`stress ${m.stress.requests}@${m.stress.concurrency} → ${m.stress.rps} req/s, p95 ${m.stress.latencyMs.p95}ms, ${m.stress.errorRate}% err`);
-    if (bits.length) return `<span class="muted-sm">${esc(bits.join(' · '))}</span>`;
+    if (meta.summary) bits.push(meta.summary);
+    else {
+      if (m.timings && m.timings.ttfbMs != null) bits.push(`TTFB ${Math.round(m.timings.ttfbMs)}ms`);
+      const v = m.vitals || {};
+      if (v.lcpMs != null) bits.push(`LCP ${v.lcpMs}ms${v.ratings && v.ratings.lcp ? ` (${v.ratings.lcp})` : ''}`);
+      if (v.inpMs != null) bits.push(`INP ${v.inpMs}ms`);
+      if (v.cls != null) bits.push(`CLS ${v.cls}`);
+      if (m.networkErrors && m.networkErrors.total) bits.push(`erreurs réseau ${m.networkErrors.total}`);
+      if (Array.isArray(m.console) && m.console.length) bits.push(`console ${m.console.length}`);
+      if (m.stress && m.stress.global) bits.push(`stress ${m.stress.global.routeCount || (m.stress.routes ? m.stress.routes.length : 1)} route(s) → ${m.stress.global.rps} req/s, p95 ${m.stress.global.latencyMs.p95}ms, ${m.stress.global.errorRate}% err`);
+    }
+    // Preuves des tests standard : erreurs console/réseau + stress par route.
+    const pageErrors = Array.isArray(m.pageErrors) ? m.pageErrors : [];
+    const consoleMsgs = Array.isArray(m.console) ? m.console : [];
+    const neItems = m.networkErrors && Array.isArray(m.networkErrors.items) ? m.networkErrors.items : [];
+    const stressRoutes = m.stress && Array.isArray(m.stress.routes) ? m.stress.routes : [];
+    let details = '';
+    if (pageErrors.length || consoleMsgs.length || neItems.length || stressRoutes.length) {
+      const blocks = [];
+      if (pageErrors.length) blocks.push(`<div><strong>Exceptions JS (${pageErrors.length})</strong><ul>${pageErrors.slice(0, 10).map((x) => `<li>${esc(x.message || '')}</li>`).join('')}</ul></div>`);
+      if (consoleMsgs.length) blocks.push(`<div><strong>Console (${consoleMsgs.length})</strong><ul>${consoleMsgs.slice(0, 10).map((c) => `<li>[${esc(c.level)}] ${esc(c.text || '')}</li>`).join('')}</ul></div>`);
+      if (neItems.length) blocks.push(`<div><strong>Erreurs réseau (${m.networkErrors.total})</strong><ul>${neItems.slice(0, 10).map((i) => `<li>${esc(i.category)} — ${esc(i.status != null ? i.status : (i.errorText || ''))} — ${esc(i.url || '')}</li>`).join('')}</ul></div>`);
+      if (stressRoutes.length) blocks.push(`<div><strong>Stress par route</strong><ul>${stressRoutes.slice(0, 10).map((r) => `<li>${esc(r.route)} — ${r.rps} req/s · p95 ${r.latencyMs ? r.latencyMs.p95 : '-'}ms · ${r.errorRate}% err</li>`).join('')}</ul></div>`);
+      details = `<details class="eval-perf-details"><summary>Détails des tests standard</summary>${blocks.join('')}</details>`;
+    }
+    const summaryHtml = bits.length ? `<span class="muted-sm" title="Résumé des tests standard">${esc(bits.join(' · '))}</span>` : '';
+    if (summaryHtml || details) return `${summaryHtml}${details}`;
   }
   return '';
 }
@@ -3285,16 +3306,18 @@ async function evaluationDetailModal(evaluationId) {
         </div>`).join('') : '<p class="muted-sm">Aucun test E2E pour ce projet.</p>'}
       </div>
       ${canWrite ? `
-      <h3>Performance (préprod)</h3>
-      <p class="muted-sm">Mesure des durées de requêtes réseau (type Network), timings (TTFB/load), Core Web Vitals (LCP/CLS) et stress test borné (accès parallèles). Les tests E2E se lancent depuis la page <strong>Tests E2E</strong>.</p>
+      <h3>Tests standard (parcours + stress routes API)</h3>
+      <p class="muted-sm">Parcours de pages avec informations réseau (durées/requêtes/types/tailles, compression), capture des <strong>erreurs console</strong> (warnings, exceptions JS) et <strong>réseau</strong> (4xx/5xx, DNS, timeouts), Core Web Vitals (LCP/INP/CLS, long tasks) et <strong>stress test des routes d'API</strong> (accès parallèles bornés : débit, latence p95/p99, taux d'erreurs). Distinct des tests E2E, qui se lancent depuis la page <strong>Tests E2E</strong>.</p>
       <form id="eval-perf-form" class="pilot-form">
-        <input id="epf-url" placeholder="https://preprod.exemple.fr (URL cible)" required>
+        <input id="epf-url" placeholder="https://preprod.exemple.fr (URL cible / 1re page)" required>
+        <input id="epf-pages" placeholder="autres pages du parcours (URLs séparées par des virgules) — optionnel">
+        <input id="epf-routes" placeholder="routes d'API à stresser (ex. /api/health, /api/users — séparées par des virgules) — optionnel">
         <input id="epf-repo" placeholder="checkout applicatif avec Playwright (ex. /root/mada-talk-preprod) — optionnel">
         <div class="perf-options">
           <label class="muted-sm">Concurrence <input id="epf-conc" type="number" min="1" max="10" value="5"></label>
           <label class="muted-sm">Requêtes <input id="epf-req" type="number" min="1" max="200" value="50"></label>
         </div>
-        <div class="modal-actions"><button type="submit" class="launch-btn">Lancer le test de performance</button></div>
+        <div class="modal-actions"><button type="submit" class="launch-btn">Lancer les tests standard</button></div>
       </form>
       <div id="epf-msg" class="msg"></div>
       <div id="epf-result" class="muted-sm"></div>` : ''}
@@ -3330,7 +3353,7 @@ async function evaluationDetailModal(evaluationId) {
       await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/verdicts`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fonctionnaliteId: sel.dataset.evalVerdict, verdict: sel.value || null }) });
     } catch (e) { alert('Échec du verdict : ' + (e.message || e)); }
   }));
-  // TEST DE PERFORMANCE (préprod) : POST asynchrone → suivi du job jusqu'au
+  // TESTS STANDARD (préprod) : POST asynchrone → suivi du job jusqu'au
   // rapport rattaché à la recette (pièce `performance`).
   const perfForm = document.getElementById('eval-perf-form');
   if (perfForm) perfForm.addEventListener('submit', async (e) => {
@@ -3340,18 +3363,22 @@ async function evaluationDetailModal(evaluationId) {
     msg.textContent = ''; msg.className = 'msg';
     const targetUrl = document.getElementById('epf-url').value.trim();
     if (!targetUrl) { msg.textContent = 'URL préprod requise'; msg.className = 'msg error'; return; }
+    const pages = document.getElementById('epf-pages').value.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+    const routes = document.getElementById('epf-routes').value.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
     try {
       const r = await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/perf-run`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           url: targetUrl,
+          pages: pages.length ? pages : undefined,
+          routes: routes.length ? routes : undefined,
           repoDir: document.getElementById('epf-repo').value.trim() || undefined,
           concurrency: Number(document.getElementById('epf-conc').value) || undefined,
           requests: Number(document.getElementById('epf-req').value) || undefined,
         }),
       });
-      msg.textContent = `Test lancé (job ${r.jobId})…`;
-      out.textContent = 'En cours — navigation + stress. Cela peut prendre plusieurs minutes.';
+      msg.textContent = `Tests standard lancés (job ${r.jobId})…`;
+      out.textContent = 'En cours — parcours + capture erreurs + stress. Cela peut prendre plusieurs minutes.';
       pollEvaluationPerfJob(evaluationId, r.jobId, out, msg);
     } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
   });

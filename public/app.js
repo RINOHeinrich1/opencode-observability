@@ -2876,6 +2876,14 @@ async function recetteCreateModal() {
           <legend>ADR rattachées à la recette — contexte de l'agent <span class="muted-sm">(sélection multi-lignes ; rattachées à la recette + bloc « ADR de référence » injecté). Toutes cochées par défaut.</span></legend>
           <div id="rm-adr-pick"><p class="muted-sm">Choisissez un projet pour afficher ses ADR.</p></div>
         </fieldset>
+        <fieldset id="rm-feature-fieldset" class="pilot-fieldset">
+          <legend>Fonctionnalités rattachées à la recette — contexte de l'agent <span class="muted-sm">(sélection multi-lignes ; bloc « Fonctionnalités de référence » injecté). Toutes cochées par défaut.</span></legend>
+          <div id="rm-feature-pick"><p class="muted-sm">Choisissez un projet pour afficher ses fonctionnalités.</p></div>
+        </fieldset>
+        <fieldset id="rm-rule-fieldset" class="pilot-fieldset">
+          <legend>Règles métier rattachées à la recette — contexte de l'agent <span class="muted-sm">(sélection multi-lignes ; bloc « Règles métier de référence » injecté). Toutes cochées par défaut.</span></legend>
+          <div id="rm-rule-pick"><p class="muted-sm">Choisissez un projet pour afficher ses règles métier.</p></div>
+        </fieldset>
         <input id="rm-title" placeholder="titre court (ex: Recette du module chatbot)" required>
         <textarea id="rm-description" class="modal-textarea" placeholder="description longue (détail du périmètre vérifié) — optionnel"></textarea>
         <label class="modal-field">Tâches couvertes <span class="muted-sm">(0..N — tâches non encore recettées du projet)</span></label>
@@ -2935,6 +2943,39 @@ async function recetteCreateModal() {
     adrBox.innerHTML = adrSelectorHtml([...seen.values()], { prefix: 'rm-adr-pick', repos: reposForProject(proj) });
     bindAdrSelector('rm-adr-pick');
   };
+  // Fonctionnalités + Règles métier (T-20260922-070103-ncs1) : 1 appel par liste
+  // (routes existantes, listes déjà enrichies) — 0 N+1. Les rôles proposés au
+  // filtre = union des rôles du projet (features[].role + rules[].roles).
+  const featureBox = document.getElementById('rm-feature-pick');
+  const ruleBox = document.getElementById('rm-rule-pick');
+  const loadFeaturesRules = async () => {
+    const proj = currentProject();
+    if (!proj) {
+      featureBox.innerHTML = '<p class="muted-sm">Choisissez un projet pour afficher ses fonctionnalités.</p>';
+      ruleBox.innerHTML = '<p class="muted-sm">Choisissez un projet pour afficher ses règles métier.</p>';
+      return;
+    }
+    featureBox.innerHTML = '<p class="muted-sm">Chargement des fonctionnalités…</p>';
+    ruleBox.innerHTML = '<p class="muted-sm">Chargement des règles métier…</p>';
+    let features = [];
+    let rules = [];
+    try {
+      const [fd, rd] = await Promise.all([
+        api(`/api/features?projectId=${encodeURIComponent(proj)}`),
+        api(`/api/rules?projectId=${encodeURIComponent(proj)}`),
+      ]);
+      features = (fd && fd.features) || [];
+      rules = (rd && rd.rules) || [];
+    } catch {}
+    const roles = [...new Set([
+      ...features.map((x) => x.role).filter(Boolean),
+      ...rules.flatMap((x) => x.roles || []),
+    ])].sort();
+    featureBox.innerHTML = frSelectorHtml('feature', features, { prefix: 'rm-feature-pick', roles });
+    bindFrSelector('rm-feature-pick');
+    ruleBox.innerHTML = frSelectorHtml('rule', rules, { prefix: 'rm-rule-pick', roles });
+    bindFrSelector('rm-rule-pick');
+  };
   const renderReposHint = () => {
     const proj = projects.find((p) => p.id === currentProject());
     const repos = (proj && proj.repos) || [];
@@ -2946,6 +2987,7 @@ async function recetteCreateModal() {
     candBox.innerHTML = '<p class="muted-sm">Choisissez un projet puis « Charger les tâches disponibles ».</p>';
     renderReposHint();
     loadAdrs();
+    loadFeaturesRules();
   });
   renderReposHint();
 
@@ -3014,6 +3056,8 @@ async function recetteCreateModal() {
         taskIds,
         documents,
         adrIds: selectedAdrIds('rm-adr-pick'), // toujours un tableau (vide = aucune ADR en contexte)
+        featureIds: selectedFrIds('feature', 'rm-feature-pick'), // toujours un tableau (vide = aucune fonctionnalité)
+        ruleIds: selectedFrIds('rule', 'rm-rule-pick'), // toujours un tableau (vide = aucune règle métier)
         organizationId: currentOrg || undefined,
       }) });
       closeModal();
@@ -5940,6 +5984,102 @@ function bindAdrSelector(prefix = 'adr-pick') {
     if (count) count.textContent = `${visible} / ${rows.length} ADR`;
   };
   [search, status, repo].forEach((el) => {
+    if (!el) return;
+    el.addEventListener('input', apply);
+    el.addEventListener('change', apply);
+  });
+  apply();
+}
+
+// ===========================================================================
+// Sélecteurs multi-lignes FONCTIONNALITÉS / RÈGLES MÉTIER (T-20260922-070103-ncs1)
+// — helper GÉNÉRIQUE réutilisant les classes CSS `.adr-pick*` (aucun CSS ajouté).
+// Lignes : case + ref + badge (rôle / « Global ») + texte condensé. Filtres :
+// recherche libre + rôle (options = rôles distincts du projet ; + « Global » pour
+// les règles). TOUT COCHÉ par défaut ; décocher tout est permis (0 sélection).
+//   frSelectorHtml('feature'|'rule', items, { prefix, roles, selected })
+//   selectedFrIds(kind, prefix) → tableau d'ids cochés (vide si rien de coché)
+//   bindFrSelector(prefix) → câble recherche + filtre rôle
+// ===========================================================================
+function frSelectorHtml(kind, items, opts = {}) {
+  const isRule = kind === 'rule';
+  const prefix = opts.prefix || (isRule ? 'rule-pick' : 'feature-pick');
+  const selected = Array.isArray(opts.selected) ? opts.selected : null; // null = tout coché
+  const list = items || [];
+  const roles = Array.isArray(opts.roles) ? opts.roles.filter(Boolean) : [];
+  const roleOpts = ['', ...roles, ...(isRule ? ['__global__'] : [])]
+    .map((r) => `<option value="${esc(r)}">${r === '' ? '— tous les rôles —' : (r === '__global__' ? 'Global (tous les rôles)' : esc(r))}</option>`).join('');
+  const rows = list.map((it) => {
+    const id = it.id;
+    const checked = (!selected || selected.includes(id)) ? 'checked' : '';
+    const ref = it.ref || id;
+    let badgeHtml = '';
+    let meta = '';
+    let hay = '';
+    let roleData = '';
+    if (isRule) {
+      const rolesTxt = Array.isArray(it.roles) ? it.roles.filter(Boolean) : [];
+      badgeHtml = it.roleGlobal
+        ? '<span class="badge">Global</span>'
+        : (rolesTxt.length ? rolesTxt.map((r) => `<span class="badge">${esc(r)}</span>`).join(' ') : '<span class="muted-sm">sans rôle</span>');
+      meta = it.content ? adrCellText(it.content, 120) : '<span class="muted-sm">—</span>';
+      hay = [it.ref, it.content, rolesTxt.join(' '), it.roleGlobal ? 'global' : ''].filter(Boolean).join(' ').toLowerCase();
+      roleData = it.roleGlobal ? '__global__' : rolesTxt.join(' ');
+    } else {
+      badgeHtml = it.role ? `<span class="badge">${esc(it.role)}</span>` : '<span class="muted-sm">sans rôle</span>';
+      meta = it.userStory ? adrCellText(it.userStory, 120) : '<span class="muted-sm">—</span>';
+      hay = [it.ref, it.role, it.userStory].filter(Boolean).join(' ').toLowerCase();
+      roleData = it.role || '';
+    }
+    return `<label class="adr-pick-row" data-search="${esc(hay)}" data-role="${esc(roleData)}">
+      <input type="checkbox" class="adr-pick-cb" value="${esc(id)}" ${checked}>
+      <span class="adr-pick-head"><strong>${esc(ref)}</strong> ${badgeHtml}</span>
+      <span class="adr-pick-meta">${meta}</span>
+    </label>`;
+  }).join('');
+  const label = isRule ? 'règle métier' : 'fonctionnalité';
+  const unit = isRule ? 'règles' : 'fonctionnalités';
+  return `
+    <div class="adr-pick" id="${esc(prefix)}" data-unit="${esc(unit)}">
+      <div class="adr-pick-filters">
+        <input type="search" class="adr-pick-search" placeholder="Rechercher une ${label}…">
+        <select class="adr-pick-role">${roleOpts}</select>
+        <span class="muted-sm adr-pick-count">${list.length} ${unit}</span>
+      </div>
+      <div class="adr-pick-list">${rows || `<p class="muted-sm">Aucune ${label} pour ce projet — créez-en via l\'onglet « Fonctionnalités & Règles ».</p>`}</div>
+    </div>`;
+}
+
+// Sélection courante (ids cochés) d'un sélecteur Fonctionnalités/Règles de
+// préfixe `prefix`. Retourne TOUJOURS un tableau (vide = 0 sélection).
+function selectedFrIds(kind, prefix) {
+  return [...document.querySelectorAll(`#modal-backdrop #${prefix} .adr-pick-cb:checked`)].map((c) => c.value);
+}
+
+// Câble recherche + filtre rôle du sélecteur Fonctionnalités/Règles `prefix`.
+function bindFrSelector(prefix) {
+  const root = document.getElementById(prefix);
+  if (!root) return;
+  const search = root.querySelector('.adr-pick-search');
+  const role = root.querySelector('.adr-pick-role');
+  const count = root.querySelector('.adr-pick-count');
+  const rows = [...root.querySelectorAll('.adr-pick-row')];
+  const total = rows.length;
+  const unit = root.dataset.unit || '';
+  const apply = () => {
+    const q = ((search && search.value) || '').trim().toLowerCase();
+    const rp = (role && role.value) || '';
+    let visible = 0;
+    for (const row of rows) {
+      const okQ = !q || (row.dataset.search || '').includes(q);
+      const okR = !rp || (row.dataset.role || '').split(/\s+/).includes(rp);
+      const show = okQ && okR;
+      row.hidden = !show;
+      if (show) visible++;
+    }
+    if (count) count.textContent = `${visible} / ${total} ${unit}`.trim();
+  };
+  [search, role].forEach((el) => {
     if (!el) return;
     el.addEventListener('input', apply);
     el.addEventListener('change', apply);

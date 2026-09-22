@@ -1014,6 +1014,31 @@ export async function adrContext(args = {}) {
   });
 }
 
+// `featureContext` : bloc « ## Fonctionnalités de référence » prêt à injecter
+// dans un prompt (T-20260922-070103-ncs1). Sélection EXPLICITE (`featureIds`) ;
+// sélection vide ⇒ `context: ""` (aucun bloc — court-circuit local, 0 appel).
+export async function featureContext(args = {}) {
+  if (Array.isArray(args.featureIds) && args.featureIds.length === 0) {
+    return { projectId: args.projectId || null, count: 0, features: [], context: "" };
+  }
+  return taskOrchestrator("feature_context", {
+    projectId: args.projectId || undefined,
+    featureIds: Array.isArray(args.featureIds) && args.featureIds.length ? args.featureIds : undefined,
+  });
+}
+
+// `ruleContext` : bloc « ## Règles métier de référence » prêt à injecter dans un
+// prompt (T-20260922-070103-ncs1). Sélection vide ⇒ `context: ""` (aucun bloc).
+export async function ruleContext(args = {}) {
+  if (Array.isArray(args.ruleIds) && args.ruleIds.length === 0) {
+    return { projectId: args.projectId || null, count: 0, rules: [], context: "" };
+  }
+  return taskOrchestrator("rule_context", {
+    projectId: args.projectId || undefined,
+    ruleIds: Array.isArray(args.ruleIds) && args.ruleIds.length ? args.ruleIds : undefined,
+  });
+}
+
 // --- Vigilances ADR (item 126) : historique filtrable + levée tracée ----------
 // `listAdrVigilances` : historique append-only des points de vigilance ADR
 // remontés par les recettes/tests (manquant/conflit), filtrable.
@@ -1117,7 +1142,7 @@ export function refDocRelPath(absPath) {
   return String(absPath).replace("/root/orchestrator-panel/storage/", "");
 }
 
-export async function createRecette({ project, title, description, taskIds, documents, adrIds, by, organizationId }) {
+export async function createRecette({ project, title, description, taskIds, documents, featureIds, ruleIds, adrIds, by, organizationId }) {
   if (!project || !String(project).trim()) throw new Error("un projet (produit) requis pour créer une recette — ses repos transverses couvrent la portée");
   if (!title || !String(title).trim()) throw new Error("titre requis pour créer une recette");
   const r = await taskOrchestrator("recette_start", {
@@ -1125,6 +1150,10 @@ export async function createRecette({ project, title, description, taskIds, docu
     title: String(title).trim(),
     description: description ? String(description).trim() : undefined,
     taskIds: (taskIds || []).filter(Boolean),
+    // Sélection du panneau (T-20260922-070103-ncs1) : fonctionnalités + règles
+    // métier (NON bloquant ; tableaux vides tolérés ⇒ 0 sélection possible).
+    featureIds: (featureIds || []).filter(Boolean),
+    ruleIds: (ruleIds || []).filter(Boolean),
     status: "pending",
     createdBy: by || undefined,
     organizationId: organizationId || undefined,
@@ -1174,7 +1203,7 @@ export async function createRecette({ project, title, description, taskIds, docu
 
 // Lance (ou reprend) la session dédiée de l'agent-recette pour une recette.
 // `force = true` : ignore la session rattachée et en démarre une nouvelle.
-export async function launchRecetteSession({ recetteId, force = false, adrIds }) {
+export async function launchRecetteSession({ recetteId, force = false, adrIds, featureIds, ruleIds }) {
   if (!recetteId) throw new Error("recetteId requis");
   return withLaunchLock(`recette:${recetteId}`, async () => {
     const r = await taskOrchestrator("recette_get", { recetteId });
@@ -1199,7 +1228,18 @@ export async function launchRecetteSession({ recetteId, force = false, adrIds })
     // recette confronte le constat à ces décisions (statut + décision + conséquence).
     let adrCtx = { context: "", adrs: [] };
     try { adrCtx = await adrContext({ projectId: proj, adrIds, scope: [] }); } catch {}
-    const prompt = buildRecettePrompt({ project: proj, repos: rec.repos || [], title: rec.title, taskIds: rec.tasks || [], adrContext: adrCtx.context || "" });
+    // Blocs Fonctionnalités / Règles métier (T-20260922-070103-ncs1) : dérivés des
+    // LIENS PERSISTÉS de la recette (`rec.fonctionnalites` / `rec.regles`, lus par
+    // le `recette_get` ci-dessus) ⇒ 0 N+1 et le prompt reflète la recette réellement
+    // enregistrée. Surcharge explicite possible (parité avec `adrIds`) via
+    // `featureIds`/`ruleIds` ; un tableau vide = aucune sélection (bloc vide).
+    const fIds = Array.isArray(featureIds) ? featureIds : (rec.fonctionnalites || []).map((f) => f.id);
+    const rIds = Array.isArray(ruleIds) ? ruleIds : (rec.regles || []).map((r) => r.id);
+    let featureCtx = { context: "" };
+    let ruleCtx = { context: "" };
+    try { featureCtx = await featureContext({ projectId: proj, featureIds: fIds }); } catch {}
+    try { ruleCtx = await ruleContext({ projectId: proj, ruleIds: rIds }); } catch {}
+    const prompt = buildRecettePrompt({ project: proj, repos: rec.repos || [], title: rec.title, taskIds: rec.tasks || [], adrContext: adrCtx.context || "", featureContext: featureCtx.context || "", ruleContext: ruleCtx.context || "" });
     const { sessionId } = await launchSession({ dir, agent: "agent-recette", prompt, title: `Recette ${rec.title || proj}` });
     if (!sessionId || !/^ses_/.test(sessionId)) {
       throw new Error("échec de lancement de la session de recette (agent-recette indisponible ?)");

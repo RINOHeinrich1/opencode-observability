@@ -2603,14 +2603,14 @@ const server = createServer(async (req, res) => {
     }
     if (path === "/api/recettes" && req.method === "POST") {
       const b = await readBody(req);
-      return sendJson(res, 200, await pilot.createRecette({ project: b.project, title: b.title, description: b.description, taskIds: b.taskIds, documents: b.documents, adrIds: b.adrIds, by: user.username, organizationId: b.organizationId || user.activeOrganizationId || user.organizationId }));
+      return sendJson(res, 200, await pilot.createRecette({ project: b.project, title: b.title, description: b.description, taskIds: b.taskIds, documents: b.documents, featureIds: b.featureIds, ruleIds: b.ruleIds, adrIds: b.adrIds, by: user.username, organizationId: b.organizationId || user.activeOrganizationId || user.organizationId }));
     }
     const recetteAction = path.match(/^\/api\/recettes\/([^/]+)\/(session|finish)$/);
     if (recetteAction && req.method === "POST") {
       if (recetteAction[2] === "session") {
         let sb = {};
         try { sb = await readBody(req); } catch {}
-        return sendJson(res, 200, await pilot.launchRecetteSession({ recetteId: recetteAction[1], force: !!(sb && sb.force), adrIds: (sb && sb.adrIds) || undefined }));
+        return sendJson(res, 200, await pilot.launchRecetteSession({ recetteId: recetteAction[1], force: !!(sb && sb.force), adrIds: (sb && sb.adrIds) || undefined, featureIds: (sb && sb.featureIds) || undefined, ruleIds: (sb && sb.ruleIds) || undefined }));
       }
       const b = await readBody(req);
       return sendJson(res, 200, await pilot.finishRecette({ recetteId: recetteAction[1], items: b.items, by: user.username, launchMode: b.launchMode, createTasks: b.createTasks !== false }));

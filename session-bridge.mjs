@@ -332,7 +332,7 @@ export function buildReworkPrompt({ taskId, remarks, by }) {
  * La recette est un objet de PROJET (titre + 0..N tâches couvertes).
  * Mission + cadre, jamais méthode.
  */
-export function buildRecettePrompt({ project, repos, title, taskIds, docs = [], adrContext = "" }) {
+export function buildRecettePrompt({ project, repos, title, taskIds, docs = [], adrContext = "", featureContext = "", ruleContext = "" }) {
   const proj = (project && String(project).trim()) || "";
   const repoBlock = (repos && repos.length)
     ? `  Repos transverses du projet (portée réelle — ADR 11) : ${repos.map((x) => x.repoId || x.id || x).join(", ")}`
@@ -341,6 +341,15 @@ export function buildRecettePrompt({ project, repos, title, taskIds, docs = [], 
   // (sélection ADR du panneau ou ADR actives du projet). Additif et non cassant.
   const adrBlock = (adrContext && String(adrContext).trim())
     ? ["", String(adrContext).trim(), ""]
+    : [];
+  // Blocs « ## Fonctionnalités de référence » / « ## Règles métier de référence »
+  // (T-20260922-070103-ncs1) construits par `feature_context`/`rule_context`.
+  // FACULTATIFS : aucun bloc si la sélection est vide. Insérés APRÈS le bloc ADR.
+  const featureBlock = (featureContext && String(featureContext).trim())
+    ? ["", String(featureContext).trim(), ""]
+    : [];
+  const ruleBlock = (ruleContext && String(ruleContext).trim())
+    ? ["", String(ruleContext).trim(), ""]
     : [];
   const docBlock = (docs && docs.length)
     ? [
@@ -358,6 +367,8 @@ export function buildRecettePrompt({ project, repos, title, taskIds, docs = [], 
     "Une recette = **un seul projet** (produit). Sa portée réelle est couverte par les **repos transverses du projet** (ex: le projet mada-talk traverse les repos mada-talk et oniria). Chaque élément relevé est rattaché au **projet de la recette** (la future tâche y sera créée) — le `project` de `recette_item_add` doit être le projet de la recette, jamais un repo transverse.",
     "Les tâches couvertes restent HISTORIQUEMENT INTACTES : tu ne les modifies jamais (aucune transition, aucun rework direct).",
     ...adrBlock,
+    ...featureBlock,
+    ...ruleBlock,
     ...docBlock,
     "Mission :",
     "- Récupère le contexte : `recette_get(<recetteId>)` (titre, projet, repos transverses, tâches couvertes, éléments), et pour chaque tâche couverte `task_get` (plans, commits, artefacts, tâches liées), `artifact_list`, `events_list`.",

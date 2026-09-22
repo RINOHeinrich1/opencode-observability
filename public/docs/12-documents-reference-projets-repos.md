@@ -64,16 +64,20 @@ le document ne porte que des liens stables scénario ↔ test, pas d'état volat
 Les documents sont **fournis en contexte aux agents**, paramétrables par cases à
 cocher au lancement :
 
-1. **Création / MAJ d'un test E2E** (session test-agent) : les modales du panneau
-   proposent les documents du projet (+ repos) — cochés par défaut. Les chemins
-   sélectionnés sont injectés dans le prompt de session (`buildTestPrompt`) ;
-   le test-agent **lit** chaque fichier avant d'écrire le spec.
-2. **Recette** (session agent-recette) : à la création d'une recette, les
-   documents de référence des projets couverts sont proposés (cases à cocher).
-   Ceux sélectionnés sont **rattachés à la recette** (`recette_documents`,
-   nature `[kind]`) ; l'agent-recette les lit pour confronter le constat réel à
-   l'architecture et aux règles documentées. Il peut aussi les consulter via
-   `doc_list`.
+1. **Création / MAJ d'un test E2E** (session test-agent) : la modale propose un
+   **sélecteur ADR multi-lignes** (ADR du projet + de ses repos, toutes cochées par
+   défaut) → bloc **« ADR de référence »** injecté dans le prompt de session ; le
+   test-agent **lit** les fichiers ADR avant d'écrire le spec. Les documents
+   ADR-12 (specs/Gherkin) restent consultables via `doc_list`.
+2. **Recette** (session agent-recette) : à la création d'une recette, **trois
+   sélecteurs de contexte** multi-lignes (toutes les options cochées par défaut) —
+   **ADR** (`adrIds`), **Fonctionnalités** (`featureIds`) et **Règles métier**
+   (`ruleIds`). Les sélections sont **rattachées à la recette**
+   (`recette_adr` / `recette_fonctionnalites` / `recette_regles`) et injectées dans
+   le prompt (blocs « ADR de référence » / « Fonctionnalités de référence » /
+   « Règles métier de référence ») ; l'agent-recette les lit pour confronter le
+   constat réel à l'architecture et aux règles. Il peut aussi les consulter via
+   `adr_list` / `feature_list` / `rule_list`.
 
 ## 4. MCP / données
 
@@ -101,26 +105,25 @@ cocher au lancement :
   désormais par les **pièces client** — onglet **Artefacts** ou onglet
   **Pièces client** de la modale « Détail projet » — et par l'onglet **ADR**
   pour les ADR. L'onglet « 📄 Docs de référence » de la modale projet a été
-  retiré (doublon avec « Pièces client »).
-- Création de test via agent : fieldset **Documents de référence** (cases à cocher).
-- Création de recette : fieldset **Documents de référence des projets** (cases à cocher).
+  retiré (doublon avec « Pièces client ») : la modale n'expose plus que
+  **Projet / Repos / Pièces client**.
+- Création de test via agent : **sélecteur ADR** multi-lignes (contexte
+  « ADR de référence »).
+- Création de recette : **sélecteurs ADR + Fonctionnalités + Règles métier**
+  multi-lignes (contexte de l'`agent-recette`).
 
-### Sélection du contexte (cases à cocher)
+### Sélection du contexte (sélecteurs multi-lignes)
 
-Dans la **création/MAJ de test E2E** (session test-agent) et la **création de
-recette**, un fieldset **Documents de référence** liste toujours les **3
-catégories** — **toutes cochées par défaut** :
+Dans la **création/MAJ de test E2E** (session test-agent), le contexte est le
+**sélecteur ADR** (ADR du projet + repos, toutes cochées par défaut ; filtres
+statut/repo + recherche). Dans la **création de recette**, trois sélecteurs —
+**ADR**, **Fonctionnalités**, **Règles métier** — **tous cochés par défaut**.
+Décocher une ligne l'exclut du contexte injecté dans le prompt de la session.
 
-- `adr-tech` — ADR / Architecture technique ;
-- `specs-fonctionnelles` — User stories + règles métier ;
-- `scenarios-gherkin` — Scénarios Gherkin.
-
-Sous chaque catégorie apparaissent les documents enregistrés pour le(s)
-projet(s) sélectionné(s) (eux aussi cochés par défaut). Décocher une catégorie
-décoche ses documents ; décocher un document l'exclut du contexte. Une
-catégorie sans document enregistré reste affichée (avec un rappel de gestion
-via les pièces client — onglet **Artefacts** / **Pièces client** du projet —
-ou l'onglet **ADR**) — le champ est donc toujours visible et actionnable.
+Les documents ADR-12 eux-mêmes (`doc_type` ∈ {`adr`, `specs`, `gherkin`,
+`project_doc`}) restent enregistrables et consultables via `doc_*` ; les anciens
+docs ont été **requalifiés en pièces client** (`piece_requalify`) et se gèrent via
+l'onglet **Artefacts** / **Pièces client** du projet ou l'onglet **ADR**.
 
 ### Import depuis le PC (fichiers locaux)
 

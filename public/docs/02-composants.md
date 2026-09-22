@@ -21,12 +21,46 @@ les tâches, sans jamais écrire directement dans le registre.
 **Onglets** — *globaux* (aucun projet ouvert, `GLOBAL_TABS`) : Projets,
 Vue d'ensemble, Écosystème, Workspaces (admin), Utilisateurs (admin). *D'un
 projet ouvert* (`PROJECT_TABS`) : Vue d'ensemble, Tâches, Recettes, Tests E2E,
-Décisions, **Artefacts**, **ADR**, Vars & Secrets E2E, Archives.
+Décisions, **Artefacts**, **ADR**, **Sprints**, **Fonctionnalités & Règles**,
+Vars & Secrets E2E, Archives.
 
 > Les onglets **Déploiements**, **Événements** et **Plans** ne figurent plus dans
 > la barre : ils sont accessibles via la section **« Consulter »** du **modal de
 > détail d'une tâche** (boutons `data-goto`). Voir
 > [`13-adr-et-artefacts.md`](13-adr-et-artefacts.md) §5.
+
+**Modèle Sprint / Fonctionnalités / Règles (ADR-001)** :
+- Onglet **Vue d'ensemble** : **cartes de cardinalité cliquables** (`CARDINALITY_CARDS`)
+  — 10 indicateurs (Tâches/Recettes sans ADR, sans fonctionnalité, sans sprint ;
+  ADR sans fonctionnalité ; Sprints sans fonctionnalité, sans règle ; Éléments
+  émergents). Un clic ouvre l'onglet cible avec le **filtre pré-appliqué**. Le
+  panneau lit l'agrégat `GET /api/cardinality` (source de vérité = registre) et
+  **ne recalcule jamais** l'émergence. L'ancien **onglet « Émergents » a été
+  retiré** (restitué en carte + filtre « lien manquant »).
+- Onglet **Sprints** : liste des sprints (statut, dates, `is_default`), création
+  (**durée paramétrable** synchronisée avec l'échéance), **clôture** (manuelle ou
+  auto à l'échéance), **reprise**, rattachement de pièces client, **session de
+  sprint** (`agent-sprint`), **session de migration**, rapport de sprint, suppression
+  (refusée pour le sprint par défaut).
+- Onglet **Fonctionnalités & Règles** : **2 sous-onglets** (`frSubTab`) —
+  **Fonctionnalités** (`US-xxx`) et **Règles métier** (`RM-xxxx`) — chacun avec ses
+  propres **filtres** (recherche, **rôle**, **sprint**, **émergence**,
+  **implémentation**, **lien manquant**) et son CRUD. Le sous-onglet Règles gère
+  l'**association explicite de rôles** (`roles`) et le **rôle global**
+  (`role_global`).
+
+**Modale « Détail projet »** : onglets **Projet / Repos / Pièces client**
+uniquement. L'onglet **« Documents de référence » a été retiré** (doublon avec
+« Pièces client », les documents ADR-12 étant requalifiés en pièces client) — tout
+deep-link `docs` retombe sur « Projet ». Voir
+[`12-documents-reference-projets-repos.md`](12-documents-reference-projets-repos.md) §5.
+
+**Création de recette — sélecteurs de contexte** : la modale propose des
+sélecteurs multi-lignes (toutes les options cochées par défaut) pour les **ADR**
+(`adrIds` → bloc « ADR de référence »), les **Fonctionnalités** (`featureIds` →
+bloc « Fonctionnalités de référence ») et les **Règles métier** (`ruleIds` → bloc
+« Règles métier de référence ») ; ils sont rattachés à la recette et injectés dans
+le prompt de la session `agent-recette`.
 
 **Observabilité** (v0.2.0 → v0.4.0) : dashboard KPI système (Flow ·
 Orchestration · Agents · Quality) — KPI cards (Lead Time P50/moyen/P95, Cycle
@@ -96,7 +130,9 @@ via `plan_commit_add` (sha + fichiers + diff).
 **Rôle** : source de vérité **logique** de l'orchestration. L'état **physique** reste
 Git.
 
-- Base PostgreSQL `task_registry` (migrée depuis SQLite).
+- Base PostgreSQL `task_registry` (migrée depuis SQLite) ; **version logique du
+  schéma** marquée dans `schema_meta` (`SCHEMA_VERSION`, `db.mjs`) — `ensureSchema()`
+  saute le rejeu quand le marqueur est à jour.
 - Tables (principales) : `tasks`, `projects`, `repos`, `project_repos`, `task_repos`,
   `executions`, `task_sessions`, `task_links`, `worktrees`, `events`,
   `deployments`, `decisions`, `participants`, **`artifacts`** (gestionnaire central
@@ -104,7 +140,12 @@ Git.
   `plan_incidents`, `plan_inconsistencies`, `plan_counters`, `plan_executions`,
   `plan_commits`, `recettes`, `recette_items`, `recette_tasks`, `e2e_tests`,
   `e2e_test_projects` / `e2e_test_repos` / `e2e_test_params` / `e2e_vars`,
-  `task_e2e`, `e2e_executions`, **`adr_conflicts`**, **`adr_vigilances`**.
+  `task_e2e`, `e2e_executions`, **`adr_conflicts`**, **`adr_vigilances`**,
+  **`sprints`**, **`fonctionnalites`**, **`regles_metier`**, **`cardinality_signals`**,
+  **`migrations`**, **`adr_conversions`**, **`recette_regles`**, **`task_adr`**,
+  `sprint_fonctionnalites` / `sprint_regles` / `sprint_pieces`, `fonctionnalite_regles`
+  / `fonctionnalite_gherkin` / `fonctionnalite_adr`, `task_sprints` /
+  `task_fonctionnalites`, `recette_sprints` / `recette_fonctionnalites` / `recette_adr`.
 - **Machines à états** : tâche (phases grossières) + plan (cycle complet) + **ADR**
   (`Proposé → Accepté → Déprécié → Remplacé`) — voir `05-reference.md`.
 
@@ -115,7 +156,19 @@ Git.
 (ADR structurées : `adr_list`, `adr_get`, `adr_search`, `adr_context`,
 `adr_register`, `adr_set_status`, `adr_update`, `adr_attach`,
 `adr_report_conflict`, `adr_report_missing`, `adr_vigilance_list`,
-`adr_vigilance_resolve`), `doc_*` (documents de référence) — voir
+`adr_vigilance_resolve`), `doc_*` (documents de référence).
+
+**Familles MCP du modèle sprint/fonctionnalités/règles** (détail : `05-reference.md` §1bis) :
+`sprint_*` (dont `sprint_start`, `sprint_close`, `sprint_reopen`, `sprint_report`,
+`sprint_session_set`, `sprint_delete`, `sprint_migrate_elements`),
+`feature_*` (CRUD + `feature_mark_implemented`, `feature_context`, liens
+règle/gherkin/adr/sprint), `rule_*` (CRUD + `rule_mark_implemented`, `rule_context`,
+lien sprint, `roles`/`role_global`), `migration_*` (`migration_start`/`_get`/`_list`/
+`_finish`/`_session_set`), `adr_conversion_*` (`adr_convert`,
+`adr_conversion_link`, `adr_conversion_list`), `cardinality_*`
+(`cardinality_report`, `cardinality_signals_list`, `cardinality_signal_resolve`),
+`recette_rule_link`/`recette_rule_unlink` (et `recette_feature_link` /
+`recette_adr_link` / `recette_sprint_link`). Voir
 [`13-adr-et-artefacts.md`](13-adr-et-artefacts.md) §2 et §4.
 
 ## 5. MCP métier & Skills
@@ -162,9 +215,20 @@ supervise and pilot tasks, never writing directly to the registry. PM2 process, 
 through the MCP `task-orchestrator`. Tabs — *global* (no project open): Projects,
 Overview, Ecosystem, Workspaces (admin), Users (admin); *project sub-tabs*
 (`PROJECT_TABS`): Overview, Tasks, Recettes, E2E Tests, Decisions, **Artifacts**,
-**ADR**, E2E Vars & Secrets, Archives. The Deployments/Events/Plans tabs were
-removed and are reachable from the **task detail modal** ("Consulter"). The **Ecosystem**
-tab lists agents and lets you edit their `model` globally. Pilot functions:
+**ADR**, **Sprints**, **Features & Rules**, E2E Vars & Secrets, Archives. The
+Deployments/Events/Plans tabs were removed and are reachable from the **task detail
+modal** ("Consulter"). **Sprint / Features / Rules model (ADR-001)**: the Overview
+shows **clickable cardinality cards** (10 indicators, from `GET /api/cardinality` —
+the panel never recomputes emergence; the former **"Emergents" tab was removed**);
+the **Sprints** tab handles the sprint lifecycle (configurable duration, auto-close,
+reopen, pieces, sprint/migration sessions, report); the **Features & Rules** tab has
+**2 sub-tabs** (Features `US-xxx` / Business rules `RM-xxxx`) each with its own
+filters (search, **role**, **sprint**, **emergence**, **implementation**, **missing
+link**). The **Project detail modal** has only **Project / Repos / Client pieces**
+tabs — the **"Reference documents" tab was removed** (deep-link `docs` falls back to
+"Project"). Recette creation offers context selectors (**ADR** + **Features** +
+**Rules**). The **Ecosystem** tab lists agents and lets you edit their `model`
+globally. Pilot functions:
 `createTask`, `launchTask` (`queued → started` + orchestrator session), `reworkTask`,
 `killTaskSession`, `relaunchTask`, `resolveRecette`, `resolveDecision`. The session
 bridge (`session-bridge.mjs`) launches a detached opencode session
@@ -200,12 +264,18 @@ Tables: `tasks`, `projects`, `repos`, `project_repos`, `task_repos`, `executions
 `artifact_repos`, `plans`, `plan_steps`, `plan_incidents`, `plan_inconsistencies`,
 `plan_counters`, `plan_executions`, `plan_commits`, `recettes`, `recette_items`,
 `recette_tasks`, `e2e_tests`, `e2e_test_*`, `task_e2e`, `e2e_executions`,
-**`adr_conflicts`**, **`adr_vigilances`**. State machines: task (coarse phases) +
-plan (full cycle) + **ADR** (`Proposed → Accepted → Deprecated → Replaced`). Key
-tools: `task_register`, `task_transition`, `plan_transition`, `task_event`,
-`decision_request`, `decision_resolve`, `task_recette`, `task_get`, `task_link_session`,
-`plan_commit_add`, `plan_commits_list`, **`artifact_add`/`artifact_list`**, the
-**`adr_*` family**, `doc_*`.
+**`adr_conflicts`**, **`adr_vigilances`**, **`sprints`**, **`fonctionnalites`**,
+**`regles_metier`**, **`cardinality_signals`**, **`migrations`**, **`adr_conversions`**,
+**`recette_regles`**, **`task_adr`** + the N:N link tables. The **logical schema
+version** is marked in `schema_meta` (`SCHEMA_VERSION`, `db.mjs`). State machines:
+task (coarse phases) + plan (full cycle) + **ADR** (`Proposed → Accepted →
+Deprecated → Replaced`). Key tools: `task_register`, `task_transition`,
+`plan_transition`, `task_event`, `decision_request`, `decision_resolve`,
+`task_recette`, `task_get`, `task_link_session`, `plan_commit_add`,
+`plan_commits_list`, **`artifact_add`/`artifact_list`**, the **`adr_*` family**,
+`doc_*`, plus the **`sprint_*` / `feature_*` / `rule_*` / `migration_*` /
+`adr_conversion_*` / `cardinality_*`** families and `recette_rule_link`/`_unlink`
+(see `05-reference.md` §1bis).
 
 **6. Business MCP & Skills** — `plan-manager` (plans persistence/tracking),
 `audit-manager` (audit reports treatment, file-based), `coder-workspaces` (Coder

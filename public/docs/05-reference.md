@@ -36,6 +36,50 @@ Base `task_registry` :
 | `audit_notifications` | Miroir des incidents/incohérences d'audit (v0.1.0) | `id`, `kind`, `audit_id`, `status`, `resolved_at` |
 | `adr_conflicts` | Conflits code ↔ ADR (persistés, « pas de violation silencieuse ») | `conflict_id`, `adr_id` (→ `artifacts`), `task_id` (nullable), `description`, `status` (open/resolved), `decision_id` (décision `kind='conflict'`) |
 | `adr_vigilances` | Points de vigilance ADR en recette/test (append-only, bloquants) | `vigilance_id`, `project`, `recette_id`, `task_id`, `session_id`, `type` (missing/conflict), `status` (open/resolved), `entity`, `description`, `adr_id`, `related_adr_id`, `conflict_id`, `resolution`, `resolution_kind`, `resolved_at`, `resolved_by` |
+| `schema_meta` | Marqueur de version **logique** du schéma | `key`, `value`, `updated_at` — clé `schema_version` = `SCHEMA_VERSION` (`db.mjs`) ; permet à `ensureSchema()` de **sauter** le rejeu de `schema.sql` + `migrate()` (chemin rapide) et de le déclencher UNE fois sinon (sous `pg_advisory_lock`). **À incrémenter à chaque évolution DDL** (convention `AAAA-MM-JJ-<description>`) |
+
+### Modèle structuré Sprints / Fonctionnalités / Règles métier (ADR-001)
+
+| Table | Rôle | Colonnes clés |
+|---|---|---|
+| `sprints` | **Sprint** = unité de temps du projet | `id` (`SPRINT-…`), `project`, `title`, `start_date`, `end_date` (échéance → clôture **auto** si `auto_close`), `status` (`open`/`close`), `is_default` (au plus 1 par projet, index partiel unique), `auto_close`, `closed_at`, `close_reason` (`auto_echeance`/`manuel`), `reopened_at`, `session_id` (session IA `agent-sprint`) |
+| `fonctionnalites` | **Fonctionnalité** (`US-xxx`) | `id` (`FEAT-…`), `project`, `ref` (unique par projet), `role`, `user_story`, `sourced_piece_id` (pièce client source), `emergent`/`emergent_origin`, `implemented`/`implemented_origin`/`implemented_at`/`implemented_by`/`implemented_note` |
+| `regles_metier` | **Règle métier** (`RM-xxxx`) | `id` (`RMET-…`), `project`, `ref` (unique par projet), `content`, `sourced_piece_id`, `emergent`/`emergent_origin`, `implemented*`, **`roles`** (`TEXT[]`, association explicite 1..N), **`role_global`** (1 = s'applique à tous les rôles) |
+| `cardinality_signals` | **Signaux de cardinalité heuristiques** (T6, append-only, **NON bloquants**) | `signal_id`, `project`, `entity_type` (recette/task/adr/sprint), `entity_id`, `missing`, `detail`, `status` (`open`/`resolved`), `origin`, `resolution`, `resolved_at`, `resolved_by` — index partiel unique « **1 seul signal open par entité** » |
+| `migrations` | **Session de migration** des anciens sprints (ADR-001 §6) | `migration_id`, `project` (unique), `sprint_id` (= **sprint par défaut** / ancien sprint), `session_id`, `status` (`open`/`in_progress`/`done`/`aborted`), `title`, `finished_at` |
+| `adr_conversions` | Lien **historique** ADR monolithique d'origine ↔ ADR atomique convertie (N converties pour 1 origine) | `conversion_id`, `original_adr_id`, `converted_adr_id`, unique par couple |
+| `recette_regles` | Recette ⇄ règle métier (N:N) | `recette_id`, `regle_id` |
+| `task_adr` | **Lien ADR d'une tâche — workflow PROPOSÉ → VALIDÉ** | `task_id`, `adr_id`, `status` (`propose` = proposé par l'agent, **non effectif** / `valide` = validé par l'humain, **effectif**), `proposed_by`/`proposed_at`, `validated_by`/`validated_at`, `reason` |
+| `sprint_fonctionnalites` / `sprint_regles` / `sprint_pieces` | Rattachement sprint ⇄ fonctionnalité / règle / pièce client (N:N) | `sprint_id` + `fonctionnalite_id` / `regle_id` / `piece_id` |
+| `fonctionnalite_regles` / `fonctionnalite_gherkin` / `fonctionnalite_adr` | Liens fonctionnalité ⇄ règle métier / scénario Gherkin (`e2e_tests`) / ADR (`artifacts`) (N:N) | `fonctionnalite_id` + cible ; **une ADR garde ≥1 fonctionnalité** (trigger `trg_fonctionnalite_adr_min`) |
+| `task_sprints` / `task_fonctionnalites` | Rattachement tâche ⇄ sprint / fonctionnalité (N:N) | `task_id` + cible |
+| `recette_sprints` / `recette_fonctionnalites` / `recette_adr` | Rattachement recette ⇄ sprint / fonctionnalité / ADR (N:N) | `recette_id` + cible |
+
+> **`SCHEMA_VERSION`** (`db.mjs`, ~l.33) est le marqueur logique reflété en base
+> (`schema_meta.schema_version`). Toute évolution de `schema.sql` **ou** de
+> `migrate()` doit l'**incrémenter** ; `ensureSchema()` compare le marqueur en
+> base à la constante : identique → **chemin rapide** (aucun DDL) ; différent →
+> apply complet **une fois** (`schema.sql` + `migrate()`) sous verrou advisory,
+> puis écriture du nouveau marqueur. L'idempotence est garantie (toutes les DDL
+> sont `IF NOT EXISTS`).
+
+## 1bis. Familles d'outils MCP (registre)
+
+| Famille | Outils | Objet |
+|---|---|---|
+| `sprint_*` | `sprint_start`, `sprint_list`, `sprint_get`, `sprint_close`, `sprint_reopen`, `sprint_report`, `sprint_attach_pieces`, `sprint_session_set`, `sprint_delete`, `sprint_migrate_elements` | Cycle de vie du sprint (durée paramétrable, clôture auto à l'échéance, reprise), rattachement de pièces, session `agent-sprint`, rapport, migration des éléments hérités (sans faux émergent) |
+| `feature_*` | `feature_register`, `feature_list`, `feature_get`, `feature_update`, `feature_delete`, `feature_mark_implemented`, `feature_context`, `feature_rule_link`/`_unlink`, `feature_gherkin_link`/`_unlink`, `feature_adr_link`/`_unlink`, `feature_sprint_link`/`_unlink` | CRUD fonctionnalités + liens N:N (règles, Gherkin, ADR, sprint), qualification d'implémentation (`ecosystem`/`hors_ecosystem`), bloc de contexte |
+| `rule_*` | `rule_register`, `rule_list`, `rule_get`, `rule_update`, `rule_delete`, `rule_mark_implemented`, `rule_context`, `rule_sprint_link`/`_unlink` | CRUD règles métier (dont `roles`/`role_global`) + liens sprint, qualification d'implémentation, bloc de contexte |
+| `migration_*` | `migration_start`, `migration_get`, `migration_list`, `migration_finish`, `migration_session_set` | Session de migration des anciens sprints (idempotente : 1 par projet), rattachement de la session IA |
+| `adr_conversion_*` | `adr_convert`, `adr_conversion_link`, `adr_conversion_list` | Conversion ADR monolithique → ADR atomique (l'origine reste intacte) + lien historique |
+| `cardinality_*` | `cardinality_report`, `cardinality_signals_list`, `cardinality_signal_resolve` | Agrégat de traçage des cardinalités heuristiques (vues « sans ADR / sans fonctionnalité / sans sprint », émergents) + signaux (clôture **tracée**, raison obligatoire) |
+| `recette_rule_link` / `recette_rule_unlink` | (idem `recette_feature_link`/`_unlink`, `recette_adr_link`/`_unlink`, `recette_sprint_link`/`_unlink`) | Rattachement d'une recette à ses règles / fonctionnalités / ADR / sprints (contexte de la session `agent-recette`) |
+| `*_delete` | `sprint_delete`, `feature_delete`, `rule_delete` (aussi `project_delete`, `repo_delete`, `doc_delete`, `piece_delete`, `task_delete`) | Suppression explicite (le `sprint_delete` est refusé sur le sprint par défaut ; cascade ADR sur double confirmation) |
+| `*_mark_implemented` | `feature_mark_implemented`, `rule_mark_implemented` | Qualification d'implémentation avec **origine** requise (`ecosystem` / `hors_ecosystem`) — idempotent, n'écrit jamais l'émergence |
+
+> **Règle d'or** : à la création, l'agent **propose** (`featureIds`, `adrIds` en
+> `propose`) ; la **validation est HUMAINE** (en recette). Aucune auto-validation,
+> aucune création systématique d'ADR.
 
 > **Tables legacy neutralisées** (`legacy_*`, jamais supprimées) : `docs`,
 > `doc_projects`, `doc_repos`, `doc_attachments`, `recette_documents` — fusionnées
@@ -160,6 +204,40 @@ en cache au démarrage, le `--model` explicite garantit la prise en compte).
 | `audit_notifications` | Audit incidents/inconsistencies mirror (v0.1.0) | `id`, `kind`, `audit_id`, `status`, `resolved_at` |
 | `adr_conflicts` | Code ↔ ADR conflicts (persisted, "no silent violation") | `conflict_id`, `adr_id` (→ `artifacts`), `task_id` (nullable), `description`, `status` (open/resolved), `decision_id` (decision `kind='conflict'`) |
 | `adr_vigilances` | ADR vigilance points in acceptance/test (append-only, blocking) | `vigilance_id`, `project`, `recette_id`, `task_id`, `session_id`, `type` (missing/conflict), `status` (open/resolved), `entity`, `description`, `adr_id`, `related_adr_id`, `conflict_id`, `resolution`, `resolution_kind`, `resolved_at`, `resolved_by` |
+| `schema_meta` | **Logical** schema version marker | `key`, `value`, `updated_at` — key `schema_version` = `SCHEMA_VERSION` (`db.mjs`) ; lets `ensureSchema()` **skip** the `schema.sql` + `migrate()` replay (fast path) and run it once otherwise (under `pg_advisory_lock`). **Bump on every DDL change** (convention `YYYY-MM-DD-<description>`) |
+
+### Structured model: Sprints / Features / Business rules (ADR-001)
+
+| Table | Role | Key columns |
+|---|---|---|
+| `sprints` | **Sprint** = the project's unit of time | `id` (`SPRINT-…`), `project`, `title`, `start_date`, `end_date` (deadline → **auto** close if `auto_close`), `status` (`open`/`close`), `is_default` (at most 1 per project), `auto_close`, `closed_at`, `close_reason` (`auto_echeance`/`manuel`), `reopened_at`, `session_id` (`agent-sprint` session) |
+| `fonctionnalites` | **Feature** (`US-xxx`) | `id` (`FEAT-…`), `project`, `ref` (unique per project), `role`, `user_story`, `sourced_piece_id`, `emergent`/`emergent_origin`, `implemented`/`implemented_origin`/`implemented_at`/`implemented_by`/`implemented_note` |
+| `regles_metier` | **Business rule** (`RM-xxxx`) | `id` (`RMET-…`), `project`, `ref`, `content`, `sourced_piece_id`, `emergent`/`emergent_origin`, `implemented*`, **`roles`** (`TEXT[]`), **`role_global`** (1 = applies to all roles) |
+| `cardinality_signals` | **Heuristic cardinality signals** (append-only, **non-blocking**) | `signal_id`, `project`, `entity_type` (recette/task/adr/sprint), `entity_id`, `missing`, `detail`, `status` (`open`/`resolved`), `origin`, `resolution`, `resolved_at`, `resolved_by` — partial unique index "**one open signal per entity**" |
+| `migrations` | **Migration session** of legacy sprints (ADR-001 §6) | `migration_id`, `project` (unique), `sprint_id` (= default/legacy sprint), `session_id`, `status` (`open`/`in_progress`/`done`/`aborted`), `title`, `finished_at` |
+| `adr_conversions` | **Historical** link monolithic ADR ↔ converted atomic ADR | `conversion_id`, `original_adr_id`, `converted_adr_id`, unique per pair |
+| `recette_regles` | Acceptance ⇄ business rule (N:N) | `recette_id`, `regle_id` |
+| `task_adr` | **Task ADR link — PROPOSED → VALIDATED** | `task_id`, `adr_id`, `status` (`propose` = agent-proposed, **not effective** / `valide` = human-validated, **effective**), `proposed_by`/`proposed_at`, `validated_by`/`validated_at`, `reason` |
+| `sprint_fonctionnalites` / `sprint_regles` / `sprint_pieces` | Sprint ⇄ feature / rule / client piece (N:N) | `sprint_id` + target |
+| `fonctionnalite_regles` / `fonctionnalite_gherkin` / `fonctionnalite_adr` | Feature ⇄ business rule / Gherkin scenario (`e2e_tests`) / ADR (`artifacts`) (N:N) | `fonctionnalite_id` + target ; **an ADR keeps ≥1 feature** (trigger `trg_fonctionnalite_adr_min`) |
+| `task_sprints` / `task_fonctionnalites` | Task ⇄ sprint / feature (N:N) | `task_id` + target |
+| `recette_sprints` / `recette_fonctionnalites` / `recette_adr` | Acceptance ⇄ sprint / feature / ADR (N:N) | `recette_id` + target |
+
+> **`SCHEMA_VERSION`** (`db.mjs`) is the logical marker mirrored in the DB
+> (`schema_meta.schema_version`). Bump it on every change to `schema.sql` **or**
+> `migrate()`: matching marker → **fast path** (no DDL); different → full apply
+> **once** under an advisory lock, then the new marker is written. Idempotent
+> (all DDL is `IF NOT EXISTS`).
+
+**1bis. MCP tool families (registry)** — `sprint_*` (start/list/get/close/reopen/
+report/attach_pieces/session_set/delete/migrate_elements), `feature_*` (CRUD +
+`feature_mark_implemented`, `feature_context`, links rule/gherkin/adr/sprint),
+`rule_*` (CRUD + `rule_mark_implemented`, `rule_context`, sprint link, `roles`/
+`role_global`), `migration_*` (start/get/list/finish/session_set),
+`adr_conversion_*` (`adr_convert`, `adr_conversion_link`, `adr_conversion_list`),
+`cardinality_*` (report/signals_list/signal_resolve), `recette_rule_link`/
+`recette_rule_unlink` (and `recette_feature_link`/`recette_adr_link`/…), `*_delete`,
+`*_mark_implemented`. Agents **propose**, humans **validate** (never auto-validated).
 
 > **Legacy tables neutralized** (`legacy_*`, never dropped): `docs`,
 > `doc_projects`, `doc_repos`, `doc_attachments`, `recette_documents` — merged

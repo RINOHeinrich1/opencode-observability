@@ -37,6 +37,12 @@ via sa propre table, pas une décision — v0.7.5).
 - La recette est un **objet de PROJET** (v0.8.0) : titre propre, session
   dédiée, couvrant **0..N tâches** (ou aucune — recette exploratoire). Créée
   depuis l'onglet **Recettes** (projet + titre + tâches couvertes optionnelles).
+- **Contexte de la recette (sélecteurs multi-lignes, toutes cochées par défaut)** :
+  **ADR** (`adrIds` → bloc « ADR de référence »), **Fonctionnalités** (`featureIds`
+  → bloc « Fonctionnalités de référence ») et **Règles métier** (`ruleIds` → bloc
+  « Règles métier de référence »). Les sélections sont **rattachées à la recette**
+  (`recette_adr` / `recette_fonctionnalites` / `recette_regles`) et **injectées
+  dans le prompt** de la session `agent-recette`.
 - Le panneau propose **« Session de recette »** : lance la session dédiée
   `agent-recette` (contexte réel : titre, projet, tâches couvertes, commits,
   artefacts, événements, plans). L'agent **enregistre les éléments** avec
@@ -81,6 +87,78 @@ la terminaison** de la recette — jamais de validation silencieuse :
   `GET /api/adr-vigilances` (projet, recette, type, statut, dates).
 
 Voir [`13-adr-et-artefacts.md`](13-adr-et-artefacts.md) §3.
+
+## 1ter. Sprints, émergence et cardinalités (ADR-001)
+
+### Cycle de vie d'un sprint
+
+Un **sprint** est l'unité de temps d'un projet (table `sprints`). Cycle :
+`open → close` (reprise `close → open`).
+
+- **Création** (`sprint_start`) : titre + **durée paramétrable** (jours, synchronisée
+  avec l'échéance `end_date`) + `autoClose` (défaut vrai) + pièces client rattachées
+  à la création (non émergentes).
+- **Clôture** : **manuelle** (`sprint_close`, `close_reason='manuel'`) ou
+  **automatique à l'échéance** (`autoClose`, `close_reason='auto_echeance'`, balayage
+  `autoCloseExpiredSprints`). La clôture est l'action officielle qui **bascule la
+  garde d'émergence**.
+- **Reprise** (`sprint_reopen`) : repasse `open`, prolonge l'échéance ; elle
+  **suspend** la garde d'émergence (les éléments suivants ne sont plus émergents).
+- **Rapport** (`sprint_report`) : agrégation du registre (fonctionnalités/règles
+  implémentées ventilées écosystème / hors écosystème, tâches, pièces, recettes).
+- Un **sprint par défaut** (`is_default`, au plus 1 par projet) porte les « anciens
+  sprints » (migration).
+
+### Émergence (tracée, JAMAIS rétroactive)
+
+Un élément (tâche, fonctionnalité, règle, pièce) **créé hors sprint** (`hors_sprint`)
+ou **après la clôture du dernier sprint** (`apres_cloture`) est marqué
+**émergent** (`emergent=1` + `emergent_origin`). L'émergence est **tracée** mais
+**jamais rétroactive** : la migration des éléments existants vers le sprint par
+défaut (`sprint_migrate_elements`) **n'écrit aucun marqueur d'émergence** (pas de
+faux émergent). Un sprint rouvert **suspend** la règle.
+
+### Cardinalités heuristiques (NON bloquantes)
+
+Le framework **signale** (sans jamais bloquer) les manques de cardinalité d'une
+entité : tâche/recette **sans ADR / sans fonctionnalité / sans sprint**, ADR **sans
+fonctionnalité**, sprint **sans fonctionnalité / sans règle**, éléments **émergents**.
+
+- **Agrégat** : `cardinality_report({ projectId })` (+ `GET /api/cardinality`) ;
+  restitué en **cartes cliquables** dans la Vue d'ensemble du panneau.
+- **Signaux append-only** (`cardinality_signals`) : `cardinality_signals_list`
+  (historique filtrable) et `cardinality_signal_resolve` — la clôture exige une
+  **raison tracée** (jamais de clôture silencieuse) ; l'index partiel unique garantit
+  **un seul signal `open` par entité**. Un signal `open` devenu obsolète est marqué
+  `stale`.
+- **Règle d'or** : ce sont des **signaux à traiter** (en recette / par une tâche
+  dédiée), **jamais** des blocages.
+
+### Lien ADR d'une tâche — proposé → validé
+
+Le lien entre une tâche et une ADR (`task_adr`) suit un workflow **à deux temps** :
+
+- `task_adr_propose({ taskId, adrId, reason })` — action **agent** → `status='propose'`
+  (**NON effectif** ; idempotent, ne rétrograde jamais un lien validé).
+- `task_adr_validate({ taskId, adrId })` — action **HUMAINE** (en recette) →
+  `status='valide'` (**EFFECTIF**).
+- `task_adr_list` expose l'état (`effective`), `task_adr_unlink` détache.
+- **L'agent ne valide JAMAIS lui-même** ; il **propose** (`adrIds` à la création de
+  la tâche) et signale un manque (`adr_report_missing`) plutôt que de créer une ADR
+  d'office.
+
+### Sessions dédiées : sprint & migration
+
+- **Session de sprint** (`sprint_session_set`, bouton « Session de sprint ») : session
+  IA `agent-sprint` rattachée au sprint (pièces → discussion → fonctionnalités/règles).
+  Elle **ne touche pas** au statut `open`/`close` (garde d'émergence inchangée).
+- **Session de migration** (`migration_start` / `migration_session_set`, bouton
+  « Session de migration ») : session IA dédiée qui **convertit les ADR monolithiques
+  en ADR atomiques** (`adr_convert`, validation utilisateur avant écriture) et
+  **rattache les éléments hérités** à l'ancien sprint **sans faux émergent**.
+  Idempotente : **une migration par projet** (`migrations.project` unique), ancrée sur
+  le **sprint par défaut**. Cycle : `open → in_progress → done`/`aborted`
+  (`migration_finish`).
 
 ## 2. Cycle de vie d'un plan (sous-tâche)
 
@@ -208,6 +286,21 @@ decision detected during a recette/test becomes an **open global vigilance**
 (registry guard + panel pre-check) with an explicit reason. It is lifted in a
 **traced** way (mandatory `resolution` via `adr_vigilance_resolve`, or by
 resolving the human `conflict` decision). History is append-only and filterable.
+
+**4ter. Sprints, emergence, cardinalities (ADR-001)** — a **sprint** (the project's
+time unit) goes `open → close`: creation sets a **configurable duration** and
+`autoClose` (closure at the deadline); **reopen** resumes it and **suspends** the
+emergence guard. **Emergence** is traced but **never retroactive**
+(`sprint_migrate_elements` writes no emergence marker → no false emergence).
+**Heuristic cardinalities** are **non-blocking**: `cardinality_report` (+ clickable
+Overview cards) and append-only `cardinality_signals` (closing requires a **traced
+reason**; a partial unique index guarantees one open signal per entity). The **task
+ADR link** follows **proposed → validated**: `task_adr_propose` (agent, **not
+effective**) → `task_adr_validate` (human, **effective**) — agents never
+self-validate. **Dedicated sessions**: sprint session (`agent-sprint`; does not touch
+`open`/`close`) and migration session (converts monolithic ADRs to atomic ones +
+attaches legacy elements without false emergence; one per project). Recette creation
+injects **ADR + Features + Rules** context into the `agent-recette` prompt.
 
 **5. Example sequence (2 plans)** — human creates task → panel launches (`started`) →
 orchestrator plans (`planning`) → atomic-plan produces 2 plans → `awaiting_validation`

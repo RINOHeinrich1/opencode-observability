@@ -5,6 +5,44 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## 2026-09-22 · Bump `SCHEMA_VERSION` + documentation du modèle Sprint / Fonctionnalités / Règles
+
+Documentation d'écosystème mise à jour pour refléter le **code déployé** (MCP
+`task-orchestrator` + panneau `orchestrator-panel`), et correctif du marqueur de
+schéma.
+
+- **`SCHEMA_VERSION`** (`db.mjs`) incrémenté de `2026-09-22-recette-regles-contexte`
+  à **`2026-09-22-schema-sql-align-migrate`**, en cohérence avec le commit
+  `f45c4ff` (alignement de `schema.sql` sur `migrate()` : colonnes d'état de
+  `task_adr` + table `cardinality_signals`) qui n'avait pas incrémenté le
+  marqueur. Seule la constante est modifiée (aucun DDL). Au premier appel,
+  marqueur en base ≠ version → **apply complet une fois** (`schema.sql` +
+  `migrate()` sous `pg_advisory_lock`) puis écriture du nouveau marqueur ;
+  **2ᵉ appel = chemin rapide** (aucun DDL) ; idempotent.
+- **`05-reference.md`** : modèle de données structuré (tables `sprints`,
+  `fonctionnalites`, `regles_metier` + `roles`/`role_global`, `cardinality_signals`,
+  `migrations`, `adr_conversions`, `recette_regles`, `task_adr.*`,
+  `implemented`/`implemented_origin`, tables de liens N:N) + **`schema_meta` /
+  `SCHEMA_VERSION`** + nouvelle section **Familles d'outils MCP** (`sprint_*`,
+  `feature_*`, `rule_*`, `migration_*`, `adr_conversion_*`, `cardinality_*`,
+  `recette_rule_link`/`unlink`, `feature_context`/`rule_context`, `*_delete`,
+  `*_mark_implemented`).
+- **`02-composants.md`** : état réel du panneau — Vue d'ensemble avec **cartes de
+  cardinalité cliquables**, **onglet « Émergents » retiré**, **Fonctionnalités &
+  Règles en 2 sous-onglets**, onglet **Sprints**, modale **Détail projet**
+  = Projet/Repos/Pièces client **sans** « Documents de référence », filtres
+  rôle/sprint/implémentation/émergence/lien, **sélecteurs de contexte** en création
+  de recette (ADR + Fonctionnalités + Règles).
+- **`03-workflow.md`** : cycle de vie sprint (durée paramétrable, clôture auto à
+  l'échéance, reprise), émergence (**tracée, jamais rétroactive**), cardinalités
+  heuristiques **non bloquantes**, lien ADR de tâche **proposé → validé**, sessions
+  dédiées (**sprint** / **migration**), recette (contexte ADR + Fonctionnalités +
+  Règles).
+- **`12-documents-reference-projets-repos.md`** / **`13-adr-et-artefacts.md`** :
+  cohérence avec le retrait de l'onglet « Documents de référence » de la modale
+  projet (onglets **Projet / Repos / Pièces client**) et avec les sélecteurs de
+  contexte (ADR en test ; ADR + Fonctionnalités + Règles en recette).
+
 ## 2026-09-21 · ADR structurées, famille `adr_*`, gestionnaire central d'artefacts & gouvernance ADR
 
 Documentation d'écosystème mise à jour pour refléter le **code déployé** (MCP

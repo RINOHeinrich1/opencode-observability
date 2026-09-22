@@ -236,12 +236,17 @@ Une base **neuve** ne les crée plus : la source logique unique est `artifacts`.
 - **Onglets globaux** (aucun projet ouvert) : Projets, Vue d'ensemble,
   Écosystème, Workspaces (admin), Utilisateurs (admin).
 - **Sous-onglets d'un projet ouvert** (`PROJECT_TABS`) : Vue d'ensemble, Tâches,
-  Recettes, Tests E2E, Décisions, **Artefacts**, **ADR**, Vars & Secrets E2E,
-  Archives.
+  Recettes, Tests E2E, Décisions, **Artefacts**, **ADR**, **Sprints**,
+  **Fonctionnalités & Règles**, Vars & Secrets E2E, Archives.
 - Les onglets **Déploiements**, **Événements** et **Plans** ne figurent plus dans
   la barre : ils restent accessibles via la section **« Consulter »** du **modal
   de détail d'une tâche** (boutons `data-goto` : Artefacts, Événements,
   Déploiements, Décisions, Plans).
+- **Modale « Détail projet »** : onglets **Projet / Repos / Pièces client**
+  uniquement. L'onglet **« Documents de référence » a été retiré** (doublon avec
+  « Pièces client », les documents ADR-12 étant requalifiés en pièces client) ;
+  tout deep-link `docs` retombe sur « Projet ». Voir
+  [`12-documents-reference-projets-repos.md`](12-documents-reference-projets-repos.md) §5.
 
 ### Onglet **ADR** (par projet)
 

@@ -1,9 +1,9 @@
-# 13 — ADR structurées, famille MCP `adr_*`, gouvernance en recette & gestionnaire central d'artefacts
+# 13 — ADR structurées, famille MCP `adr_*`, gouvernance en cadrage & gestionnaire central d'artefacts
 
 > Ce document décrit **le code réellement déployé** (MCP `task-orchestrator` +
 > panneau `orchestrator-panel`, 2026-09-21) : le modèle d'ADR **structurée**, la
 > famille d'outils MCP `adr_*`, la **gouvernance ADR** appliquée pendant une
-> recette/un test, et le **gestionnaire central d'artefacts** (table polymorphe
+> cadrage/un test, et le **gestionnaire central d'artefacts** (table polymorphe
 > `artifacts`). Pour la **taxonomie** `doc_type`, la référence unique est
 > [`nomenclature-doc-type.md`](nomenclature-doc-type.md) — elle n'est pas
 > recopiée ici.
@@ -93,9 +93,9 @@ inchangés, rétrocompatibles, cf. §4). Regroupés par usage :
 
 | Outil | Rôle |
 |---|---|
-| `adr_report_conflict` | Signale qu'une implémentation **contredit** une ADR → conflit persisté (`adr_conflicts`, `status='open'`) **même sans `taskId`** (aucune violation silencieuse). Avec `taskId`, crée une **décision humaine** (`kind='conflict'`) dont la résolution **clôt** le conflit. Avec `recetteId`, crée **en plus** un point de vigilance global bloquant. |
-| `adr_report_missing` | Signale une **ADR manquante** pour une entité réellement discutée (recette ou test), après `adr_list`/`adr_search` négatifs. Exige `entity` + `description`. Contexte : `recetteId` (→ point global bloquant), `taskId` (test) ou `projectId`. |
-| `adr_vigilance_list` | **Historique filtrable** (append-only, lecture seule) des vigilances : `type` (`missing`/`conflict`), `status` (`open`/`resolved`), `projectId`, `recetteId`, `from`/`to`, `limit`. Chaque point porte sa `reason` explicite. |
+| `adr_report_conflict` | Signale qu'une implémentation **contredit** une ADR → conflit persisté (`adr_conflicts`, `status='open'`) **même sans `taskId`** (aucune violation silencieuse). Avec `taskId`, crée une **décision humaine** (`kind='conflict'`) dont la résolution **clôt** le conflit. Avec `cadrageId`, crée **en plus** un point de vigilance global bloquant. |
+| `adr_report_missing` | Signale une **ADR manquante** pour une entité réellement discutée (cadrage ou test), après `adr_list`/`adr_search` négatifs. Exige `entity` + `description`. Contexte : `cadrageId` (→ point global bloquant), `taskId` (test) ou `projectId`. |
+| `adr_vigilance_list` | **Historique filtrable** (append-only, lecture seule) des vigilances : `type` (`missing`/`conflict`), `status` (`open`/`resolved`), `projectId`, `cadrageId`, `from`/`to`, `limit`. Chaque point porte sa `reason` explicite. |
 | `adr_vigilance_resolve` | **Lève** un point de vigilance. `resolution` (raison **tracée**) **obligatoire** ; `resolutionKind` ∈ `adr_created` \| `adr_deprecated` \| `manual` \| `decision` ; `adrId` optionnel (ADR liée). |
 
 > **Rétrocompatibilité** : `doc_register`/`doc_update`/`doc_get`/`doc_list`
@@ -103,12 +103,12 @@ inchangés, rétrocompatibles, cf. §4). Regroupés par usage :
 > jointes `doc_attachment_*` restent disponibles et pointent le **même** stockage
 > (`artifacts`).
 
-## 3. Gouvernance ADR en recette / test
+## 3. Gouvernance ADR en cadrage / test
 
-Pendant une **recette** (ou une session de **test**), un agent peut détecter
+Pendant un **cadrage** (ou une session de **test**), un agent peut détecter
 qu'une décision d'architecture est **manquante** ou **contredite**. Le framework
 en fait un **point de vigilance global** qui **bloque la terminaison** de la
-recette — jamais de validation silencieuse.
+cadrage — jamais de validation silencieuse.
 
 ### Points de vigilance (`adr_vigilances`)
 
@@ -117,7 +117,7 @@ Un point est persisté dans la table `adr_vigilances` (append-only) :
 | Colonne | Rôle |
 |---|---|
 | `vigilance_id` | PK (`adr-vig-<ts>-<rand>`). |
-| `project`, `recette_id`, `task_id`, `session_id` | Contexte (projet, recette, tâche/test, session d'origine). |
+| `project`, `cadrage_id`, `task_id`, `session_id` | Contexte (projet, cadrage, tâche/test, session d'origine). |
 | `type` | `missing` (**ADR manquante**) ou `conflict` (**conflit d'ADR**). |
 | `status` | `open` \| `resolved`. |
 | `entity`, `description` | Entité/constat concerné et description. |
@@ -127,12 +127,12 @@ Un point est persisté dans la table `adr_vigilances` (append-only) :
 La `reason` exposée est explicite : **« ADR manquant pour [entité] »** ou
 **« Conflit d'ADR : [ancienne] vs [nouvelle] »**.
 
-### Blocage de `recette_confirm`
+### Blocage de `cadrage_confirm`
 
-- **Registre (source de vérité)** : `recette_confirm` est **REFUSÉ** tant qu'un
-  point de vigilance est **ouvert** sur la recette, avec la raison explicite de
+- **Registre (source de vérité)** : `cadrage_confirm` est **REFUSÉ** tant qu'un
+  point de vigilance est **ouvert** sur le cadrage, avec la raison explicite de
   chaque point et l'invite à le lever via `adr_vigilance_resolve`.
-- **Panneau (pré-check)** : avant toute création de tâches, `finishRecette`
+- **Panneau (pré-check)** : avant toute création de tâches, `finishCadrage`
   effectue le **même contrôle** et lève une erreur
   (« terminaison bloquée : … — résolvez chaque point … ou levez-le explicitement
   avec une raison tracée »). L'UI affiche les points ouverts et **bloque** le
@@ -155,7 +155,7 @@ La `reason` exposée est explicite : **« ADR manquant pour [entité] »** ou
 
 ### Historique append-only filtrable
 
-- MCP : `adr_vigilance_list` (filtres `projectId`, `recetteId`, `type`, `status`,
+- MCP : `adr_vigilance_list` (filtres `projectId`, `cadrageId`, `type`, `status`,
   `from`/`to`, `limit`).
 - Panneau : `GET /api/adr-vigilances` (mêmes filtres) alimente l'historique des
   vigilances ; **aucun bouton de suppression** (append-only).
@@ -178,9 +178,9 @@ identifiée par le couple **(`doc_type`, `content_id`)** :
 |---|---|
 | `artifact_id` | PK **stable** (`ART-…`, `doc-…`, `att-…`, `ART-REC-…`). |
 | `doc_type` | **Type d'artefact** (taxonomie → [`nomenclature-doc-type.md`](nomenclature-doc-type.md)). |
-| `content_id` | Identifiant de l'**entité porteuse** (taskId, recetteId, projectId, docId…). **Polymorphe, sans FK** : le nettoyage est assuré côté code, par famille. |
+| `content_id` | Identifiant de l'**entité porteuse** (taskId, cadrageId, projectId, docId…). **Polymorphe, sans FK** : le nettoyage est assuré côté code, par famille. |
 | `kind` | **NATURE** (`plan` \| `audit` \| `report` \| `autre`), **distincte** de `doc_type`. |
-| `nature` | Liaison libre (« à quoi sert / comment exploiter » — recettes). |
+| `nature` | Liaison libre (« à quoi sert / comment exploiter » — cadrages). |
 | `source` | Domaine d'origine : `import` \| `artifact` \| `registry` \| `ref`. |
 | `meta` | **JSONB** — champs propres à une famille. |
 | `title`, `path`, `description` | Titre lisible, chemin (hôte/workspace) du fichier, description. |
@@ -197,7 +197,7 @@ dans `artifacts` :
 
 1. `artifacts` de **tâche** (liés par `task_id`) → familles `plan`,
    `task_synthese`, `task_report`, `audit_report`, `autre` ;
-2. `recette_documents` → `recette_report`, `recette_doc` ;
+2. `recette_documents` (legacy) → `cadrage_report`, `cadrage_doc` ;
 3. `docs` **ADR-12** (documents de référence projet/repo) → `adr`, `specs`,
    `gherkin`, `project_doc`, `adr_file`.
 
@@ -225,7 +225,7 @@ Une base **neuve** ne les crée plus : la source logique unique est `artifacts`.
   seul reste accepté, `docType` dérivé de `kind`).
 - `doc_*` et `adr_*` lisent/écrivent la **même** table `artifacts`
   (filtre `doc_type`).
-- `recette_get` conserve `documents[]` (`documentId` entier = `artifacts.id`).
+- `cadrage_get` conserve `documents[]` (`documentId` entier = `artifacts.id`).
 - Jointures E2E : `e2e_executions.report_artifact_id` / `video_url` pointent un
   `artifact_id` préservé.
 
@@ -236,7 +236,7 @@ Une base **neuve** ne les crée plus : la source logique unique est `artifacts`.
 - **Onglets globaux** (aucun projet ouvert) : Projets, Vue d'ensemble,
   Écosystème, Workspaces (admin), Utilisateurs (admin).
 - **Sous-onglets d'un projet ouvert** (`PROJECT_TABS`) : Vue d'ensemble, Tâches,
-  Recettes, Tests E2E, Décisions, **Artefacts**, **ADR**, **Sprints**,
+  Cadrages, Tests E2E, Décisions, **Artefacts**, **ADR**, **Sprints**,
   **Fonctionnalités & Règles**, Vars & Secrets E2E, Archives.
 - Les onglets **Déploiements**, **Événements** et **Plans** ne figurent plus dans
   la barre : ils restent accessibles via la section **« Consulter »** du **modal
@@ -259,7 +259,7 @@ recherche.
 ### Onglet **Artefacts** (gestionnaire central)
 
 `renderArtifacts()` liste **tous les artefacts, toutes entités confondues**
-(tâche / recette / projet / ADR / E2E) : colonnes **Entité** (`content_id`
+(tâche / cadrage / projet / ADR / E2E) : colonnes **Entité** (`content_id`
 résolu), **Type** (`doc_type`), **Nature** (`kind`), Titre, Ajouté ; filtres
 `docType` / `kind` / `contentId` / recherche, bouton « + Ajouter un artefact »,
 actions « Regarder » (visionneuse markdown) et « Télécharger ». API :
@@ -269,7 +269,7 @@ actions « Regarder » (visionneuse markdown) et « Télécharger ». API :
 
 Le panneau expose l'historique filtrable des points de vigilance ADR
 (`GET /api/adr-vigilances`) et leur **levée tracée**
-(`POST /api/adr-vigilances/<id>/resolve`). La liste des recettes affiche un badge
+(`POST /api/adr-vigilances/<id>/resolve`). La liste des cadrages affiche un badge
 ⚠ avec le **nombre de points ouverts** (terminaison bloquée).
 
 ### Documentation `/docs/…`
@@ -302,7 +302,7 @@ status is `Proposed`; **acceptance is a human decision**. Allowed transitions:
 
 **3. ADR governance in acceptance/testing** — a missing/conflicting ADR becomes
 an **open global vigilance** (`adr_vigilances`, `type` = `missing`/`conflict`)
-that **blocks** `recette_confirm` (registry guard + panel pre-check) with an
+that **blocks** `cadrage_confirm` (registry guard + panel pre-check) with an
 explicit reason. It is lifted in a **traced** way (mandatory `resolution`;
 `resolutionKind` = `adr_created`/`adr_deprecated`/`manual`/`decision`), or by
 resolving the human `conflict` decision. History is **append-only** and
@@ -315,7 +315,7 @@ plus `nature`, `source`, `meta`. It physically **merges** the three former silos
 [`nomenclature-doc-type.md`](nomenclature-doc-type.md). Legacy tables are
 **neutralized** as `legacy_*` (never dropped).
 
-**5. Panel** — project sub-tabs are Overview, Tasks, Recettes, E2E Tests,
+**5. Panel** — project sub-tabs are Overview, Tasks, Cadrages, E2E Tests,
 Decisions, **Artifacts**, **ADR**, E2E Vars & Secrets, Archives. The
 Deployments/Events/Plans tabs were removed and are reachable from the **task
 detail modal** ("Consulter"). Markdown docs are served by the `/docs/*.md` route.

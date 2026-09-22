@@ -43,7 +43,7 @@ async function baseTasks(pool) {
       WHERE type = 'TRANSITION' AND (detail::jsonb->>'to') = 'in_progress'
       GROUP BY task_id
     )
-    SELECT t.id, t.created_at, t.recette_status, l.status, d.done_at, s.start_at
+    SELECT t.id, t.created_at, t.cadrage_status, l.status, d.done_at, s.start_at
     FROM tasks t
     LEFT JOIN latest l ON l.task_id = t.id
     LEFT JOIN done_ev d ON d.task_id = t.id
@@ -52,7 +52,7 @@ async function baseTasks(pool) {
   return rows.map((r) => ({
     id: r.id,
     createdAt: r.created_at,
-    recetteStatus: r.recette_status || "pending",
+    cadrageStatus: r.cadrage_status || "pending",
     status: r.status || "queued",
     doneAt: r.done_at,
     startAt: r.start_at,
@@ -69,8 +69,8 @@ export async function summary(pool) {
   const inProgress = tasks.filter((t) => ACTIVE.includes(t.status)).length;
   const leads = tasks.map((t) => t.leadMin).filter((v) => v != null);
   const cycles = tasks.map((t) => t.cycleMin).filter((v) => v != null);
-  // Recette « faite » = recette_status 'done' (nouveau modèle) ou 'approved' (legacy).
-  const success = tasks.filter((t) => t.status === "done" && ["approved", "done"].includes(t.recetteStatus)).length;
+  // Cadrage « faite » = cadrage_status 'done' (nouveau modèle) ou 'approved' (legacy).
+  const success = tasks.filter((t) => t.status === "done" && ["approved", "done"].includes(t.cadrageStatus)).length;
   const reworkCount = (await pool.query("SELECT COUNT(*)::int AS n FROM (SELECT task_id FROM executions WHERE rework_count > 0 GROUP BY task_id) x")).rows[0].n;
   // Phase 4 — durcissement
   const nowIso = new Date().toISOString();
@@ -83,8 +83,8 @@ export async function summary(pool) {
     const c = (await pool.query("SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status='open')::int AS open FROM scope_conflicts")).rows[0];
     scopeConflicts = { total: c.total, open: c.open };
   } catch {}
-  // Recette (v0.7) : éléments + tâches générées.
-  const recetteStats = await recette(pool);
+  // Cadrage (v0.7) : éléments + tâches générées.
+  const cadrageStats = await cadrage(pool);
   const now = new Date();
   const done7 = tasks.filter((t) => t.doneAt && now - new Date(t.doneAt) <= 7 * 86400000).length;
   return {
@@ -98,17 +98,17 @@ export async function summary(pool) {
     successRate: completed ? Math.round((success / completed) * 1000) / 10 : 0,
     successCount: success,
     throughput: Math.round((done7 / 7) * 10) / 10,
-    // Taux de rework = éléments de recette classés rework / total éléments de recette.
-    reworkRate: recetteStats.itemsTotal ? Math.round((recetteStats.byClass.rework / recetteStats.itemsTotal) * 1000) / 10 : 0,
+    // Taux de rework = éléments de cadrage classés rework / total éléments de cadrage.
+    reworkRate: cadrageStats.itemsTotal ? Math.round((cadrageStats.byClass.rework / cadrageStats.itemsTotal) * 1000) / 10 : 0,
     reworkLegacy: reworkCount,
     expiredDecisions,
     scopeConflicts,
-    recette: recetteStats,
+    cadrage: cadrageStats,
   };
 }
 
-// --- Recette (v0.7) : opérations, éléments, tâches générées -----------------
-export async function recette(pool) {
+// --- Cadrage (v0.7) : opérations, éléments, tâches générées -----------------
+export async function cadrage(pool) {
   let statuses = [];
   let itemsTotal = 0;
   let byClass = { rework: 0, bug: 0, improvement: 0, feature: 0 };
@@ -117,16 +117,16 @@ export async function recette(pool) {
   let avgDurationMin = 0;
   try {
     statuses = (await pool.query(
-      "SELECT status, COUNT(*)::int AS n FROM recettes GROUP BY status ORDER BY n DESC",
+      "SELECT status, COUNT(*)::int AS n FROM cadrages GROUP BY status ORDER BY n DESC",
     )).rows.map((r) => ({ status: r.status, count: Number(r.n) }));
-    const items = (await pool.query("SELECT classification FROM recette_items")).rows;
+    const items = (await pool.query("SELECT classification FROM cadrage_items")).rows;
     itemsTotal = items.length;
     for (const i of items) if (i.classification in byClass) byClass[i.classification]++;
-    const gen = (await pool.query("SELECT recette_class FROM tasks WHERE recette_class IS NOT NULL")).rows;
+    const gen = (await pool.query("SELECT cadrage_class FROM tasks WHERE cadrage_class IS NOT NULL")).rows;
     tasksGenerated = gen.length;
-    for (const g of gen) if (g.recette_class in byGeneratedClass) byGeneratedClass[g.recette_class]++;
+    for (const g of gen) if (g.cadrage_class in byGeneratedClass) byGeneratedClass[g.cadrage_class]++;
     const dur = (await pool.query(
-      "SELECT AVG(EXTRACT(EPOCH FROM (confirmed_at::timestamptz - created_at::timestamptz))/60)::float AS avg FROM recettes WHERE confirmed_at IS NOT NULL",
+      "SELECT AVG(EXTRACT(EPOCH FROM (confirmed_at::timestamptz - created_at::timestamptz))/60)::float AS avg FROM cadrages WHERE confirmed_at IS NOT NULL",
     )).rows[0];
     avgDurationMin = Math.round((dur && dur.avg) || 0);
   } catch {}
@@ -200,8 +200,8 @@ export async function agents(pool) {
     SELECT task_id, by, type, ts FROM events
     WHERE by IS NOT NULL
   `)).rows;
-  const tasks = (await pool.query("SELECT id, recette_status FROM tasks")).rows;
-  const recetteMap = new Map(tasks.map((t) => [t.id, t.recette_status || "pending"]));
+  const tasks = (await pool.query("SELECT id, cadrage_status FROM tasks")).rows;
+  const cadrageMap = new Map(tasks.map((t) => [t.id, t.cadrage_status || "pending"]));
   const latest = (await pool.query(`
     SELECT DISTINCT ON (task_id) task_id, status FROM executions ORDER BY task_id, attempt DESC
   `)).rows;
@@ -255,7 +255,7 @@ export async function agents(pool) {
   const out = [];
   for (const agg of byAgent.values()) {
     const tasksIds = [...agg.tasks];
-    const success = tasksIds.filter((id) => statusMap.get(id) === "done" && recetteMap.get(id) === "approved").length;
+    const success = tasksIds.filter((id) => statusMap.get(id) === "done" && cadrageMap.get(id) === "approved").length;
     const failed = tasksIds.filter((id) => TERMINAL_BAD.includes(statusMap.get(id))).length;
     const label = agg.agent === "agent" ? "agent (non attribué)" : agg.agent;
     out.push({
@@ -466,20 +466,20 @@ export async function quality(pool) {
     (await pool.query("SELECT DISTINCT task_id FROM executions WHERE rework_count > 0")).rows.map((r) => r.task_id),
   );
   const rejectedSet = new Set(
-    (await pool.query("SELECT DISTINCT task_id FROM decisions WHERE kind = 'recette' AND status = 'rejected'")).rows.map((r) => r.task_id),
+    (await pool.query("SELECT DISTINCT task_id FROM decisions WHERE kind = 'cadrage' AND status = 'rejected'")).rows.map((r) => r.task_id),
   );
   const completed = done.length;
   const audited = done.filter((t) => auditedSet.has(t.id)).length;
-  // Recette « faite » = recette_status 'done' (nouveau modèle) ou 'approved' (legacy).
-  const accepted = done.filter((t) => ["approved", "done"].includes(t.recetteStatus)).length;
-  // « Sans rework » : pas de rework d'exécution, pas de recette rejetée legacy,
-  // et aucune tâche issue de la recette classée 'rework' (nouveau modèle v0.7).
+  // Cadrage « faite » = cadrage_status 'done' (nouveau modèle) ou 'approved' (legacy).
+  const accepted = done.filter((t) => ["approved", "done"].includes(t.cadrageStatus)).length;
+  // « Sans rework » : pas de rework d'exécution, pas de cadrage rejetée legacy,
+  // et aucune tâche issue du cadrage classée 'rework' (nouveau modèle v0.7).
   const reworkChildSet = new Set(
     (await pool.query(
-      "SELECT DISTINCT l.task_id FROM task_links l JOIN tasks c ON c.id = l.linked_task_id WHERE c.recette_class = 'rework'",
+      "SELECT DISTINCT l.task_id FROM task_links l JOIN tasks c ON c.id = l.linked_task_id WHERE c.cadrage_class = 'rework'",
     )).rows.map((r) => r.task_id),
   );
-  const noRework = done.filter((t) => ["approved", "done"].includes(t.recetteStatus) && !reworkedSet.has(t.id) && !rejectedSet.has(t.id) && !reworkChildSet.has(t.id)).length;
+  const noRework = done.filter((t) => ["approved", "done"].includes(t.cadrageStatus) && !reworkedSet.has(t.id) && !rejectedSet.has(t.id) && !reworkChildSet.has(t.id)).length;
   return {
     funnel: { completed, audited, accepted, noRework },
     auditRate: completed ? Math.round((audited / completed) * 1000) / 10 : 0,
@@ -488,7 +488,7 @@ export async function quality(pool) {
   };
 }
 
-/** Rework dans le temps : reworks (plan + éléments de recette classés rework) par jour + taux. */
+/** Rework dans le temps : reworks (plan + éléments de cadrage classés rework) par jour + taux. */
 export async function rework(pool, days = 14) {
   const planRw = (await pool.query(`
     SELECT to_char(date_trunc('day', ts::timestamptz)::date, 'YYYY-MM-DD') AS day, COUNT(*)::int AS n
@@ -498,16 +498,16 @@ export async function rework(pool, days = 14) {
   `, [days])).rows;
   const recRej = (await pool.query(`
     SELECT to_char(date_trunc('day', resolved_at::timestamptz)::date, 'YYYY-MM-DD') AS day, COUNT(*)::int AS n
-    FROM decisions WHERE kind = 'recette' AND status = 'rejected' AND resolved_at IS NOT NULL
+    FROM decisions WHERE kind = 'cadrage' AND status = 'rejected' AND resolved_at IS NOT NULL
       AND resolved_at::timestamptz >= now() - ($1 || ' days')::interval
     GROUP BY 1
   `, [days])).rows;
-  // Nouveau modèle (v0.7) : éléments de recette classés 'rework' par jour.
+  // Nouveau modèle (v0.7) : éléments de cadrage classés 'rework' par jour.
   let itemRw = [];
   try {
     itemRw = (await pool.query(`
       SELECT to_char(date_trunc('day', created_at::timestamptz)::date, 'YYYY-MM-DD') AS day, COUNT(*)::int AS n
-      FROM recette_items WHERE classification = 'rework'
+      FROM cadrage_items WHERE classification = 'rework'
         AND created_at::timestamptz >= now() - ($1 || ' days')::interval
       GROUP BY 1
     `, [days])).rows;

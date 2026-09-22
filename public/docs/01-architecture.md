@@ -37,7 +37,7 @@ into several **plans** executed in parallel, each with its own lifecycle).
 | **Décision** | Decision | Un point de validation humaine (validation de plan, review, recette, permission). |
 | **Session** | Session | Une session opencode (agent) lancée/détachée pour traiter la tâche. |
 | **Worktree** | Worktree | Un checkout git isolé, créé/supprimé par l'agent exécutant (via `session-guard`). |
-| **Recette** | Acceptance | Opération de vérification d'une tâche terminée (v0.7.0) : session dédiée `agent-recette`, éléments consolidés (rework/bug/improvement/feature), confirmation → nouvelles tâches liées. La tâche initiale reste intacte. |
+| **Recette** | Acceptance | Opération de vérification d'une tâche terminée (v0.7.0) : session dédiée `agent-cadrage`, éléments consolidés (rework/bug/improvement/feature), confirmation → nouvelles tâches liées. La tâche initiale reste intacte. |
 | **ADR structurée** | Structured ADR | Décision d'architecture persistée (`artifacts.doc_type='adr'`) : **statut** (Proposé/Accepté/Déprécié/Remplacé), **contexte**, **décision**, **conséquences** ; rattachée à un projet + **1..N repos** (ADR globale possible) ; **pièces jointes 0..N**. Voir `13-adr-et-artefacts.md`. |
 | **Artefact** | Artifact | Document/livrable **polymorphe** de la table `artifacts`, identifié par (`doc_type`, `content_id`) ; `kind` = nature. Porte plans, rapports, audits, ADR, pièces jointes, preuves E2E… |
 | **Point de vigilance ADR** | ADR vigilance point | Constat **bloquant** remonté en recette/test (ADR manquante / conflit d'ADR), levé de façon **tracée** (raison obligatoire). |

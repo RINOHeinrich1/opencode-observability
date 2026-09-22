@@ -4,7 +4,7 @@
 > Un projet peut être associé à **un ou plusieurs documents de référence**, de
 > même qu'un repo. Il n'y a PAS de contenu en base : un document est un **chemin
 > de fichier** (workspace Coder / checkout) que les agents LISENT en contexte
-> (test-agent à la création d'un test E2E, agent-recette en début de recette).
+> (test-agent à la création d'un test E2E, agent-cadrage en début de cadrage).
 
 ---
 
@@ -69,13 +69,13 @@ cocher au lancement :
    défaut) → bloc **« ADR de référence »** injecté dans le prompt de session ; le
    test-agent **lit** les fichiers ADR avant d'écrire le spec. Les documents
    ADR-12 (specs/Gherkin) restent consultables via `doc_list`.
-2. **Recette** (session agent-recette) : à la création d'une recette, **trois
+2. **Cadrage** (session agent-cadrage) : à la création d'un cadrage, **trois
    sélecteurs de contexte** multi-lignes (toutes les options cochées par défaut) —
    **ADR** (`adrIds`), **Fonctionnalités** (`featureIds`) et **Règles métier**
-   (`ruleIds`). Les sélections sont **rattachées à la recette**
-   (`recette_adr` / `recette_fonctionnalites` / `recette_regles`) et injectées dans
+   (`ruleIds`). Les sélections sont **rattachées au cadrage**
+   (`cadrage_adr` / `cadrage_fonctionnalites` / `cadrage_regles`) et injectées dans
    le prompt (blocs « ADR de référence » / « Fonctionnalités de référence » /
-   « Règles métier de référence ») ; l'agent-recette les lit pour confronter le
+   « Règles métier de référence ») ; l'agent-cadrage les lit pour confronter le
    constat réel à l'architecture et aux règles. Il peut aussi les consulter via
    `adr_list` / `feature_list` / `rule_list`.
 
@@ -95,9 +95,9 @@ cocher au lancement :
 - `project_list` / `project_get` → `projects[].docs` (docs du projet + de ses
   repos) ; `repo_get` / `repo_list` → `repos[].docs` ; `e2e_test_get` →
   `test.docs` (docs du projet du test).
-- `recette_doc_add` accepte un `path` existant (les docs de référence sélectionnés
-  y sont attachés ; stockés en `artifacts`, `doc_type` = `recette_doc` /
-  `recette_report`).
+- `cadrage_doc_add` accepte un `path` existant (les docs de référence sélectionnés
+  y sont attachés ; stockés en `artifacts`, `doc_type` = `cadrage_doc` /
+  `cadrage_report`).
 
 ## 5. Panel
 
@@ -110,7 +110,7 @@ cocher au lancement :
 - Création de test via agent : **sélecteur ADR** multi-lignes (contexte
   « ADR de référence »).
 - Création de recette : **sélecteurs ADR + Fonctionnalités + Règles métier**
-  multi-lignes (contexte de l'`agent-recette`).
+  multi-lignes (contexte de l'`agent-cadrage`).
 
 ### Sélection du contexte (sélecteurs multi-lignes)
 

@@ -118,7 +118,7 @@ export async function sessionExistsById(sessionId) {
 
 // Résout le sessionId via le titre demandé (fallback en cas d'échec de capture du
 // flux). NE retourne JAMAIS une session arbitraire (`sessions[0]`) : cela risquait
-// de rattacher une recette/tâche/test à un ID sans rapport (ghost), cassant le
+// de rattacher un cadrage/tâche/test à un ID sans rapport (ghost), cassant le
 // lien de reprise et le deep-link du panneau. Sans correspondance de titre exacte
 // → null (l'appelant échouera proprement au lieu de persister un mauvais ID).
 function latestSessionId(title, dir) {
@@ -243,7 +243,7 @@ export function injectMessage({ sessionId, prompt, dir }) {
  * Arrête la session opencode d'une tâche : tue les processus `opencode run`
  * associés (headless) MAIS CONSERVE l'enregistrement de session (lien et
  * consommation restent consultables). Utilisé par le bouton « Tuer la session »
- * du panneau et par l'approbation de recette (v0.6.3 : plus aucune suppression).
+ * du panneau et par l'approbation de cadrage (v0.6.3 : plus aucune suppression).
  * La suppression d'une session (`opencode session delete`) n'est JAMAIS faite ici.
  */
 export function killSession({ taskId, sessionId }) {
@@ -331,13 +331,12 @@ export function buildReworkPrompt({ taskId, remarks, by }) {
  * Prompt d'ouverture d'une session de CADRAGE TECHNIQUE (agent `agent-cadrage`,
  * terminologie « cadrage technique » — ADR-001) — v0.9.1.
  * Le cadrage technique est un objet de PROJET (titre + 0..N tâches couvertes) :
- * il conserve le workflow historique de la recette (contexte + code réel →
+ * il conserve le workflow historique du cadrage technique (contexte + code réel →
  * éléments → liste de tâches techniques). Mission + cadre, jamais méthode.
- * NB : les outils MCP `recette_*` gardent leur nom (contrat `pilot.mjs`/
+ * NB : les outils MCP `cadrage_*` gardent leur nom (contrat `pilot.mjs`/
  * `server.mjs`) — seule la terminologie du prompt et l'agent changent.
- * Rétrocompat : exporté aussi sous l'alias `buildRecettePrompt`.
  */
-export function buildCadragePrompt({ project, repos, title, taskIds, docs = [], adrContext = "", featureContext = "", ruleContext = "", evaluationItems = [] }) {
+export function buildCadragePrompt({ project, repos, title, taskIds, docs = [], adrContext = "", featureContext = "", ruleContext = "", recetteItems = [] }) {
   const proj = (project && String(project).trim()) || "";
   const repoBlock = (repos && repos.length)
     ? `  Repos transverses du projet (portée réelle — ADR 11) : ${repos.map((x) => x.repoId || x.id || x).join(", ")}`
@@ -369,12 +368,12 @@ export function buildCadragePrompt({ project, repos, title, taskIds, docs = [], 
   // exécuteur) : éléments marqués « à traiter » par l'admin et REPRIS dans ce
   // cadrage. L'exécuteur produit les tâches techniques À PARTIR de ces éléments
   // (plus de conversion automatique des recettes évaluateur en tâches).
-  const evalItemBlock = (evaluationItems && evaluationItems.length)
+  const evalItemBlock = (recetteItems && recetteItems.length)
     ? [
         "",
         "## Éléments de recette évaluateur repris en contexte",
         "Ces éléments proviennent de recettes de l'ÉVALUATEUR produit, ont été marqués « à traiter » par l'admin et sont REPRIS dans ce cadrage technique. Traite-les comme ENTRÉE du cadrage (ce ne sont PAS des tâches) :",
-        ...evaluationItems.map((it, i) => {
+        ...recetteItems.map((it, i) => {
           const pieces = (it.pieces || it.documents || []).map((p) => p.title || p.path || p.documentId).filter(Boolean);
           const piecesStr = pieces.length ? ` — pièces : ${pieces.join(", ")}` : "";
           return `  ${i + 1}. [${it.category || "élément"}/${it.severity || "?"}] (item ${it.itemId}) ${String(it.content || "").trim()}${piecesStr}`;
@@ -387,7 +386,7 @@ export function buildCadragePrompt({ project, repos, title, taskIds, docs = [], 
     `Ouvre le cadrage technique **« ${title || proj} »** — projet : \`${proj}\`${repoBlock ? `\n${repoBlock}` : ""} (v0.9.0).`,
     "",
     taskIds && taskIds.length ? `Tâches couvertes par ce cadrage technique : ${taskIds.join(", ")}.` : "Ce cadrage technique ne couvre aucune tâche (parcours global / exploratoire).",
-    "Un cadrage technique = **un seul projet** (produit). Sa portée réelle est couverte par les **repos transverses du projet** (ex: le projet mada-talk traverse les repos mada-talk et oniria). Chaque élément de cadrage relevé est rattaché au **projet du cadrage** (la future tâche y sera créée) — le `project` de `recette_item_add` doit être le projet du cadrage, jamais un repo transverse.",
+    "Un cadrage technique = **un seul projet** (produit). Sa portée réelle est couverte par les **repos transverses du projet** (ex: le projet mada-talk traverse les repos mada-talk et oniria). Chaque élément de cadrage relevé est rattaché au **projet du cadrage** (la future tâche y sera créée) — le `project` de `cadrage_item_add` doit être le projet du cadrage, jamais un repo transverse.",
     "Les tâches couvertes restent HISTORIQUEMENT INTACTES : tu ne les modifies jamais (aucune transition, aucun rework direct).",
     ...adrBlock,
     ...featureBlock,
@@ -395,20 +394,15 @@ export function buildCadragePrompt({ project, repos, title, taskIds, docs = [], 
     ...docBlock,
     ...evalItemBlock,
     "Mission :",
-    "- Récupère le contexte : `recette_get(<recetteId>)` (titre, projet, repos transverses, tâches couvertes, éléments), et pour chaque tâche couverte `task_get` (plans, commits, artefacts, tâches liées), `artifact_list`, `events_list`.",
+    "- Récupère le contexte : `cadrage_get(<cadrageId>)` (titre, projet, repos transverses, tâches couvertes, éléments), et pour chaque tâche couverte `task_get` (plans, commits, artefacts, tâches liées), `artifact_list`, `events_list`.",
     "- Accompagne l'utilisateur dans la vérification du périmètre : réponds à ses questions, aide-le à comprendre ce qui a été réalisé.",
-    "- Enregistre chaque élément de cadrage détecté via `recette_item_add` avec **classification** (`rework`/`bug`/`improvement`/`feature`), **project** (= projet du cadrage), **scope** (chemins), **titre court** et **critère d'acceptation** (ce qui permettra de considérer la tâche créée comme terminée).",
+    "- Enregistre chaque élément de cadrage détecté via `cadrage_item_add` avec **classification** (`rework`/`bug`/`improvement`/`feature`), **project** (= projet du cadrage), **scope** (chemins), **titre court** et **critère d'acceptation** (ce qui permettra de considérer la tâche créée comme terminée).",
     "- Regroupe les remarques liées ; **ne crée AUCUNE tâche pendant la discussion** (les tâches seront créées à la confirmation finale, via le panneau).",
     "- Prépare la synthèse consolidée des éléments de cadrage (type + action + projet) pour la présenter à l'utilisateur.",
     "",
     "Cadre : session dédiée au cadrage technique ; l'utilisateur déclenchera « Terminer le cadrage » puis confirmera la liste.",
   ].join("\n");
 }
-
-// Rétrocompatibilité : `buildRecettePrompt` était le nom historique du prompt de
-// cadrage technique (avant la scission cadrage/évaluation, ADR-001). Alias
-// conservé pour ne casser aucun appelant (`pilot.mjs`, tests…).
-export const buildRecettePrompt = buildCadragePrompt;
 
 /**
  * Prompt d'ouverture d'une session d'ÉVALUATION PRODUIT (agent-recette
@@ -422,7 +416,7 @@ export const buildRecettePrompt = buildCadragePrompt;
  * LES TESTS E2E disponibles. La recette évaluateur N'EST JAMAIS convertie en
  * tâches : les éléments « à traiter » sont repris par un cadrage technique.
  */
-export function buildEvaluationPrompt({ evaluationId, project, repos, title, description, docs = [], adrContext = "", featureContext = "", ruleContext = "", featureIds = [], ruleIds = [] }) {
+export function buildRecettePrompt({ recetteId, project, repos, title, description, docs = [], adrContext = "", featureContext = "", ruleContext = "", featureIds = [], ruleIds = [] }) {
   const proj = (project && String(project).trim()) || "";
   const repoBlock = (repos && repos.length)
     ? `  Repos transverses du projet (portée réelle — ADR 11) : ${repos.map((x) => x.repoId || x.id || x).join(", ")}`
@@ -450,7 +444,7 @@ export function buildEvaluationPrompt({ evaluationId, project, repos, title, des
     : [];
   return [
     `Ouvre la recette d'ÉVALUATION PRODUIT **« ${title || proj} »** — projet : \`${proj}\`${repoBlock ? `\n${repoBlock}` : ""} (v0.1.1).`,
-    evaluationId ? `Recette : \`${evaluationId}\`.` : "",
+    recetteId ? `Recette : \`${recetteId}\`.` : "",
     "",
     description ? `Parcours évalué : ${description}` : "Parcours évalué : à préciser avec l'utilisateur.",
     "",
@@ -461,15 +455,15 @@ export function buildEvaluationPrompt({ evaluationId, project, repos, title, des
     ...ruleBlock,
     ...docBlock,
     "Mission :",
-    "- Récupère le contexte : `evaluation_get(<evaluationId>)` (titre, projet, fonctionnalités + verdicts, règles, éléments, pièces), `feature_list`/`rule_list` du projet, `e2e_list` pour les tests E2E disponibles.",
+    "- Récupère le contexte : `recette_get(<recetteId>)` (titre, projet, fonctionnalités + verdicts, règles, éléments, pièces), `feature_list`/`rule_list` du projet, `e2e_list` pour les tests E2E disponibles.",
     "- Accompagne l'utilisateur dans l'évaluation du parcours : réponds à ses questions, aide-le à confronter le réalisé au besoin.",
-    "- Enregistre chaque constat via `evaluation_item_add` (catégorie `recommandation`/`probleme`, sévérité, contenu, discussion). La DÉCISION « à traiter » reste ADMIN (`evaluation_item_decision`), tu ne décides pas.",
-    "- Rattache les fonctionnalités (`evaluation_feature_link`) et règles métier (`evaluation_rule_link`) évaluées, puis pose les verdicts (`evaluation_verdict_set` : conforme | non_conforme | a_ameliorer).",
-    "- Dépose les pièces via `evaluation_doc_add` (lien | document | photo | vidéo) — `itemId` pour rattacher une pièce à un ÉLÉMENT précis.",
+    "- Enregistre chaque constat via `recette_item_add` (catégorie `recommandation`/`probleme`, sévérité, contenu, discussion). La DÉCISION « à traiter » reste ADMIN (`recette_item_decision`), tu ne décides pas.",
+    "- Rattache les fonctionnalités (`recette_feature_link`) et règles métier (`recette_rule_link`) évaluées, puis pose les verdicts (`recette_verdict_set` : conforme | non_conforme | a_ameliorer).",
+    "- Dépose les pièces via `recette_doc_add` (lien | document | photo | vidéo) — `itemId` pour rattacher une pièce à un ÉLÉMENT précis.",
     "",
     "Outils MAQUETTE & PERFORMANCE (ADR-003) :",
-    "- `evaluation_maquette_add` : GÉNÈRE une MAQUETTE HTML/CSS/JS avec données mock pour la fonctionnalité évaluée. Fournis `files` = liste de { path, content } (ex. index.html, style.css, app.js) et `entry` (défaut index.html). L'outil écrit les fichiers et renvoie une **URL** servie par le panneau comme PAGE STATIQUE (`/api/evaluations/<evaluationId>/maquette/<slug>/index.html`) : cette URL est rattachable à un élément (`itemId`) comme pièce `maquette`.",
-    "- `evaluation_perf_run` : lance des **TESTS STANDARD** sur la cible PRÉPROD (`url` http/https) — **distincts des tests E2E Playwright**. Couvre : (1) **parcours de pages** (`pages` optionnel : URLs supplémentaires, ≤ 10 ; défaut `url`) avec informations réseau (durées/requêtes/types/tailles, compression, timings TTFB/DCL/load) ET capture des **erreurs console** (warnings, exceptions JS) + **erreurs réseau** (4xx/5xx, DNS, timeouts) ; (2) **Core Web Vitals** (LCP < 2,5 s, INP < 200 ms, CLS < 0,1) + long tasks > 50 ms + temps d'exécution JS ; (3) **STRESS TEST des routes d'API** (`routes` optionnel : chaînes relatives à `baseUrl` ou absolues, ex. `/api/health`, ou objets `{ path, method? }` ; ≤ 20 ; défaut `url`) — accès parallèles bornés : débit req/s, latence moy/p50/p95/p99, taux d'erreurs, **par route** + agrégat. Fournis `repoDir` (checkout applicatif contenant Playwright, ex. `/root/mada-talk-preprod`) pour les Core Web Vitals et la capture console ; sans Playwright, la mesure réseau/stress se fait via fetch. Le stress est BORNÉ (routes ≤ 20, concurrency ≤ 10, requests ≤ 200) : reste prudent pour ne pas dégrader la préprod. Le rapport (avec les **preuves** d'erreurs console/réseau et le détail par route) est rattaché à la recette comme pièce `performance` (rattachable à un élément via `itemId`, ou à un test Playwright via `e2eTestId`).",
+    "- `recette_maquette_add` : GÉNÈRE une MAQUETTE HTML/CSS/JS avec données mock pour la fonctionnalité évaluée. Fournis `files` = liste de { path, content } (ex. index.html, style.css, app.js) et `entry` (défaut index.html). L'outil écrit les fichiers et renvoie une **URL** servie par le panneau comme PAGE STATIQUE (`/api/recettes/<recetteId>/maquette/<slug>/index.html`) : cette URL est rattachable à un élément (`itemId`) comme pièce `maquette`.",
+    "- `recette_perf_run` : lance des **TESTS STANDARD** sur la cible PRÉPROD (`url` http/https) — **distincts des tests E2E Playwright**. Couvre : (1) **parcours de pages** (`pages` optionnel : URLs supplémentaires, ≤ 10 ; défaut `url`) avec informations réseau (durées/requêtes/types/tailles, compression, timings TTFB/DCL/load) ET capture des **erreurs console** (warnings, exceptions JS) + **erreurs réseau** (4xx/5xx, DNS, timeouts) ; (2) **Core Web Vitals** (LCP < 2,5 s, INP < 200 ms, CLS < 0,1) + long tasks > 50 ms + temps d'exécution JS ; (3) **STRESS TEST des routes d'API** (`routes` optionnel : chaînes relatives à `baseUrl` ou absolues, ex. `/api/health`, ou objets `{ path, method? }` ; ≤ 20 ; défaut `url`) — accès parallèles bornés : débit req/s, latence moy/p50/p95/p99, taux d'erreurs, **par route** + agrégat. Fournis `repoDir` (checkout applicatif contenant Playwright, ex. `/root/mada-talk-preprod`) pour les Core Web Vitals et la capture console ; sans Playwright, la mesure réseau/stress se fait via fetch. Le stress est BORNÉ (routes ≤ 20, concurrency ≤ 10, requests ≤ 200) : reste prudent pour ne pas dégrader la préprod. Le rapport (avec les **preuves** d'erreurs console/réseau et le détail par route) est rattaché à la recette comme pièce `performance` (rattachable à un élément via `itemId`, ou à un test Playwright via `e2eTestId`).",
     "- Tests E2E : liste-les avec `e2e_list` et lance-les avec `e2e_run` (`e2eTestId`, `origin='recette'`) — tu peux les rattacher à la recette et associer une mesure de performance via `e2eTestId`.",
     "",
     "Cadre : session dédiée à l'évaluation produit ; l'utilisateur clôturera la recette (« Terminer la recette »). Aucune création de tâche, aucune modification d'une recette qui n'est pas la tienne.",
@@ -530,12 +524,12 @@ export function buildSprintPrompt({ sprintId, project, repos, title, startDate, 
     ...pieceBlock,
     ...docBlock,
     "Mission :",
-    "- Récupère le contexte : `sprint_get(<sprintId>)` (sprint, pièces client, fonctionnalités/règles déjà enregistrées, tâches et recettes rattachées), `feature_list({ projectId })` / `rule_list({ projectId })` (inventaire AVANT de proposer, éviter les doublons), `doc_list({ projectId, includeRepoDocs: true })` (documents de référence).",
+    "- Récupère le contexte : `sprint_get(<sprintId>)` (sprint, pièces client, fonctionnalités/règles déjà enregistrées, tâches et cadrages rattachées), `feature_list({ projectId })` / `rule_list({ projectId })` (inventaire AVANT de proposer, éviter les doublons), `doc_list({ projectId, includeRepoDocs: true })` (documents de référence).",
     "- **Pipeline** : (1) LIRE les pièces client et en faire la synthèse (déjà en place / à faire / ambigu) → (2) DIALOGUER avec l'utilisateur (confirmations, clarifications — admin dans un premier temps) → (3) PROPOSER fonctionnalités (`US-xxx`) et règles métier (`RM-xxxx`) → (4) REMPLIR après validation.",
     "- **Remplissage** via le MCP : `feature_register` / `rule_register` (avec `sourcedPieceId` = pièce SOURCE), liaisons `feature_rule_link`, rattachements `feature_sprint_link` / `rule_sprint_link` ; corrections via `feature_update` / `rule_update`. Le registre calcule lui-même l'ÉMERGENCE.",
     "- **Distinguer « déjà en place » vs « à faire »** : ne génère JAMAIS une fonctionnalité pour un comportement existant (vérifie `feature_list`/`rule_list` + documents de référence + ADR Accepté). En cas de doute : `question` avant d'écrire.",
-    "- **N'écris JAMAIS d'ADR** (interdit) : les ADR restent à la charge des utilisateurs lors des recettes. Tu peux au plus CITER une ADR existante (`adr_list`/`adr_get`).",
-    "- **Émergents** (tâches sans fonctionnalité, règles apparues en recette, pièces après clôture) : SIGNALÉS et TRACÉS par le registre, JAMAIS bloqués. `cardinality_report` / `cardinality_signals_list` sont informatifs ; leur résolution est une décision humaine tracée.",
+    "- **N'écris JAMAIS d'ADR** (interdit) : les ADR restent à la charge des utilisateurs lors des cadrages. Tu peux au plus CITER une ADR existante (`adr_list`/`adr_get`).",
+    "- **Émergents** (tâches sans fonctionnalité, règles apparues en cadrage, pièces après clôture) : SIGNALÉS et TRACÉS par le registre, JAMAIS bloqués. `cardinality_report` / `cardinality_signals_list` sont informatifs ; leur résolution est une décision humaine tracée.",
     "- Ne crée aucune tâche, aucun test, aucun code : tu remplis les Fonctionnalités et Règles métier du sprint, rien d'autre.",
     "",
     "Cadre : session dédiée au sprint ; à la fin, résume ce qui a été lu, ce qui est « déjà en place », les fonctionnalités/règles proposées puis créées (refs + pièces sources), les émergents signalés et les questions restantes.",
@@ -603,7 +597,7 @@ export function buildMigrationPrompt({ migrationId, project, repos, sprintId, ti
     "- **Pipeline** : (1) LIRE chaque ADR monolithique et repérer les DÉCISIONS DISTINCTES → (2) PROPOSER un découpage en ADR atomiques (titre/statut/contexte/décision/conséquences + pièces jointes pour les détails + fonctionnalités associées) → (3) FAIRE VALIDER EXPLICITEMENT par l'utilisateur (`question`) → (4) ÉCRIRE seulement après validation.",
     "- **Conversion sans perte** : `adr_convert({ originalAdrId, title, status, context, decision, consequences, attachments })`. L'ADR d'origine reste INTACTE ; le lien historique est écrit dans `adr_conversions`. Les grands détails passent en PIÈCES JOINTES (`adr_attach` / `doc_attachment_add` → `adr_file`) — jamais supprimés.",
     "- **ADR ↔ fonctionnalités** : associe CHAQUE ADR convertie à 1..N fonctionnalités (`feature_adr_link`), existantes ou créées après validation (`feature_register`). Ne laisse jamais une ADR convertie sans fonctionnalité (garde de cardinalité T1).",
-    "- **Rattachement à l'ancien sprint** : `sprint_migrate_elements({ projectId })` — INSERT directs et idempotents pour les pièces client, fonctionnalités, règles métier, anciennes tâches et recettes. N'appelle **JAMAIS** `sprint_attach_pieces` (il écrit `meta.emergent`).",
+    "- **Rattachement à l'ancien sprint** : `sprint_migrate_elements({ projectId })` — INSERT directs et idempotents pour les pièces client, fonctionnalités, règles métier, anciennes tâches et cadrages. N'appelle **JAMAIS** `sprint_attach_pieces` (il écrit `meta.emergent`).",
     "- **AUCUN FAUX ÉMERGENT (règle absolue)** : n'écris JAMAIS `emergent`/`emergent_origin` sur un élément hérité. Les anciennes tâches sont associées à l'ancien sprint SANS être marquées émergentes ; tu peux les lier à leur fonctionnalité (`task_feature_link`) et proposer leur ADR (`task_adr_propose` → validation humaine `task_adr_validate`).",
     "- **Clôture** : `migration_finish({ migrationId, status: 'done' })` quand la migration du projet est terminée et validée. Vérifie ensuite `cardinality_report({ projectId })` : aucun NOUVEAU signal d'émergence sur les éléments hérités.",
     "- Ne crée aucune tâche, aucun test, aucun code : tu convertis les ADR et tu rattaches l'existant, rien d'autre.",
@@ -704,7 +698,7 @@ export function buildBatchSessionPrompt({ batch, tasksDetail, repos }) {
   const line = [];
   line.push(`Pilote le **batch d'orchestration ${b.batchId || "?"}** — « ${b.title || ""} » (projet ${b.project || "?"}) en MODE SESSION UNIQUE.`);
   line.push("");
-  line.push(`Le batch couvre ${tasks.length} tâche(s) issues de ${b.recetteId ? "la recette " + b.recetteId : "un regroupement ad-hoc"}. Tu es l'**unique session d'orchestration** de ce batch : les tâches sont exécutées en ordonnancement par TOI (délégation aux agents de fond), pas par des sessions par tâche.`);
+  line.push(`Le batch couvre ${tasks.length} tâche(s) issues de ${b.cadrageId ? "le cadrage " + b.cadrageId : "un regroupement ad-hoc"}. Tu es l'**unique session d'orchestration** de ce batch : les tâches sont exécutées en ordonnancement par TOI (délégation aux agents de fond), pas par des sessions par tâche.`);
   line.push("");
   line.push("Règles d'orchestration du batch :");
   line.push(`- Ne lance JAMAIS plus de ${b.maxParallel || 2} tâches en cours simultanément (plafond de parallélisme).`);

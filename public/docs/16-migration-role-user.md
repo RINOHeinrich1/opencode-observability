@@ -15,7 +15,7 @@
 ADR-002 a introduit **quatre rôles** (`admin`, `supervisor`, `evaluateur`,
 `executeur`). Le rôle historique `user` (ni évaluateur, ni exécuteur) est devenu
 **ambigu** : il « peut créer/agir » et ne voit que ses propres créations, sans
-recouvrir un périmètre fonctionnel clair. La recette `RECT-mucf1s9n-qdmv` a acté
+recouvrir un périmètre fonctionnel clair. Le cadrage `CT-mucf1s9n-qdmv` (ex-`RECT-…`) a acté
 sa suppression **à terme**, avec **migration obligatoire** des comptes existants
 — notamment **Ronald → Exécuteur**.
 

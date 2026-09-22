@@ -20,15 +20,15 @@ les tâches, sans jamais écrire directement dans le registre.
 
 **Onglets** — *globaux* (aucun projet ouvert, `GLOBAL_TABS`) : Projets,
 Vue d'ensemble, Écosystème, Workspaces (admin), Utilisateurs (admin). *D'un
-projet ouvert* (`PROJECT_TABS`) : Vue d'ensemble, Tâches, Recettes, **Recette**
-(évaluateur — id de code `evaluations`), Tests E2E, Décisions, **Artefacts**,
+projet ouvert* (`PROJECT_TABS`) : Vue d'ensemble, Tâches, Cadrages, **Recette**
+(évaluateur — id de code `recettes`), Tests E2E, Décisions, **Artefacts**,
 **ADR**, **Sprints**, **Fonctionnalités & Règles**, Vars & Secrets E2E, Archives.
 
-> **Deux entités distinctes** (ADR-001) : l'onglet **Recettes** (`recettes`) porte
+> **Deux entités distinctes** (ADR-001) : l'onglet **Cadrages** (`cadrages`) porte
 > le **Cadrage technique** (exécuteur) ; le nouvel onglet **Recette**
-> (id de code **`evaluations`**, libellé UI « Recette ») porte la **recette de
+> (id de code **`recettes`**, libellé UI « Recette ») porte la **recette de
 > l'ÉVALUATEUR PRODUIT** — objet de premier niveau distinct, sans conversion en
-> tâches. Ne pas confondre les identifiants de code (`recettes` vs `evaluations`).
+> tâches. Ne pas confondre les identifiants de code (`cadrages` vs `recettes`).
 
 > Les onglets **Déploiements**, **Événements** et **Plans** ne figurent plus dans
 > la barre : ils sont accessibles via la section **« Consulter »** du **modal de
@@ -37,7 +37,7 @@ projet ouvert* (`PROJECT_TABS`) : Vue d'ensemble, Tâches, Recettes, **Recette**
 
 **Modèle Sprint / Fonctionnalités / Règles (ADR-001)** :
 - Onglet **Vue d'ensemble** : **cartes de cardinalité cliquables** (`CARDINALITY_CARDS`)
-  — 10 indicateurs (Tâches/Recettes sans ADR, sans fonctionnalité, sans sprint ;
+  — 10 indicateurs (Tâches/Cadrages sans ADR, sans fonctionnalité, sans sprint ;
   ADR sans fonctionnalité ; Sprints sans fonctionnalité, sans règle ; Éléments
   émergents). Un clic ouvre l'onglet cible avec le **filtre pré-appliqué**. Le
   panneau lit l'agrégat `GET /api/cardinality` (source de vérité = registre) et
@@ -70,14 +70,14 @@ uniquement. L'onglet **« Documents de référence » a été retiré** (doublon
 deep-link `docs` retombe sur « Projet ». Voir
 [`12-documents-reference-projets-repos.md`](12-documents-reference-projets-repos.md) §5.
 
-**Création de recette — sélecteurs de contexte** : la modale propose des
+**Création de cadrage — sélecteurs de contexte** : la modale propose des
 sélecteurs multi-lignes (toutes les options cochées par défaut) pour les **ADR**
 (`adrIds` → bloc « ADR de référence »), les **Fonctionnalités** (`featureIds` →
 bloc « Fonctionnalités de référence ») et les **Règles métier** (`ruleIds` → bloc
-« Règles métier de référence ») ; ils sont rattachés à la recette et injectés dans
-le prompt de la session `agent-recette`.
+« Règles métier de référence ») ; ils sont rattachés au cadrage et injectés dans
+le prompt de la session `agent-cadrage`.
 
-**Page « Recette » de l'évaluateur produit (v0.9.42, onglet `evaluations`)** :
+**Page « Recette » de l'évaluateur produit (v0.9.42, onglet `recettes`)** :
 page **dédiée** à l'**évaluateur** (`ROLE_ACL.evaluateur`), **distincte** du
 Cadrage technique. L'évaluateur y **décrit le parcours évalué**, **rattache 1..N
 fonctionnalités** (le **verdict** — `conforme` / `non_conforme` / `a_ameliorer` —
@@ -86,15 +86,15 @@ est porté par le lien, au niveau de la fonctionnalité) **et 1..N règles méti
 statut de suivi) et **joint des pièces** (lien, document, photo, vidéo). Cycle de
 vie conservé : `pending` → `in_progress` → `done` — **aucune conversion en
 tâches**. **Visibilité** (ADR-002) : l'évaluateur ne voit que **SES** recettes
-(filtre `recetteOwnerScope` sur `evaluations.created_by`) ; admin/superviseur
+(filtre `recetteOwnerScope` sur `recettes.created_by`) ; admin/superviseur
 voient **toutes** les recettes (superviseur en lecture seule) ; l'**exécuteur**
-les voit en **lecture seule** (`/api/evaluations` en GET). Modales : création
+les voit en **lecture seule** (`/api/recettes` en GET). Modales : création
 (parcours + fonctionnalités + règles + pièces), détail (éléments + verdicts +
 pièces), élément, pièces.
 
 **Observabilité** (v0.2.0 → v0.4.0) : dashboard KPI système (Flow ·
 Orchestration · Agents · Quality) — KPI cards (Lead Time P50/moyen/P95, Cycle
-Time, Success Rate = done + recette approuvée, Throughput, Rework), graphiques
+Time, Success Rate = done + cadrage approuvé, Throughput, Rework), graphiques
 Chart.js (vendu localement), waterfall des phases, blocages par raison,
 table de performance des agents, coûts/tokens, funnel qualité. Endpoints :
 `GET /api/metrics/*` (voir `05-reference.md` §3).
@@ -107,11 +107,11 @@ table de performance des agents, coûts/tokens, funnel qualité. Endpoints :
 | `reworkTask` | Reprise après rejet (continuer / nouvelle session, session + remarques préremplies) |
 | `killTaskSession` | Tuer la session + abandonner la tâche |
 | `relaunchTask` | Relancer une tâche abandonnée |
-| `resolveRecette` | Valider/rejeter la recette |
+| `resolveCadrage` | Valider/rejeter le cadrage |
 | `resolveDecision` | Approuver/rejeter une décision (**réveille la session orchestrateur**) |
 | `createProject` | Créer un projet (**branche principale obligatoire** + répertoire créé dans le workspace) |
-| `launchRecetteSession` | Lancer/rejoindre la session dédiée `agent-recette` (v0.7.0) |
-| `finishRecette` | « Terminer la recette » : créer les tâches (par élément classifié) + confirmer |
+| `launchCadrageSession` | Lancer/rejoindre la session dédiée `agent-cadrage` (v0.7.0) |
+| `finishCadrage` | « Terminer le cadrage » : créer les tâches (par élément classifié) + confirmer |
 
 **Session bridge** (`session-bridge.mjs`) : lance une session opencode détachée
 (`opencode run --agent <agent> --model <model> --attach http://127.0.0.1:4096`) et
@@ -132,7 +132,7 @@ les agents, ne modifie jamais le code du projet lui-même.
 6. Déléguer à `build-notify` (exécution, par plan).
 7. Review humaine (`decision_request` kind `review`).
 8. Merge + déploiement CI/CD (par plan).
-9. Clôture + recette.
+9. Clôture + cadrage.
 
 **Principes** : mission ≠ méthode ; il décide des transitions, les agents publient des
 événements ; il pilote **par plan** (`plan_transition`) pour le cycle fin.
@@ -143,7 +143,7 @@ les agents, ne modifie jamais le code du projet lui-même.
 |---|---|---|
 | `atomic-plan` | Planification à granularité atomique (produit des `Plan-*.md`) | read-only (édition restreinte à plans/reports) |
 | `build-notify` | Exécution des plans + traçabilité (événements, artefacts, commits) | pleine (isolation Coder + worktree) |
-| `agent-recette` | Recette : accompagne la vérification, enregistre les éléments (classifiés), prépare la synthèse (v0.7.0) | read-only (inspection) |
+| `agent-cadrage` | Cadrage : accompagne la vérification, enregistre les éléments (classifiés), prépare la synthèse (v0.7.0) | read-only (inspection) |
 | `hexagonal-architecture-auditor` | Audit architecture backend (hexagonale/DDD) | read-only |
 | `clean-arch-detector-react` | Audit architecture frontend (feature-based) | read-only |
 
@@ -168,16 +168,16 @@ Git.
   `deployments`, `decisions`, `participants`, **`artifacts`** (gestionnaire central
   polymorphe) + `artifact_projects` / `artifact_repos`, `plans`, `plan_steps`,
   `plan_incidents`, `plan_inconsistencies`, `plan_counters`, `plan_executions`,
-  `plan_commits`, `recettes`, `recette_items`, `recette_tasks`, `e2e_tests`,
-  **`evaluations`**, **`evaluation_fonctionnalites`** (verdict par fonctionnalité),
-  **`evaluation_regles`**, **`evaluation_items`** (recommandation/problème),
+  `plan_commits`, `cadrages`, `cadrage_items`, `cadrage_tasks`, `e2e_tests`,
+  **`recettes`**, **`recette_fonctionnalites`** (verdict par fonctionnalité),
+  **`recette_regles`**, **`recette_items`** (recommandation/problème),
   `e2e_test_projects` / `e2e_test_repos` / `e2e_test_params` / `e2e_vars`,
   `task_e2e`, `e2e_executions`, **`adr_conflicts`**, **`adr_vigilances`**,
   **`sprints`**, **`fonctionnalites`**, **`regles_metier`**, **`cardinality_signals`**,
-  **`migrations`**, **`adr_conversions`**, **`recette_regles`**, **`task_adr`**,
+  **`migrations`**, **`adr_conversions`**, **`cadrage_regles`**, **`task_adr`**,
   `sprint_fonctionnalites` / `sprint_regles` / `sprint_pieces`, `fonctionnalite_regles`
   / `fonctionnalite_gherkin` / `fonctionnalite_adr`, `task_sprints` /
-  `task_fonctionnalites`, `recette_sprints` / `recette_fonctionnalites` / `recette_adr`.
+  `task_fonctionnalites`, `cadrage_sprints` / `cadrage_fonctionnalites` / `cadrage_adr`.
 - **Machines à états** : tâche (phases grossières) + plan (cycle complet) + **ADR**
   (`Proposé → Accepté → Déprécié → Remplacé`) — voir `05-reference.md`.
 
@@ -199,14 +199,14 @@ lien sprint, `roles`/`role_global`), `migration_*` (`migration_start`/`_get`/`_l
 `_finish`/`_session_set`), `adr_conversion_*` (`adr_convert`,
 `adr_conversion_link`, `adr_conversion_list`), `cardinality_*`
 (`cardinality_report`, `cardinality_signals_list`, `cardinality_signal_resolve`),
-`recette_rule_link`/`recette_rule_unlink` (et `recette_feature_link` /
-`recette_adr_link` / `recette_sprint_link`). Voir
+`cadrage_rule_link`/`cadrage_rule_unlink` (et `cadrage_feature_link` /
+`cadrage_adr_link` / `cadrage_sprint_link`). Voir
 [`13-adr-et-artefacts.md`](13-adr-et-artefacts.md) §2 et §4.
 
-**Famille MCP `evaluation_*`** (recette évaluateur, v0.9.42) : `evaluation_start`,
-`evaluation_list`, `evaluation_get`, `evaluation_item_add` / `_update` / `_delete`,
-`evaluation_feature_link` / `_unlink`, `evaluation_rule_link` / `_unlink`,
-`evaluation_verdict_set`, `evaluation_doc_add` / `_remove`, `evaluation_confirm`
+**Famille MCP `recette_*`** (recette évaluateur, v0.9.42) : `recette_start`,
+`recette_list`, `recette_get`, `recette_item_add` / `_update` / `_delete`,
+`recette_feature_link` / `_unlink`, `recette_rule_link` / `_unlink`,
+`recette_verdict_set`, `recette_doc_add` / `_remove`, `recette_confirm`
 (clôture **sans** conversion en tâches). Détail : `05-reference.md` §1bis.
 
 ## 5. MCP métier & Skills
@@ -252,7 +252,7 @@ supervise and pilot tasks, never writing directly to the registry. PM2 process, 
 (PostgreSQL). Read-only access to the registry (`task_registry`, via `pg`); writes go
 through the MCP `task-orchestrator`. Tabs — *global* (no project open): Projects,
 Overview, Ecosystem, Workspaces (admin), Users (admin); *project sub-tabs*
-(`PROJECT_TABS`): Overview, Tasks, Recettes, E2E Tests, Decisions, **Artifacts**,
+(`PROJECT_TABS`): Overview, Tasks, Cadrages, E2E Tests, Decisions, **Artifacts**,
 **ADR**, **Sprints**, **Features & Rules**, E2E Vars & Secrets, Archives. The
 Deployments/Events/Plans tabs were removed and are reachable from the **task detail
 modal** ("Consulter"). **Sprint / Features / Rules model (ADR-001)**: the Overview
@@ -264,11 +264,11 @@ reopen, pieces, sprint/migration sessions, report); the **Features & Rules** tab
 filters (search, **role**, **sprint**, **emergence**, **implementation**, **missing
 link**). The **Project detail modal** has only **Project / Repos / Client pieces**
 tabs — the **"Reference documents" tab was removed** (deep-link `docs` falls back to
-"Project"). Recette creation offers context selectors (**ADR** + **Features** +
+"Project"). Cadrage creation offers context selectors (**ADR** + **Features** +
 **Rules**). The **Ecosystem** tab lists agents and lets you edit their `model`
 globally. Pilot functions:
 `createTask`, `launchTask` (`queued → started` + orchestrator session), `reworkTask`,
-`killTaskSession`, `relaunchTask`, `resolveRecette`, `resolveDecision`. The session
+`killTaskSession`, `relaunchTask`, `resolveCadrage`, `resolveDecision`. The session
 bridge (`session-bridge.mjs`) launches a detached opencode session
 (`opencode run --agent <agent> --model <model> --attach http://127.0.0.1:4096`), forcing
 `--model` from the agent definition (opencode caches agent definitions at startup).
@@ -300,11 +300,11 @@ Tables: `tasks`, `projects`, `repos`, `project_repos`, `task_repos`, `executions
 `task_sessions`, `task_links`, `worktrees`, `events`, `deployments`, `decisions`,
 `participants`, **`artifacts`** (central polymorphic manager) + `artifact_projects` /
 `artifact_repos`, `plans`, `plan_steps`, `plan_incidents`, `plan_inconsistencies`,
-`plan_counters`, `plan_executions`, `plan_commits`, `recettes`, `recette_items`,
-`recette_tasks`, `e2e_tests`, `e2e_test_*`, `task_e2e`, `e2e_executions`,
+`plan_counters`, `plan_executions`, `plan_commits`, `cadrages`, `cadrage_items`,
+`cadrage_tasks`, `e2e_tests`, `e2e_test_*`, `task_e2e`, `e2e_executions`,
 **`adr_conflicts`**, **`adr_vigilances`**, **`sprints`**, **`fonctionnalites`**,
 **`regles_metier`**, **`cardinality_signals`**, **`migrations`**, **`adr_conversions`**,
-**`recette_regles`**, **`task_adr`** + the N:N link tables. The **logical schema
+**`cadrage_regles`**, **`task_adr`** + the N:N link tables. The **logical schema
 version** is marked in `schema_meta` (`SCHEMA_VERSION`, `db.mjs`). State machines:
 task (coarse phases) + plan (full cycle) + **ADR** (`Proposed → Accepted →
 Deprecated → Replaced`). Key tools: `task_register`, `task_transition`,
@@ -312,7 +312,7 @@ Deprecated → Replaced`). Key tools: `task_register`, `task_transition`,
 `task_recette`, `task_get`, `task_link_session`, `plan_commit_add`,
 `plan_commits_list`, **`artifact_add`/`artifact_list`**, the **`adr_*` family**,
 `doc_*`, plus the **`sprint_*` / `feature_*` / `rule_*` / `migration_*` /
-`adr_conversion_*` / `cardinality_*`** families and `recette_rule_link`/`_unlink`
+`adr_conversion_*` / `cardinality_*`** families and `cadrage_rule_link`/`_unlink`
 (see `05-reference.md` §1bis).
 
 **6. Business MCP & Skills** — `plan-manager` (plans persistence/tracking),

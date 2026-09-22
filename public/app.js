@@ -10,7 +10,7 @@ let activeTab = 'overview';
 let lastUpdated = null;
 let taskFilter = '';     // tâche sélectionnée comme filtre ('' = aucune)
 let SESSION_BASE_URL = 'https://dev.madatalk.fr'; // base des liens de session opencode
-let groupRecetteEnabled = localStorage.getItem('panel_group_recette') === '1'; // persistant (onglets + rechargement)
+let groupCadrageEnabled = localStorage.getItem('panel_group_cadrage') === '1'; // persistant (onglets + rechargement)
 let groupParallelEnabled = localStorage.getItem('panel_group_parallel') === '1'; // grouper par ordre/parallèle
 let groupUserEnabled = localStorage.getItem('panel_group_user') === '1'; // grouper par utilisateur (créateur)
 let tasksProjectFilter = localStorage.getItem('panel_task_project') || ''; // filtre projet de l'onglet Tâches (persistant re-rendu)
@@ -19,25 +19,25 @@ let tasksStatusFilter = (() => { try { const v = JSON.parse(localStorage.getItem
 const persistTasksStatus = () => localStorage.setItem('panel_task_status', JSON.stringify(tasksStatusFilter));
 let tasksUserFilter = (() => { try { const v = JSON.parse(localStorage.getItem('panel_task_users') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })(); // créateurs sélectionnés (multi-valeurs)
 const persistTasksUsers = () => localStorage.setItem('panel_task_users', JSON.stringify(tasksUserFilter));
-let recettesUserFilter = (() => { try { const v = JSON.parse(localStorage.getItem('panel_recette_users') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })();
-const persistRecettesUsers = () => localStorage.setItem('panel_recette_users', JSON.stringify(recettesUserFilter));
+let cadragesUserFilter = (() => { try { const v = JSON.parse(localStorage.getItem('panel_cadrage_users') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })();
+const persistCadragesUsers = () => localStorage.setItem('panel_cadrage_users', JSON.stringify(cadragesUserFilter));
 let e2eUserFilter = (() => { try { const v = JSON.parse(localStorage.getItem('panel_e2e_users') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })();
 const persistE2EUsers = () => localStorage.setItem('panel_e2e_users', JSON.stringify(e2eUserFilter));
-let tasksNeedRecette = localStorage.getItem('panel_task_recette') === '1'; // pré-filtre « À recetter » (recette_status != done)
+let tasksNeedCadrage = localStorage.getItem('panel_task_recette') === '1'; // pré-filtre « À cadrer » (cadrage_status != done)
 let tasksActifOnly = localStorage.getItem('panel_task_actif') === '1';      // pré-filtre « Actif » (statut != done)
 let tasksDateFrom = localStorage.getItem('panel_task_date_from') || '';      // filtre date de création — borne basse (YYYY-MM-DD)
 let tasksDateTo = localStorage.getItem('panel_task_date_to') || '';          // filtre date de création — borne haute (YYYY-MM-DD)
 // Filtres CIBLES « sans lien » (id-set de la cardinalité) — pré-appliqués par un
 // clic sur une carte de la Vue d'ensemble, valeur du <select> visible de la page.
 let tasksMissingFilter = localStorage.getItem('panel_task_missing') || '';    // '' | tache_sans_adr | tache_sans_fonctionnalite | tache_sans_sprint | emergents
-let recettesMissingFilter = localStorage.getItem('panel_recette_missing') || ''; // '' | recette_sans_adr | recette_sans_fonctionnalite | recette_sans_sprint
+let cadragesMissingFilter = localStorage.getItem('panel_cadrage_missing') || ''; // '' | cadrage_sans_adr | cadrage_sans_fonctionnalite | cadrage_sans_sprint
 let sprintsMissingFilter = localStorage.getItem('panel_sprint_missing') || '';   // '' | sprint_sans_fonctionnalite | sprint_sans_regle
 // Filtre « créateurs » de la page Recette ÉVALUATEUR (masqué pour l'évaluateur :
 // il ne voit que SES recettes, le filtre n'a pas de sens).
-let evaluationsUserFilter = (() => { try { const v = JSON.parse(localStorage.getItem('panel_evaluation_users') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })();
-const persistEvaluationsUsers = () => localStorage.setItem('panel_evaluation_users', JSON.stringify(evaluationsUserFilter));
+let recettesUserFilter = (() => { try { const v = JSON.parse(localStorage.getItem('panel_recette_users') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })();
+const persistRecettesUsers = () => localStorage.setItem('panel_recette_users', JSON.stringify(recettesUserFilter));
 const persistTasksMissing = () => { if (tasksMissingFilter) localStorage.setItem('panel_task_missing', tasksMissingFilter); else localStorage.removeItem('panel_task_missing'); };
-const persistRecettesMissing = () => { if (recettesMissingFilter) localStorage.setItem('panel_recette_missing', recettesMissingFilter); else localStorage.removeItem('panel_recette_missing'); };
+const persistCadragesMissing = () => { if (cadragesMissingFilter) localStorage.setItem('panel_cadrage_missing', cadragesMissingFilter); else localStorage.removeItem('panel_cadrage_missing'); };
 const persistSprintsMissing = () => { if (sprintsMissingFilter) localStorage.setItem('panel_sprint_missing', sprintsMissingFilter); else localStorage.removeItem('panel_sprint_missing'); };
 const persistAdrMissing = () => { if (adrFilters && adrFilters.missingFeature) localStorage.setItem('panel_adr_missing', adrFilters.missingFeature); else localStorage.removeItem('panel_adr_missing'); };
 // Navigation CENTRÉE PROJET : quand un projet est ouvert, toutes les vues sont
@@ -75,7 +75,7 @@ function badge(status) {
   return `<span class="badge ${status || 'queued'}">${status || 'queued'}</span>`;
 }
 
-function recetteBadge(st) {
+function cadrageBadge(st) {
   // Nouveau modèle (v0.8) : pending = pas faite, in_progress = en cours, done = faite.
   // Legacy : approved = validée, rejected = rejetée.
   const map = {
@@ -86,7 +86,7 @@ function recetteBadge(st) {
     pending: ['queued', 'pas faite'],
   };
   const [cls, label] = map[st] || ['queued', st || '—'];
-  return `<span class="badge ${cls}" title="Recette : ${esc(label)}">${esc(label)}</span>`;
+  return `<span class="badge ${cls}" title="Cadrage : ${esc(label)}">${esc(label)}</span>`;
 }
 
 function esc(s) {
@@ -133,8 +133,8 @@ const GLOBAL_TABS = [
 const PROJECT_TABS = [
   ['overview', "Vue d'ensemble"],
   ['tasks', 'Tâches'],
-  ['recettes', 'Cadrage technique'],
-  ['evaluations', 'Recette'],
+  ['cadrages', 'Cadrage technique'],
+  ['recettes', 'Recette'],
   ['e2etests', 'Tests E2E'],
   ['decisions', 'Décisions'],
   ['artifacts', 'Artefacts'],
@@ -147,7 +147,7 @@ const PROJECT_TABS = [
 
 // Rôle ÉVALUATEUR (ADR-002) : onglets restreints. Global = Projets (pour choisir
 // un projet) ; projet ouvert = Fonctionnalités & Règles, Tests E2E, Recette
-// (évaluations — SA page, distincte du Cadrage technique exécuteur).
+// (`recettes` — SA page, distincte du Cadrage technique exécuteur).
 // La page d'atterrissage est `features` (jamais `overview`).
 const EVALUATEUR_GLOBAL_TABS = [
   ['projects', 'Projets'],
@@ -155,12 +155,12 @@ const EVALUATEUR_GLOBAL_TABS = [
 const EVALUATEUR_PROJECT_TABS = [
   ['features', 'Fonctionnalités & Règles'],
   ['e2etests', 'Tests E2E'],
-  ['evaluations', 'Recette'],
+  ['recettes', 'Recette'],
 ];
-const EVALUATEUR_ALLOWED_TABS = ['projects', 'features', 'e2etests', 'evaluations'];
+const EVALUATEUR_ALLOWED_TABS = ['projects', 'features', 'e2etests', 'recettes'];
 
 // Rôle EXÉCUTEUR (ADR-001/002) : Vue d'ensemble, Tâches, Cadrage technique
-// (onglet `recettes`), Tests E2E, Fonctionnalités & Règles, Décisions, ADR et
+// (onglet `cadrages`), Tests E2E, Fonctionnalités & Règles, Décisions, ADR et
 // Workspaces (+ Projets pour choisir un projet). Les Déploiements restent
 // accessibles via le modal de détail de tâche (`data-goto="deployments"`).
 const EXECUTEUR_GLOBAL_TABS = [
@@ -170,21 +170,21 @@ const EXECUTEUR_GLOBAL_TABS = [
 const EXECUTEUR_PROJECT_TABS = [
   ['overview', "Vue d'ensemble"],
   ['tasks', 'Tâches'],
-  ['recettes', 'Cadrage technique'],
-  ['evaluations', 'Recette'],
+  ['cadrages', 'Cadrage technique'],
+  ['recettes', 'Recette'],
   ['e2etests', 'Tests E2E'],
   ['features', 'Fonctionnalités & Règles'],
   ['decisions', 'Décisions'],
   ['adr', 'ADR'],
 ];
-const EXECUTEUR_ALLOWED_TABS = ['projects', 'overview', 'tasks', 'recettes', 'evaluations', 'e2etests', 'features', 'decisions', 'adr', 'workspaces'];
+const EXECUTEUR_ALLOWED_TABS = ['projects', 'overview', 'tasks', 'cadrages', 'recettes', 'e2etests', 'features', 'decisions', 'adr', 'workspaces'];
 
 // --- Terminologie « Cadrage technique » (ADR-001) --------------------------
 // L'entité historique « Recette » est un « Cadrage technique » (onglet
-// `recettes`) et ses éléments convertibles en tâches sont des « éléments de
+// `cadrages`) et ses éléments convertibles en tâches sont des « éléments de
 // cadrage ». Terminologie UNIQUE pour TOUS les rôles (admin / superviseur /
 // évaluateur / exécuteur) : plus aucune branche conditionnelle par rôle.
-// La page « Recette » de l'ÉVALUATEUR est DISTINCTE (`evaluations`) et garde sa
+// La page « Recette » de l'ÉVALUATEUR est DISTINCTE (`recettes`) et garde sa
 // terminologie propre (aucun terme ici ne la concerne).
 function cadrageTerms() {
   return {
@@ -210,11 +210,11 @@ function cadrageTerms() {
   };
 }
 
-// Base des routes « recettes » : l'exécuteur consomme l'ALIAS ADDITIF
-// `/api/cadrages` (mêmes handlers que `/api/recettes`, A011) ; les autres rôles
-// gardent `/api/recettes` (legacy, inchangé).
-function recettesApiBase() {
-  return IS_EXECUTEUR ? '/api/cadrages' : '/api/recettes';
+// Base des routes du CADRAGE TECHNIQUE : `/api/cadrages` est la route canonique
+// (ADR-004) pour tous les rôles — plus d'alias `/api/recettes` (réaffecté à la
+// recette évaluateur).
+function cadragesApiBase() {
+  return '/api/cadrages';
 }
 
 // Sprint ACTIF (nominal) d'un projet : `status='open'` et NON `isDefault` (le
@@ -451,9 +451,9 @@ function openCardinalityTarget(view) {
   if (card.tab === 'tasks') {
     tasksMissingFilter = card.filter;
     persistTasksMissing();
-  } else if (card.tab === 'recettes') {
-    recettesMissingFilter = card.filter;
-    persistRecettesMissing();
+  } else if (card.tab === 'cadrages') {
+    cadragesMissingFilter = card.filter;
+    persistCadragesMissing();
   } else if (card.tab === 'sprints') {
     sprintsMissingFilter = card.filter;
     persistSprintsMissing();
@@ -500,7 +500,7 @@ function sessionLink(sid) {
   return `<a class="code" href="${href}" target="_blank" rel="noopener" title="${esc(sid)}">${esc(short)}</a>`;
 }
 
-// URL d'une session opencode (réutilisée par sessionLink et le bouton recette).
+// URL d'une session opencode (réutilisée par sessionLink et le bouton cadrage).
 function sessionHref(sid) {
   const encoded = btoa(SESSION_BASE_URL).replace(/=+$/, '');
   return `${SESSION_BASE_URL}/server/${encoded}/session/${encodeURIComponent(sid)}`;
@@ -508,11 +508,11 @@ function sessionHref(sid) {
 
 // --- Vue d'ensemble --------------------------------------------------------
 // Filtres persistants de l'historique des vigilances ADR (item 126) — append-only.
-let adrVigFilters = { project: '', recetteId: '', type: '', status: 'open', from: '', to: '' };
+let adrVigFilters = { project: '', cadrageId: '', type: '', status: 'open', from: '', to: '' };
 let adrVigProjectsCache = null;
 
 // Charge/rafraîchit l'historique FILTRABLE des points de vigilance ADR des
-// recettes (ADR manquante / conflit). Aucun bouton de suppression (append-only) ;
+// cadrages (ADR manquante / conflit). Aucun bouton de suppression (append-only) ;
 // seul un bouton « Lever » (raison tracée obligatoire) est proposé sur les ouverts.
 async function loadAdrVigilances() {
   const box = document.getElementById('adr-vig-results');
@@ -520,7 +520,7 @@ async function loadAdrVigilances() {
   const q = new URLSearchParams();
   const proj = currentProject || adrVigFilters.project;
   if (proj) q.set('project', proj);
-  if (adrVigFilters.recetteId) q.set('recetteId', adrVigFilters.recetteId.trim());
+  if (adrVigFilters.cadrageId) q.set('cadrageId', adrVigFilters.cadrageId.trim());
   if (adrVigFilters.type) q.set('type', adrVigFilters.type);
   if (adrVigFilters.status) q.set('status', adrVigFilters.status);
   if (adrVigFilters.from) q.set('from', adrVigFilters.from);
@@ -538,7 +538,7 @@ async function loadAdrVigilances() {
     return `<tr class="${v.status === 'open' ? 'adr-vig-open' : ''}">
       <td class="muted-sm">${esc((v.createdAt || '').replace('T', ' ').slice(0, 16))}</td>
       <td>${esc(v.project || '—')}</td>
-      <td class="code">${v.recetteId ? esc(v.recetteId) : '<span class="muted">—</span>'}</td>
+      <td class="code">${v.cadrageId ? esc(v.cadrageId) : '<span class="muted">—</span>'}</td>
       <td><span class="badge ${v.type === 'conflict' ? 'adr-vig-type-conflict' : 'adr-vig-type-missing'}">${v.type === 'conflict' ? 'conflit' : 'manquant'}</span></td>
       <td class="muted-sm">${target}</td>
       <td class="adr-vig-reason">${esc(v.reason || v.description || '')}</td>
@@ -565,7 +565,7 @@ async function loadAdrVigilances() {
   });
 }
 
-// Barre de filtres de l'historique (projet, recette, type, statut, dates).
+// Barre de filtres de l'historique (projet, cadrage, type, statut, dates).
 async function wireAdrVigFilters() {
   const sel = document.getElementById('adv-project');
   if (sel) {
@@ -581,7 +581,7 @@ async function wireAdrVigFilters() {
   setVal('adv-status', adrVigFilters.status);
   const read = () => {
     const g = (id) => { const el = document.getElementById(id); return el ? el.value : ''; };
-    adrVigFilters.recetteId = g('adv-recette');
+    adrVigFilters.cadrageId = g('adv-cadrage');
     adrVigFilters.type = g('adv-type');
     adrVigFilters.status = g('adv-status');
     adrVigFilters.from = g('adv-from');
@@ -590,7 +590,7 @@ async function wireAdrVigFilters() {
   const apply = document.getElementById('adv-apply');
   if (apply) apply.addEventListener('click', () => { read(); loadAdrVigilances(); });
   ['adv-type', 'adv-status', 'adv-from', 'adv-to'].forEach((id) => { const el = document.getElementById(id); if (el) el.addEventListener('change', () => { read(); loadAdrVigilances(); }); });
-  const rec = document.getElementById('adv-recette');
+  const rec = document.getElementById('adv-cadrage');
   if (rec) rec.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { read(); loadAdrVigilances(); } });
 }
 
@@ -612,7 +612,7 @@ async function renderOverview() {
       <div class="muted-sm">Historique append-only des ADR manquantes / conflits remontés par les cadrages techniques et les tests. Un point OUVERT bloque « Terminer le cadrage ».</div>
       <div class="filters adr-vig-filters">
         ${currentProject ? '' : '<select id="adv-project" title="Filtrer par projet"></select>'}
-        <input id="adv-recette" placeholder="Cadrage (RECT-…)" value="${esc(adrVigFilters.recetteId)}">
+        <input id="adv-cadrage" placeholder="Cadrage (CT-…)" value="${esc(adrVigFilters.cadrageId)}">
         <select id="adv-type"><option value="">Type : tous</option><option value="missing">manquant</option><option value="conflict">conflit</option></select>
         <select id="adv-status"><option value="">Statut : tous</option><option value="open">ouvert</option><option value="resolved">résolu</option></select>
         <span class="date-filter"><span class="tagfilter-label">Détecté du</span><input type="date" id="adv-from" value="${esc(adrVigFilters.from)}"><span class="tagfilter-label">au</span><input type="date" id="adv-to" value="${esc(adrVigFilters.to)}"></span>
@@ -665,10 +665,10 @@ async function renderTasks() {
         <select id="f-user-add" title="Ajouter un créateur à filtrer"><option value="">+ Ajouter…</option></select>
         <button type="button" class="ghost tagfilter-clear" id="f-user-clear" hidden>tout afficher</button>
       </div>
-      <label class="muted filter-check"><input type="checkbox" id="f-group-recette" ${groupRecetteEnabled ? 'checked' : ''}> Grouper par recette</label>
+      <label class="muted filter-check"><input type="checkbox" id="f-group-cadrage" ${groupCadrageEnabled ? 'checked' : ''}> Grouper par cadrage</label>
       <label class="muted filter-check"><input type="checkbox" id="f-group-user" ${groupUserEnabled ? 'checked' : ''}> Grouper par utilisateur</label>
       <label class="muted filter-check" id="f-group-parallel-wrap" hidden><input type="checkbox" id="f-group-parallel" ${groupParallelEnabled ? 'checked' : ''}> Grouper par tâches parallèles</label>
-      <label class="muted filter-check" title="Tâches dont la recette n'est pas faite"><input type="checkbox" id="f-filter-recette" ${tasksNeedRecette ? 'checked' : ''}> À recetter</label>
+      <label class="muted filter-check" title="Tâches dont le cadrage n'est pas faite"><input type="checkbox" id="f-filter-cadrage" ${tasksNeedCadrage ? 'checked' : ''}> À cadrer</label>
       <label class="muted filter-check" title="Tâches dont le statut n'est pas « done »"><input type="checkbox" id="f-filter-actif" ${tasksActifOnly ? 'checked' : ''}> Actif</label>
       <span class="date-filter" title="Filtrer par date de création">
         <span class="tagfilter-label">Créée du</span>
@@ -690,7 +690,7 @@ async function renderTasks() {
       </select>` : ''}
       <button id="new-task-btn" class="launch-btn">+ Nouvelle tâche</button>
     </div>
-    <table><thead><tr><th></th><th>ID</th><th>Projet</th><th>Type</th><th>Priorité</th><th>Statut</th><th>Recette</th><th>E2E</th><th>Demande</th><th>Session</th><th>Créée par</th><th>Actions</th></tr></thead>
+    <table><thead><tr><th></th><th>ID</th><th>Projet</th><th>Type</th><th>Priorité</th><th>Statut</th><th>Cadrage</th><th>E2E</th><th>Demande</th><th>Session</th><th>Créée par</th><th>Actions</th></tr></thead>
     <tbody id="tasks-body"></tbody></table>`;
   const statuses = [...new Set(tasks.map((t) => t.status || 'queued'))];
   const projectSel = document.getElementById('f-project');
@@ -742,12 +742,12 @@ async function renderTasks() {
   const apply = () => {
     const p = currentProject || (document.getElementById('f-project')?.value || '');
     const st = tasksStatusFilter;
-    const groupRecette = document.getElementById('f-group-recette').checked;
+    const groupCadrage = document.getElementById('f-group-cadrage').checked;
     const groupUser = document.getElementById('f-group-user').checked;
     const groupParallel = document.getElementById('f-group-parallel').checked;
     const parallelWrap = document.getElementById('f-group-parallel-wrap');
-    if (parallelWrap) parallelWrap.hidden = !groupRecette;
-    const needRecette = document.getElementById('f-filter-recette').checked;
+    if (parallelWrap) parallelWrap.hidden = !groupCadrage;
+    const needCadrage = document.getElementById('f-filter-cadrage').checked;
     const actifOnly = document.getElementById('f-filter-actif').checked;
     const dateFrom = document.getElementById('f-date-from').value; // YYYY-MM-DD
     const dateTo = document.getElementById('f-date-to').value;
@@ -758,35 +758,35 @@ async function renderTasks() {
       && (!currentOrg || (t.organization_id || 'onirtech') === currentOrg)
       && (!st.length || st.includes(t.status || 'queued'))
       && (!uf.length || uf.includes(t.created_by || '—'))
-      && (!needRecette || (t.recette_status || 'pending') !== 'done')
+      && (!needCadrage || (t.cadrage_status || 'pending') !== 'done')
       && (!actifOnly || (t.status || 'queued') !== 'done')
       && (!tasksMissingFilter || !missingIds || missingIds.has(t.id))
       && (!dateFrom || dayOf(t) >= dateFrom)
       && (!dateTo || dayOf(t) <= dateTo));
 
     // Une ligne de tâche (avec ses plans en sous-lignes).
-    const rowHtml = (t, recetteParent, userGroup) => {
+    const rowHtml = (t, cadrageParent, userGroup) => {
       const subs = plansByTask[t.id] || [];
       const toggle = subs.length ? `<button class="tree-toggle" data-toggle="${esc(t.id)}">▸</button>` : '';
-      const recetteAttr = recetteParent ? ` data-recette-child="${esc(recetteParent)}"` : '';
+      const cadrageAttr = cadrageParent ? ` data-recette-child="${esc(cadrageParent)}"` : '';
       const userAttr = userGroup ? ` data-user-child="${esc(userGroup)}"` : '';
-      const recetteBadgeExtra = t.recette_class
-        ? ` <span class="badge ${RECETTE_CLS_BADGE[t.recette_class] || 'queued'}" title="Issue de la recette (${RECETTE_CLS_LABEL[t.recette_class]})">recette</span>`
+      const cadrageBadgeExtra = t.cadrage_class
+        ? ` <span class="badge ${CADRAGE_CLS_BADGE[t.cadrage_class] || 'queued'}" title="Issue du cadrage (${CADRAGE_CLS_LABEL[t.cadrage_class]})">cadrage</span>`
         : '';
-      const orderBadge = t.recette_order != null
-        ? ` <span class="badge order-badge" title="Ordre d'exécution recommandé (recette)">ordre ${esc(t.recette_order)}</span>`
+      const orderBadge = t.cadrage_order != null
+        ? ` <span class="badge order-badge" title="Ordre d'exécution recommandé (cadrage)">ordre ${esc(t.cadrage_order)}</span>`
         : '';
-      const vigBadge = t.recette_vigilance
-        ? ` <span class="badge danger vig-badge" title="Point de vigilance / écart sémantique : ${esc(t.recette_vigilance)}">⚠ vigilance</span>`
+      const vigBadge = t.cadrage_vigilance
+        ? ` <span class="badge danger vig-badge" title="Point de vigilance / écart sémantique : ${esc(t.cadrage_vigilance)}">⚠ vigilance</span>`
         : '';
-      const parent = `<tr class="task-row"${recetteAttr}${userAttr}>
+      const parent = `<tr class="task-row"${cadrageAttr}${userAttr}>
         <td>${toggle}</td>
         <td class="code">${esc(t.id)}</td>
         <td>${esc(t.project)}</td>
         <td>${esc(t.type)}</td>
         <td>${esc(t.priority)}</td>
         <td>${badge(t.status)}${t.waiting_human ? '<span class="badge waiting-human" title="Une décision humaine est en attente (validation / review)">⏳ attente humaine</span>' : ''}</td>
-        <td>${recetteBadge(t.recette_status)}${recetteBadgeExtra}${orderBadge}${vigBadge}</td>
+        <td>${cadrageBadge(t.cadrage_status)}${cadrageBadgeExtra}${orderBadge}${vigBadge}</td>
         <td>${e2eBadgeCell(t)}</td>
         <td><span title="${esc(t.request || '')}"><strong>${esc((t.title && t.title.trim()) ? t.title : (t.request || '').slice(0, 60))}</strong></span>${(t.title && t.title.trim()) && t.request ? `<span class="muted-sm"> — ${esc(t.request.slice(0, 40))}</span>` : ''}</td>
         <td>${sessionLink(t.session_id)}</td>
@@ -794,7 +794,7 @@ async function renderTasks() {
         <td>${detailsButtons(t)}</td>
       </tr>`;
       const children = subs.map((s) => `
-        <tr class="subtask-row" data-child="${esc(t.id)}"${recetteAttr}${userAttr} hidden>
+        <tr class="subtask-row" data-child="${esc(t.id)}"${cadrageAttr}${userAttr} hidden>
           <td></td>
           <td colspan="11">
             <div class="subtask">
@@ -812,34 +812,34 @@ async function renderTasks() {
       return parent + children;
     };
 
-    // Groupement par recette (factorisé pour être réutilisé à l'intérieur d'un groupe utilisateur).
-    const renderRecetteGroups = (list, userGroup) => {
+    // Groupement par cadrage (factorisé pour être réutilisé à l'intérieur d'un groupe utilisateur).
+    const renderCadrageGroups = (list, userGroup) => {
       const bySource = {};
       const others = [];
       for (const t of list) {
-        if (t.recette_source) (bySource[t.recette_source] = bySource[t.recette_source] || []).push(t);
+        if (t.cadrage_source) (bySource[t.cadrage_source] = bySource[t.cadrage_source] || []).push(t);
         else others.push(t);
       }
-      const recetteKey = (sourceId) => userGroup ? `${userGroup}:${sourceId}` : sourceId;
+      const cadrageKey = (sourceId) => userGroup ? `${userGroup}:${sourceId}` : sourceId;
       const groupHtml = (sourceId, list) => {
-        const sorted = [...list].sort((a, b) => (a.recette_order ?? 999) - (b.recette_order ?? 999) || String(a.id).localeCompare(String(b.id)));
-        const title = sorted[0] && sorted[0].recette_source_title;
-        const label = sourceId === '(sans recette)'
+        const sorted = [...list].sort((a, b) => (a.cadrage_order ?? 999) - (b.cadrage_order ?? 999) || String(a.id).localeCompare(String(b.id)));
+        const title = sorted[0] && sorted[0].cadrage_source_title;
+        const label = sourceId === '(sans cadrage)'
           ? 'Autres tâches'
-          : (title ? `Recette — ${esc(title)}` : `Recette de ${esc(sourceId)}`);
-        const cls = [...new Set(sorted.map((x) => x.recette_class).filter(Boolean))];
-        const rKey = recetteKey(sourceId);
+          : (title ? `Cadrage — ${esc(title)}` : `Cadrage de ${esc(sourceId)}`);
+        const cls = [...new Set(sorted.map((x) => x.cadrage_class).filter(Boolean))];
+        const rKey = cadrageKey(sourceId);
         const userAttr = userGroup ? ` data-user-child="${esc(userGroup)}"` : '';
         const head = `<tr class="recette-group-head"${userAttr}><td colspan="12">
           <button class="tree-toggle" data-recette-toggle="${esc(rKey)}">▸</button>
           <span class="code">${label}</span>
-          <span class="muted-sm">— ${sorted.length} tâche(s)${cls.length ? ' · ' + cls.map((c) => RECETTE_CLS_LABEL[c]).join(' / ') : ''}</span>
+          <span class="muted-sm">— ${sorted.length} tâche(s)${cls.length ? ' · ' + cls.map((c) => CADRAGE_CLS_LABEL[c]).join(' / ') : ''}</span>
         </td></tr>`;
         const members = () => {
           if (!groupParallel) return sorted.map((t) => rowHtml(t, rKey, userGroup)).join('');
           // Sous-groupes par ordre d'exécution (même ordre = parallèle).
           const byOrder = {};
-          sorted.forEach((t) => { const o = t.recette_order ?? 999; (byOrder[o] = byOrder[o] || []).push(t); });
+          sorted.forEach((t) => { const o = t.cadrage_order ?? 999; (byOrder[o] = byOrder[o] || []).push(t); });
           return Object.keys(byOrder).sort((a, b) => Number(a) - Number(b)).map((o) => {
             const l = byOrder[o];
             const isParallel = l.length > 1;
@@ -852,7 +852,7 @@ async function renderTasks() {
         return head + members();
       };
       const groups = Object.entries(bySource).sort((a, b) => b[0].localeCompare(a[0])).map(([s, l]) => groupHtml(s, l)).join('');
-      const othersHtml = others.length ? groupHtml('(sans recette)', others) : '';
+      const othersHtml = others.length ? groupHtml('(sans cadrage)', others) : '';
       return (groups + othersHtml) || '<tr><td colspan="12" class="muted">Aucune tâche</td></tr>';
     };
 
@@ -869,11 +869,11 @@ async function renderTasks() {
           <span class="code">${esc(user)}</span>
           <span class="muted-sm">— ${list.length} tâche(s)</span>
         </td></tr>`;
-        const body = groupRecette ? renderRecetteGroups(list, user) : list.map((t) => rowHtml(t, null, user)).join('') || '<tr><td colspan="12" class="muted">Aucune tâche</td></tr>';
+        const body = groupCadrage ? renderCadrageGroups(list, user) : list.map((t) => rowHtml(t, null, user)).join('') || '<tr><td colspan="12" class="muted">Aucune tâche</td></tr>';
         return head + body;
       }).join('');
-    } else if (groupRecette) {
-      html = renderRecetteGroups(rows, null);
+    } else if (groupCadrage) {
+      html = renderCadrageGroups(rows, null);
     } else {
       html = rows.map((t) => rowHtml(t, null, null)).join('') || '<tr><td colspan="12" class="muted">Aucune tâche</td></tr>';
     }
@@ -890,7 +890,7 @@ async function renderTasks() {
       b.textContent = expanded ? '▸' : '▾';
     }));
     document.querySelectorAll('#tasks-body [data-recette-toggle]').forEach((b) => b.addEventListener('click', () => {
-      const src = b.dataset.recetteToggle;
+      const src = b.dataset.cadrageToggle;
       const children = document.querySelectorAll(`#tasks-body [data-recette-child="${src}"]`);
       const expanded = b.textContent === '▾';
       children.forEach((c) => { c.hidden = expanded; });
@@ -948,10 +948,10 @@ async function renderTasks() {
     if (x) setUserFilter(tasksUserFilter.filter((u) => u !== x.dataset.user));
   });
   userClear.addEventListener('click', () => setUserFilter([]));
-  const needRecetteBox = document.getElementById('f-filter-recette');
-  if (needRecetteBox) needRecetteBox.addEventListener('change', () => {
-    tasksNeedRecette = needRecetteBox.checked;
-    localStorage.setItem('panel_task_recette', tasksNeedRecette ? '1' : '0');
+  const needCadrageBox = document.getElementById('f-filter-cadrage');
+  if (needCadrageBox) needCadrageBox.addEventListener('change', () => {
+    tasksNeedCadrage = needCadrageBox.checked;
+    localStorage.setItem('panel_task_recette', tasksNeedCadrage ? '1' : '0');
     apply();
   });
   const actifBox = document.getElementById('f-filter-actif');
@@ -984,10 +984,10 @@ async function renderTasks() {
     syncDateClear();
     apply();
   });
-  document.getElementById('f-group-recette').addEventListener('change', () => {
-    groupRecetteEnabled = document.getElementById('f-group-recette').checked;
-    localStorage.setItem('panel_group_recette', groupRecetteEnabled ? '1' : '0');
-    if (!groupRecetteEnabled) { groupParallelEnabled = false; document.getElementById('f-group-parallel').checked = false; }
+  document.getElementById('f-group-cadrage').addEventListener('change', () => {
+    groupCadrageEnabled = document.getElementById('f-group-cadrage').checked;
+    localStorage.setItem('panel_group_cadrage', groupCadrageEnabled ? '1' : '0');
+    if (!groupCadrageEnabled) { groupParallelEnabled = false; document.getElementById('f-group-parallel').checked = false; }
     apply();
   });
   const userBox = document.getElementById('f-group-user');
@@ -1033,8 +1033,8 @@ async function renderDeployments() {
 async function renderDecisions() {
   const data = await api('/api/decisions' + taskQuery());
   const dec = data.decisions || [];
-  // Actionnable = awaiting, hors recette, sans permission_id (canal B).
-  const actionable = (d) => d.status === 'awaiting' && d.kind !== 'recette' && !d.permission_id;
+  // Actionnable = awaiting, hors cadrage, sans permission_id (canal B).
+  const actionable = (d) => d.status === 'awaiting' && d.kind !== 'cadrage' && !d.permission_id;
   document.getElementById('pane-decisions').innerHTML = `
     <h2>Décisions humaines</h2>
     ${filterBar()}
@@ -1086,13 +1086,13 @@ async function renderMarkdownInline(text) {
 // actions (Approuver / Rejeter) collantes en bas. Approuver n'est proposé que si
 // l'utilisateur a les droits (admin) et si la décision est actionnable.
 async function decisionReviewModal(decision, back) {
-  const actionable = decision && decision.status === 'awaiting' && decision.kind !== 'recette' && !decision.permission_id;
+  const actionable = decision && decision.status === 'awaiting' && decision.kind !== 'cadrage' && !decision.permission_id;
   const canAct = IS_ADMIN && actionable;
   const [detailHtml, taskHtml] = await Promise.all([
     renderMarkdownInline(decision.detail),
     renderMarkdownInline(decision.task_request || ''),
   ]);
-  const kindLabel = { validation: 'Validation', review: 'Review', permission: 'Permission', recette: 'Recette' }[decision.kind] || decision.kind;
+  const kindLabel = { validation: 'Validation', review: 'Review', permission: 'Permission', cadrage: 'Cadrage' }[decision.kind] || decision.kind;
   const statusLabel = { awaiting: 'En attente', approved: 'Approuvée', rejected: 'Rejetée', expired: 'Expirée' }[decision.status] || decision.status;
   showModal(`
     <div class="decision-review">
@@ -1396,7 +1396,7 @@ async function userOrgsModal(userId, username) {
 // --- Artefacts : gestionnaire central (toutes entités) ---------------------
 // Taxonomie doc_type (source de vérité : /docs/nomenclature-doc-type.md).
 const DOC_TYPE_LIST = ['adr', 'specs', 'gherkin', 'project_doc', 'adr_file', 'plan', 'task_synthese',
-  'task_report', 'audit_report', 'recette_report', 'recette_doc', 'e2e_report', 'e2e_video', 'piece', 'autre'];
+  'task_report', 'audit_report', 'cadrage_report', 'cadrage_doc', 'e2e_report', 'e2e_video', 'piece', 'autre'];
 const ARTIFACT_KIND_LIST = ['plan', 'audit', 'report', 'autre'];
 let artFilters = { docType: '', contentId: '', kind: '', q: '' };
 
@@ -1418,7 +1418,7 @@ async function renderArtifacts() {
   const kOpts = ['', ...ARTIFACT_KIND_LIST].map((v) => `<option value="${esc(v)}"${artFilters.kind === v ? ' selected' : ''}>${v ? esc(v) : '— toutes natures —'}</option>`).join('');
   pane.innerHTML = `
     <h2>Artefacts — gestionnaire central</h2>
-    <p class="muted-sm">Tous les artefacts, toutes entités confondues (tâche / recette / projet / ADR / E2E). Type = <code>doc_type</code>, Nature = <code>kind</code>.</p>
+    <p class="muted-sm">Tous les artefacts, toutes entités confondues (tâche / cadrage / projet / ADR / E2E). Type = <code>doc_type</code>, Nature = <code>kind</code>.</p>
     <div class="art-filters">
       <select id="art-f-doctype" title="Type (doc_type)">${dtOpts}</select>
       <select id="art-f-kind" title="Nature (kind)">${kOpts}</select>
@@ -1477,10 +1477,10 @@ async function artViewModal(artifactId) {
 async function artAddModal(onSaved) {
   const dtOpts = DOC_TYPE_LIST.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
   const kOpts = ARTIFACT_KIND_LIST.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
-  // Autocomplétion des entités (tâches / recettes / projets / docs).
+  // Autocomplétion des entités (tâches / cadrages / projets / docs).
   const entities = [];
   try { for (const t of ((await api('/api/tasks')).tasks || [])) entities.push({ id: t.id, label: `${t.id} — ${(t.title || t.request || '').slice(0, 50)}` }); } catch {}
-  try { for (const r of ((await api(recettesApiBase())).recettes || [])) entities.push({ id: r.recette_id, label: `${r.recette_id} — ${(r.title || '').slice(0, 50)}` }); } catch {}
+  try { for (const r of ((await api(cadragesApiBase())).cadrages || [])) entities.push({ id: r.cadrage_id, label: `${r.cadrage_id} — ${(r.title || '').slice(0, 50)}` }); } catch {}
   try { for (const p of ((await api('/api/projects')).projects || [])) entities.push({ id: p.id, label: `${p.id} — ${p.name || ''}` }); } catch {}
   const dlOpts = entities.map((e) => `<option value="${esc(e.id)}">${esc(e.label)}</option>`).join('');
   showModal(`<div class="modal">
@@ -1522,8 +1522,8 @@ async function artAddModal(onSaved) {
   });
 }
 
-// --- Recettes (v0.8.0) : objet de projet -----------------------------------
-const RECETTE_STATUS_LABEL = { pending: 'pas faite', in_progress: 'en cours', done: 'faite' };
+// --- Cadrages (v0.8.0) : objet de projet -----------------------------------
+const CADRAGE_STATUS_LABEL = { pending: 'pas faite', in_progress: 'en cours', done: 'faite' };
 
 // URL d'accès à un fichier de preuve E2E (storage/e2e) — rapport texte ou vidéo.
 function e2eFileUrl(absPath) {
@@ -1641,8 +1641,8 @@ function e2eBadgeCell(t) {
   return `<button type="button" class="badge ${cls} e2e-badge-goto" data-goto-e2e="${esc(t.id)}" title="E2E : ${e.done}/${e.count} test(s) exécuté(s) — ${label}. Cliquer pour ouvrir les tests">E2E ${icon}</button>`;
 }
 
-// Projet unique d'une recette + ses repos transverses (portée réelle, ADR 11).
-function recetteScopeChips(rec) {
+// Projet unique d'un cadrage + ses repos transverses (portée réelle, ADR 11).
+function cadrageScopeChips(rec) {
   const project = (rec && rec.project) ? rec.project : '';
   const repos = (rec && Array.isArray(rec.repos)) ? rec.repos : [];
   const projChip = project ? `<code class="chip-project" title="Projet (produit) du cadrage">${esc(project)}</code>` : '';
@@ -1963,12 +1963,12 @@ async function e2eDetailModal(e2eTestId) {
         <div class="project-kv"><span class="lbl">Scénario</span><span class="muted-sm">${esc(test.scenario || '—')}</span></div>
         <div class="project-kv"><span class="lbl">Suivi</span><span class="muted-sm">vu depuis ${esc(fmtTS(test.firstSeenAt))} · màj ${esc(fmtTS(test.updatedAt))} · ${(test.taskCount != null ? test.taskCount : linked.length)} tâche(s) liée(s)</span></div>
       </div>
-      ${(test.docs && test.docs.length) ? `<div class="actions-section" data-e2e-tech><h3>Documents de référence du projet (contexte test-agent / recette)</h3>
+      ${(test.docs && test.docs.length) ? `<div class="actions-section" data-e2e-tech><h3>Documents de référence du projet (contexte test-agent / cadrage)</h3>
         <div class="recette-list">${test.docs.map((d) => `<div class="recette-item">
           <code class="chip">${esc(docKindLabel(d.kind))}</code> <strong>${esc(d.title || d.docId)}</strong>
           <span class="muted-sm">${esc(d.path)}</span>
         </div>`).join('')}</div>
-        <p class="muted-sm">Ces documents (ADR technique, specs, Gherkin) sont fournis en contexte lors des sessions de création / recette. Les documents de référence (ADR-12) sont désormais des <strong>pièces client</strong> : gérez-les via l'onglet <strong>Artefacts</strong> ou l'onglet <strong>Pièces client</strong> du projet ; les ADR via l'onglet <strong>ADR</strong>.</p>
+        <p class="muted-sm">Ces documents (ADR technique, specs, Gherkin) sont fournis en contexte lors des sessions de création / cadrage. Les documents de référence (ADR-12) sont désormais des <strong>pièces client</strong> : gérez-les via l'onglet <strong>Artefacts</strong> ou l'onglet <strong>Pièces client</strong> du projet ; les ADR via l'onglet <strong>ADR</strong>.</p>
       </div>` : ''}
       ${test.description ? `<div class="modal-request">${esc(test.description)}</div>` : ''}
       ${test.gherkin ? `<div class="actions-section"><h3>Comportement (Gherkin)</h3>
@@ -2191,7 +2191,7 @@ async function e2eRunModal(e2eTestId) {
           </label>
         </div>
         <label class="modal-field">Config Playwright dédiée (playwrightConfig) <span class="muted-sm">— optionnel</span>
-          <input id="er-pwconfig" placeholder="ex: playwright.madatalk-requests.recette.config.ts">
+          <input id="er-pwconfig" placeholder="ex: playwright.madatalk-requests.cadrage.config.ts">
         </label>
         <label class="modal-field">Filtre de spec (specPattern) <span class="muted-sm">— défaut : spec du test</span>
           <input id="er-specpattern" placeholder="regex Playwright">
@@ -2472,7 +2472,7 @@ async function e2eCreateModal() {
 
 // --- Cas « Oui » : le spec existe déjà → enregistrement (champs obligatoires) ---
 // Les repos de code associés (repos traversés, ADR 11) définissent la COUVERTURE
-// du test — lus par l'agent de recette dès la création.
+// du test — lus par l'agent de cadrage dès la création.
 async function e2eRegisterModal(projects, projOpts) {
   const reposRes = await api('/api/repos').catch(() => ({ repos: [] }));
   const reposById = new Map((reposRes.repos || []).map((r) => [r.id, r]));
@@ -2730,14 +2730,14 @@ function collectE2EParams(prefix, msg) {
   return params;
 }
 
-// Ouvre la session de recette : reprend la session rattachée si elle existe
+// Ouvre la session de cadrage : reprend la session rattachée si elle existe
 // (jamais de doublon) ; `force = true` démarre une nouvelle session.
-async function openRecetteSession(recetteId, force, btn) {
+async function openCadrageSession(cadrageId, force, btn) {
   const T = cadrageTerms();
   const original = btn ? btn.innerHTML : null;
   setBtnBusy(btn, 'Ouverture');
   try {
-    const r = await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: !!force }) });
+    const r = await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: !!force }) });
     if (r.sessionId && /^ses_/.test(r.sessionId)) window.open(sessionHref(r.sessionId), '_blank');
     else alert(r.error || (force ? `Impossible de lancer une nouvelle session de ${T.entityLower}.` : `Aucune session de ${T.entityLower} disponible.`));
     refreshActive();
@@ -2747,15 +2747,15 @@ async function openRecetteSession(recetteId, force, btn) {
   }
 }
 
-// Ouvre la SESSION de la recette ÉVALUATEUR (agent-recette) : reprend la
+// Ouvre la SESSION du recette ÉVALUATEUR (agent-recette) : reprend la
 // session rattachée si elle existe (jamais de doublon) ; `force = true` démarre
-// une nouvelle session. Miroir de `openRecetteSession` (route
-// POST /api/evaluations/:id/session, ADR-001/003).
-async function openEvaluationSession(evaluationId, force, btn) {
+// une nouvelle session. Miroir de `openCadrageSession` (route
+// POST /api/recettes/:id/session, ADR-001/003).
+async function openRecetteSession(recetteId, force, btn) {
   const original = btn ? btn.innerHTML : null;
   setBtnBusy(btn, 'Ouverture');
   try {
-    const r = await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: !!force }) });
+    const r = await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: !!force }) });
     if (r.sessionId && /^ses_/.test(r.sessionId)) window.open(sessionHref(r.sessionId), '_blank');
     else alert(r.error || (force ? "Impossible de lancer une nouvelle session de recette." : "Aucune session de recette disponible."));
     refreshActive();
@@ -2765,12 +2765,12 @@ async function openEvaluationSession(evaluationId, force, btn) {
   }
 }
 
-function recetteCard(r) {
+function cadrageCard(r) {
   const T = cadrageTerms();
   const canSession = r.status === 'pending' || r.status === 'in_progress';
   const canFinish = r.status === 'in_progress';
   return `<article class="project-card">
-    <div class="project-card-head"><strong class="recette-title" data-rec-detail="${esc(r.recette_id)}" title="Voir le détail">${esc(r.title || r.recette_id)}</strong> <span class="rec-card-projs">${recetteScopeChips(r)}</span> ${badge(r.status)} ${Number(r.adr_vigilances_count || 0) > 0 ? `<span class="badge danger" title="${Number(r.adr_vigilances_count)} point(s) de vigilance ADR ouvert(s) — terminaison bloquée">⚠ ADR (${Number(r.adr_vigilances_count)})</span>` : ''}</div>
+    <div class="project-card-head"><strong class="recette-title" data-rec-detail="${esc(r.cadrage_id)}" title="Voir le détail">${esc(r.title || r.cadrage_id)}</strong> <span class="rec-card-projs">${cadrageScopeChips(r)}</span> ${badge(r.status)} ${Number(r.adr_vigilances_count || 0) > 0 ? `<span class="badge danger" title="${Number(r.adr_vigilances_count)} point(s) de vigilance ADR ouvert(s) — terminaison bloquée">⚠ ADR (${Number(r.adr_vigilances_count)})</span>` : ''}</div>
     <div class="project-card-body">
       ${r.description ? `<div class="project-kv"><span class="lbl">Description</span><span class="muted-sm">${esc(r.description.slice(0, 100))}${r.description.length > 100 ? '…' : ''}</span></div>` : ''}
       <div class="project-kv"><span class="lbl">Tâches couvertes</span><span>${r.tasks_count || 0}</span></div>
@@ -2779,47 +2779,47 @@ function recetteCard(r) {
       <div class="project-kv"><span class="lbl">Créée par</span><span>${esc(r.created_by || '—')}</span></div>
     </div>
     <div class="project-card-actions">
-      <button class="ghost" data-rec-docs="${esc(r.recette_id)}">Documents (${r.documents_count || 0})</button>
-      ${canSession ? `<button class="launch-btn" data-rec-session="${esc(r.recette_id)}" title="${r.session_id ? T.sessionResume : T.sessionHint}">${T.session}</button>` : ''}
-      ${canFinish ? `<button class="approve" data-rec-finish="${esc(r.recette_id)}">${T.finish}</button>` : ''}
-      ${r.status === 'done' ? `<button class="ghost" data-rec-items="${esc(r.recette_id)}">${T.detail}</button>` : ''}
-      ${IS_ADMIN ? `<button class="ghost danger-text" data-rec-del="${esc(r.recette_id)}" data-rec-title="${esc(r.title || r.recette_id)}" title="Supprimer ${T.theEntity} (admin) — irréversible">Supprimer</button>` : ''}
+      <button class="ghost" data-rec-docs="${esc(r.cadrage_id)}">Documents (${r.documents_count || 0})</button>
+      ${canSession ? `<button class="launch-btn" data-rec-session="${esc(r.cadrage_id)}" title="${r.session_id ? T.sessionResume : T.sessionHint}">${T.session}</button>` : ''}
+      ${canFinish ? `<button class="approve" data-rec-finish="${esc(r.cadrage_id)}">${T.finish}</button>` : ''}
+      ${r.status === 'done' ? `<button class="ghost" data-rec-items="${esc(r.cadrage_id)}">${T.detail}</button>` : ''}
+      ${IS_ADMIN ? `<button class="ghost danger-text" data-rec-del="${esc(r.cadrage_id)}" data-rec-title="${esc(r.title || r.cadrage_id)}" title="Supprimer ${T.theEntity} (admin) — irréversible">Supprimer</button>` : ''}
     </div>
   </article>`;
 }
 
-async function renderRecettes() {
+async function renderCadrages() {
   const T = cadrageTerms();
   const [data, bdata] = await Promise.all([
-    api(recettesApiBase() + (currentProject ? `?project=${encodeURIComponent(currentProject)}` : '')),
+    api(cadragesApiBase() + (currentProject ? `?project=${encodeURIComponent(currentProject)}` : '')),
     api('/api/batches' + (currentProject ? `?project=${encodeURIComponent(currentProject)}` : '')).catch(() => ({ batches: [] })),
   ]);
-  let recs = data.recettes || [];
+  let recs = data.cadrages || [];
   const batches = (bdata.batches || []).filter((b) => b.status === 'active');
-  const allCreators = [...new Set([...recs.map((r) => r.created_by || '—').filter(Boolean), ...recettesUserFilter])];
+  const allCreators = [...new Set([...recs.map((r) => r.created_by || '—').filter(Boolean), ...cadragesUserFilter])];
   const renderUserUI = () => {
     const box = document.getElementById('rec-user-tags');
     const sel = document.getElementById('rec-user-add');
     const clear = document.getElementById('rec-user-clear');
     if (!box) return;
-    box.innerHTML = recettesUserFilter.length
-      ? recettesUserFilter.map((u) => `<span class="status-chip"><span class="chip-txt">${esc(u)}</span><button type="button" class="chip-x" data-user="${esc(u)}" title="Retirer « ${esc(u)} »">×</button></span>`).join('')
+    box.innerHTML = cadragesUserFilter.length
+      ? cadragesUserFilter.map((u) => `<span class="status-chip"><span class="chip-txt">${esc(u)}</span><button type="button" class="chip-x" data-user="${esc(u)}" title="Retirer « ${esc(u)} »">×</button></span>`).join('')
       : '<span class="tagfilter-empty">tous les créateurs</span>';
-    sel.innerHTML = `<option value="">+ Ajouter…</option>` + allCreators.filter((u) => !recettesUserFilter.includes(u)).map((u) => `<option>${esc(u)}</option>`).join('');
-    clear.hidden = !recettesUserFilter.length;
+    sel.innerHTML = `<option value="">+ Ajouter…</option>` + allCreators.filter((u) => !cadragesUserFilter.includes(u)).map((u) => `<option>${esc(u)}</option>`).join('');
+    clear.hidden = !cadragesUserFilter.length;
   };
   const setUserFilter = (next) => {
-    recettesUserFilter = [...new Set(next)];
-    persistRecettesUsers();
+    cadragesUserFilter = [...new Set(next)];
+    persistCadragesUsers();
     refreshActive();
   };
-  recs = recs.filter((r) => !recettesUserFilter.length || recettesUserFilter.includes(r.created_by || '—'));
+  recs = recs.filter((r) => !cadragesUserFilter.length || cadragesUserFilter.includes(r.created_by || '—'));
   // Filtre CIBLE « sans lien » (id-set de la cardinalité, source registre).
-  if (recettesMissingFilter) {
-    const missingIds = await cardinalityIdSetFor(recettesMissingFilter, 'recette');
-    if (missingIds) recs = recs.filter((r) => missingIds.has(r.recette_id));
+  if (cadragesMissingFilter) {
+    const missingIds = await cardinalityIdSetFor(cadragesMissingFilter, 'cadrage');
+    if (missingIds) recs = recs.filter((r) => missingIds.has(r.cadrage_id));
   }
-  document.getElementById('pane-recettes').innerHTML = `
+  document.getElementById('pane-cadrages').innerHTML = `
     <h2>${T.entities}</h2>
     <p class="muted-sm">Cadrages techniques — chaque cadrage couvre UN projet (produit) et 0..N tâches de ce projet ; les repos transverses du projet sont sa portée réelle. Titre et session dédiée.</p>
     ${batches.length ? `<div class="actions-section"><h3>Batches d'orchestration actifs <span class="muted-sm">(${batches.length})</span></h3><div class="project-cards">${batches.map(batchCard).join('')}</div></div>` : ''}
@@ -2832,57 +2832,56 @@ async function renderRecettes() {
       </div>`}
       <select id="rec-missing" title="Filtrer par lien manquant (cardinalité : source registre)">
         <option value="">Sans lien : tous</option>
-        <option value="recette_sans_adr">Sans ADR</option>
-        <option value="recette_sans_fonctionnalite">Sans fonctionnalité</option>
-        <option value="recette_sans_sprint">Sans sprint</option>
+        <option value="cadrage_sans_adr">Sans ADR</option>
+        <option value="cadrage_sans_fonctionnalite">Sans fonctionnalité</option>
+        <option value="cadrage_sans_sprint">Sans sprint</option>
       </select>
-      <button id="new-recette-btn" class="launch-btn">+ ${T.newEntity}</button>
+      <button id="new-cadrage-btn" class="launch-btn">+ ${T.newEntity}</button>
     </div>
-    <div class="project-cards">${recs.map(recetteCard).join('') || `<p class="muted">${T.empty}</p>`}</div>`;
+    <div class="project-cards">${recs.map(cadrageCard).join('') || `<p class="muted">${T.empty}</p>`}</div>`;
   renderUserUI();
   const sel = document.getElementById('rec-user-add');
   if (sel) sel.addEventListener('change', () => {
     const v = sel.value;
-    if (v && !recettesUserFilter.includes(v)) setUserFilter([...recettesUserFilter, v]);
+    if (v && !cadragesUserFilter.includes(v)) setUserFilter([...cadragesUserFilter, v]);
     sel.value = '';
   });
   const box = document.getElementById('rec-user-tags');
   if (box) box.addEventListener('click', (e) => {
     const x = e.target.closest('.chip-x');
-    if (x) setUserFilter(recettesUserFilter.filter((u) => u !== x.dataset.user));
+    if (x) setUserFilter(cadragesUserFilter.filter((u) => u !== x.dataset.user));
   });
   const clear = document.getElementById('rec-user-clear');
   if (clear) clear.addEventListener('click', () => setUserFilter([]));
   // Filtre cible « sans lien » : valeur pré-appliquée (clic carte) + persistance.
   const recMissingEl = document.getElementById('rec-missing');
   if (recMissingEl) {
-    recMissingEl.value = recettesMissingFilter || '';
+    recMissingEl.value = cadragesMissingFilter || '';
     recMissingEl.addEventListener('change', () => {
-      recettesMissingFilter = recMissingEl.value;
-      persistRecettesMissing();
+      cadragesMissingFilter = recMissingEl.value;
+      persistCadragesMissing();
       refreshActive();
     });
   }
-  document.getElementById('new-recette-btn').addEventListener('click', () => recetteCreateModal());
-  document.getElementById('new-recette-btn').addEventListener('click', () => recetteCreateModal());
-  document.querySelectorAll('#pane-recettes [data-rec-session]').forEach((b) => b.addEventListener('click', () => openRecetteSession(b.dataset.recSession, false, b)));
-  document.querySelectorAll('#pane-recettes [data-rec-finish]').forEach((b) => b.addEventListener('click', () => finishRecetteModal(b.dataset.recFinish)));
-  document.querySelectorAll('#pane-recettes [data-rec-items]').forEach((b) => b.addEventListener('click', () => recetteDetailItemsModal(b.dataset.recItems)));
-  document.querySelectorAll('#pane-recettes [data-rec-docs]').forEach((b) => b.addEventListener('click', () => recetteDocsModal(b.dataset.recDocs)));
-  document.querySelectorAll('#pane-recettes [data-rec-detail]').forEach((b) => b.addEventListener('click', () => recetteDetailModal(b.dataset.recDetail)));
-  document.querySelectorAll('#pane-recettes [data-rec-del]').forEach((b) => b.addEventListener('click', () => deleteRecetteFlow(b.dataset.recDel, b.dataset.recTitle, refreshActive)));
-  document.querySelectorAll('#pane-recettes [data-batch-session]').forEach((b) => b.addEventListener('click', () => openBatchSession(b.dataset.batchSession, b)));
-  document.querySelectorAll('#pane-recettes [data-batch-detail]').forEach((b) => b.addEventListener('click', () => batchDetailModal(b.dataset.batchDetail)));
+  document.getElementById('new-cadrage-btn').addEventListener('click', () => cadrageCreateModal());
+  document.querySelectorAll('#pane-cadrages [data-rec-session]').forEach((b) => b.addEventListener('click', () => openCadrageSession(b.dataset.recSession, false, b)));
+  document.querySelectorAll('#pane-cadrages [data-rec-finish]').forEach((b) => b.addEventListener('click', () => finishCadrageModal(b.dataset.recFinish)));
+  document.querySelectorAll('#pane-cadrages [data-rec-items]').forEach((b) => b.addEventListener('click', () => cadrageDetailItemsModal(b.dataset.recItems)));
+  document.querySelectorAll('#pane-cadrages [data-rec-docs]').forEach((b) => b.addEventListener('click', () => cadrageDocsModal(b.dataset.recDocs)));
+  document.querySelectorAll('#pane-cadrages [data-rec-detail]').forEach((b) => b.addEventListener('click', () => cadrageDetailModal(b.dataset.recDetail)));
+  document.querySelectorAll('#pane-cadrages [data-rec-del]').forEach((b) => b.addEventListener('click', () => deleteCadrageFlow(b.dataset.recDel, b.dataset.recTitle, refreshActive)));
+  document.querySelectorAll('#pane-cadrages [data-batch-session]').forEach((b) => b.addEventListener('click', () => openBatchSession(b.dataset.batchSession, b)));
+  document.querySelectorAll('#pane-cadrages [data-batch-detail]').forEach((b) => b.addEventListener('click', () => batchDetailModal(b.dataset.batchDetail)));
 }
 
 // ===========================================================================
-// Page « Recette » de l'ÉVALUATEUR PRODUIT (T-20260922-100650-sbc1) — onglet
-// `evaluations`. Objet DISTINCT du Cadrage technique (`recettes`). L'évaluateur
+// Page « Cadrage » de l'ÉVALUATEUR PRODUIT (T-20260922-100650-sbc1) — onglet
+// `recettes`. Objet DISTINCT du Cadrage technique (`cadrages`). L'évaluateur
 // décrit le PARCOURS ÉVALUÉ, rattache fonctionnalités (verdict) + règles métier,
 // enregistre des recommandations/problèmes et joint des pièces. Aucune
 // conversion en tâches. L'évaluateur ne voit que SES recettes.
 // ===========================================================================
-function evaluationsApiBase() { return '/api/evaluations'; }
+function recettesApiBase() { return '/api/recettes'; }
 
 // Icône d'une pièce d'évaluation selon sa nature (dont `maquette`/`performance`).
 function evalNatureIcon(nature) {
@@ -2937,19 +2936,19 @@ function evalDocDetailsHtml(doc) {
 }
 
 // Suit l'état d'un job de PERFORMANCE asynchrone jusqu'à DONE/ERROR, puis
-// recharge la recette (le rapport est alors rattaché comme pièce `performance`).
-async function pollEvaluationPerfJob(evaluationId, jobId, outEl, msgEl, tries = 0) {
+// recharge le cadrage (le rapport est alors rattaché comme pièce `performance`).
+async function pollRecettePerfJob(recetteId, jobId, outEl, msgEl, tries = 0) {
   try {
-    const r = await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/perf-jobs/${encodeURIComponent(jobId)}`);
+    const r = await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/perf-jobs/${encodeURIComponent(jobId)}`);
     if (r.status === 'RUNNING') {
       if (tries > 200) { if (outEl) outEl.textContent = 'Toujours en cours (suivi interrompu).'; return; }
-      setTimeout(() => pollEvaluationPerfJob(evaluationId, jobId, outEl, msgEl, tries + 1), 3000);
+      setTimeout(() => pollRecettePerfJob(recetteId, jobId, outEl, msgEl, tries + 1), 3000);
       return;
     }
     if (r.status === 'DONE') {
-      if (msgEl) { msgEl.textContent = 'Test de performance terminé — rapport rattaché à la recette.'; msgEl.className = 'msg'; }
+      if (msgEl) { msgEl.textContent = 'Test de performance terminé — rapport rattaché au cadrage.'; msgEl.className = 'msg'; }
       if (outEl) outEl.textContent = (r.result && r.result.report && r.result.report.summary) || 'Terminé.';
-      setTimeout(() => evaluationDetailModal(evaluationId), 1200);
+      setTimeout(() => recetteDetailModal(recetteId), 1200);
     } else {
       if (msgEl) { msgEl.textContent = 'Échec du test : ' + (r.error || (r.result && r.result.error) || 'inconnu'); msgEl.className = 'msg error'; }
     }
@@ -2959,7 +2958,7 @@ async function pollEvaluationPerfJob(evaluationId, jobId, outEl, msgEl, tries = 
 }
 
 // Badge de statut d'une évaluation (3 statuts : pending | in_progress | done).
-function evaluationStatusBadge(st) {
+function recetteStatusBadge(st) {
   const map = {
     done: ['done', 'faite'],
     in_progress: ['in_progress', 'en cours'],
@@ -2988,13 +2987,13 @@ function evalVerdictBadge(v) {
 }
 
 // Carte d'une recette évaluateur.
-function evaluationCard(e) {
+function recetteCard(e) {
   const canFinish = e.status !== 'done';
   return `<article class="project-card">
     <div class="project-card-head">
-      <strong class="recette-title" data-eval-detail="${esc(e.evaluation_id)}" title="Voir le détail">${esc(e.title || e.evaluation_id)}</strong>
+      <strong class="recette-title" data-eval-detail="${esc(e.recette_id)}" title="Voir le détail">${esc(e.title || e.recette_id)}</strong>
       <span class="rec-card-projs">${(e.repos || []).map((r) => `<code class="chip-repo">${esc(r.repoId || r)}</code>`).join(' ')}</span>
-      ${evaluationStatusBadge(e.status)}
+      ${recetteStatusBadge(e.status)}
     </div>
     <div class="project-card-body">
       ${e.description ? `<div class="project-kv"><span class="lbl">Parcours évalué</span><span class="muted-sm">${esc(e.description.slice(0, 120))}${e.description.length > 120 ? '…' : ''}</span></div>` : ''}
@@ -3006,33 +3005,33 @@ function evaluationCard(e) {
       <div class="project-kv"><span class="lbl">Créée par</span><span>${esc(e.created_by || '—')}</span></div>
     </div>
     <div class="project-card-actions">
-      <button class="ghost" data-eval-detail="${esc(e.evaluation_id)}">Détail</button>
-      <button class="ghost" data-eval-pieces="${esc(e.evaluation_id)}">Pièces (${e.documents_count || 0})</button>
-      ${canFinish && !IS_EXECUTEUR && !IS_SUPERVISOR ? `<button class="launch-btn" data-eval-session="${esc(e.evaluation_id)}" title="${e.session_id ? 'Reprendre la session rattachée' : "Ouvrir une session d'évaluation"}">Session de la recette</button>` : ''}
-      ${canFinish && !IS_EXECUTEUR && !IS_SUPERVISOR ? `<button class="approve" data-eval-finish="${esc(e.evaluation_id)}">Terminer la recette</button>` : ''}
+      <button class="ghost" data-eval-detail="${esc(e.recette_id)}">Détail</button>
+      <button class="ghost" data-eval-pieces="${esc(e.recette_id)}">Pièces (${e.documents_count || 0})</button>
+      ${canFinish && !IS_EXECUTEUR && !IS_SUPERVISOR ? `<button class="launch-btn" data-eval-session="${esc(e.recette_id)}" title="${e.session_id ? 'Reprendre la session rattachée' : "Ouvrir une session d'évaluation"}">Session de la recette</button>` : ''}
+      ${canFinish && !IS_EXECUTEUR && !IS_SUPERVISOR ? `<button class="approve" data-eval-finish="${esc(e.recette_id)}">Terminer la recette</button>` : ''}
     </div>
   </article>`;
 }
 
-async function renderEvaluations() {
-  const data = await api(evaluationsApiBase() + (currentProject ? `?project=${encodeURIComponent(currentProject)}` : ''));
-  let evals = data.evaluations || [];
-  const allCreators = [...new Set([...evals.map((e) => e.created_by || '—').filter(Boolean), ...evaluationsUserFilter])];
+async function renderRecettes() {
+  const data = await api(recettesApiBase() + (currentProject ? `?project=${encodeURIComponent(currentProject)}` : ''));
+  let evals = data.recettes || [];
+  const allCreators = [...new Set([...evals.map((e) => e.created_by || '—').filter(Boolean), ...recettesUserFilter])];
   const renderUserUI = () => {
     const box = document.getElementById('eval-user-tags');
     const sel = document.getElementById('eval-user-add');
     const clear = document.getElementById('eval-user-clear');
     if (!box) return;
-    box.innerHTML = evaluationsUserFilter.length
-      ? evaluationsUserFilter.map((u) => `<span class="status-chip"><span class="chip-txt">${esc(u)}</span><button type="button" class="chip-x" data-user="${esc(u)}" title="Retirer « ${esc(u)} »">×</button></span>`).join('')
+    box.innerHTML = recettesUserFilter.length
+      ? recettesUserFilter.map((u) => `<span class="status-chip"><span class="chip-txt">${esc(u)}</span><button type="button" class="chip-x" data-user="${esc(u)}" title="Retirer « ${esc(u)} »">×</button></span>`).join('')
       : '<span class="tagfilter-empty">tous les créateurs</span>';
-    sel.innerHTML = `<option value="">+ Ajouter…</option>` + allCreators.filter((u) => !evaluationsUserFilter.includes(u)).map((u) => `<option>${esc(u)}</option>`).join('');
-    clear.hidden = !evaluationsUserFilter.length;
+    sel.innerHTML = `<option value="">+ Ajouter…</option>` + allCreators.filter((u) => !recettesUserFilter.includes(u)).map((u) => `<option>${esc(u)}</option>`).join('');
+    clear.hidden = !recettesUserFilter.length;
   };
-  const setUserFilter = (next) => { evaluationsUserFilter = [...new Set(next)]; persistEvaluationsUsers(); refreshActive(); };
+  const setUserFilter = (next) => { recettesUserFilter = [...new Set(next)]; persistRecettesUsers(); refreshActive(); };
   // D012 : l'évaluateur ne voit que SES recettes → le filtre créateurs est masqué.
   // L'exécuteur accède à la page en LECTURE SEULE (ADR-002) : pas de filtre créateurs.
-  evals = (IS_EVALUATEUR || IS_EXECUTEUR) ? evals : evals.filter((e) => !evaluationsUserFilter.length || evaluationsUserFilter.includes(e.created_by || '—'));
+  evals = (IS_EVALUATEUR || IS_EXECUTEUR) ? evals : evals.filter((e) => !recettesUserFilter.length || recettesUserFilter.includes(e.created_by || '—'));
   const evalReadOnly = IS_EXECUTEUR || IS_SUPERVISOR;
   const treatableTotal = evals.reduce((n, e) => n + (Number(e.treatable_count) || 0), 0);
   // Libellé d'accès : l'exécuteur ne voit que les éléments « à traiter » ; le
@@ -3042,7 +3041,7 @@ async function renderEvaluations() {
     : IS_SUPERVISOR
       ? `Lecture seule — vous voyez toutes les recettes (${evals.length}).`
       : IS_EVALUATEUR ? 'Vous ne voyez que vos recettes.' : 'Admin/superviseur voient toutes les recettes.';
-  document.getElementById('pane-evaluations').innerHTML = `
+  document.getElementById('pane-recettes').innerHTML = `
     <h2>Recettes</h2>
     <p class="muted-sm">Recette de l'<strong>évaluateur produit</strong> — décrit le parcours évalué, rattache des fonctionnalités (verdict) et des règles métier, enregistre des recommandations/problèmes et joint des pièces (lien, document, photo, vidéo). ${evalReadOnlyHint}</p>
     <div class="filters">
@@ -3052,26 +3051,26 @@ async function renderEvaluations() {
         <select id="eval-user-add" title="Ajouter un créateur à filtrer"><option value="">+ Ajouter…</option></select>
         <button type="button" class="ghost tagfilter-clear" id="eval-user-clear" hidden>tout afficher</button>
       </div>`}
-      ${evalReadOnly ? '' : `<button id="new-evaluation-btn" class="launch-btn">+ Nouvelle recette</button>`}
+      ${evalReadOnly ? '' : `<button id="new-recette-btn" class="launch-btn">+ Nouvelle recette</button>`}
     </div>
-    <div class="project-cards">${evals.map(evaluationCard).join('') || '<p class="muted">Aucune recette.</p>'}</div>`;
+    <div class="project-cards">${evals.map(recetteCard).join('') || '<p class="muted">Aucune recette.</p>'}</div>`;
   renderUserUI();
   const sel = document.getElementById('eval-user-add');
-  if (sel) sel.addEventListener('change', () => { const v = sel.value; if (v && !evaluationsUserFilter.includes(v)) setUserFilter([...evaluationsUserFilter, v]); sel.value = ''; });
+  if (sel) sel.addEventListener('change', () => { const v = sel.value; if (v && !recettesUserFilter.includes(v)) setUserFilter([...recettesUserFilter, v]); sel.value = ''; });
   const box = document.getElementById('eval-user-tags');
-  if (box) box.addEventListener('click', (ev) => { const x = ev.target.closest('.chip-x'); if (x) setUserFilter(evaluationsUserFilter.filter((u) => u !== x.dataset.user)); });
+  if (box) box.addEventListener('click', (ev) => { const x = ev.target.closest('.chip-x'); if (x) setUserFilter(recettesUserFilter.filter((u) => u !== x.dataset.user)); });
   const clear = document.getElementById('eval-user-clear');
   if (clear) clear.addEventListener('click', () => setUserFilter([]));
-  const newEvalBtn = document.getElementById('new-evaluation-btn');
-  if (newEvalBtn) newEvalBtn.addEventListener('click', () => evaluationCreateModal());
-  document.querySelectorAll('#pane-evaluations [data-eval-detail]').forEach((b) => b.addEventListener('click', () => evaluationDetailModal(b.dataset.evalDetail)));
-  document.querySelectorAll('#pane-evaluations [data-eval-pieces]').forEach((b) => b.addEventListener('click', () => evaluationPiecesModal(b.dataset.evalPieces)));
-  document.querySelectorAll('#pane-evaluations [data-eval-session]').forEach((b) => b.addEventListener('click', () => openEvaluationSession(b.dataset.evalSession, false, b)));
-  document.querySelectorAll('#pane-evaluations [data-eval-finish]').forEach((b) => b.addEventListener('click', () => evaluationFinishConfirm(b.dataset.evalFinish)));
+  const newEvalBtn = document.getElementById('new-recette-btn');
+  if (newEvalBtn) newEvalBtn.addEventListener('click', () => recetteCreateModal());
+  document.querySelectorAll('#pane-recettes [data-eval-detail]').forEach((b) => b.addEventListener('click', () => recetteDetailModal(b.dataset.evalDetail)));
+  document.querySelectorAll('#pane-recettes [data-eval-pieces]').forEach((b) => b.addEventListener('click', () => recettePiecesModal(b.dataset.evalPieces)));
+  document.querySelectorAll('#pane-recettes [data-eval-session]').forEach((b) => b.addEventListener('click', () => openRecetteSession(b.dataset.evalSession, false, b)));
+  document.querySelectorAll('#pane-recettes [data-eval-finish]').forEach((b) => b.addEventListener('click', () => recetteFinishConfirm(b.dataset.evalFinish)));
 }
 
 // Modale de CRÉATION : parcours évalué + fonctionnalités + règles + pièces.
-async function evaluationCreateModal() {
+async function recetteCreateModal() {
   let projects = [];
   try { projects = ((await api('/api/projects')).projects || []); } catch {}
   const projOptions = projects.map((p) => `<option value="${esc(p.id)}" ${p.id === currentProject ? 'selected' : ''}>${esc(p.name || p.id)}</option>`).join('') || '<option value="">— aucun projet enregistré —</option>';
@@ -3209,7 +3208,7 @@ async function evaluationCreateModal() {
           if (art) documents.push({ mode: 'artifact', artifactId: art, nature, title });
         }
       }
-      await api(evaluationsApiBase(), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+      await api(recettesApiBase(), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         project: proj,
         title: document.getElementById('em-title').value.trim(),
         description: document.getElementById('em-description').value.trim() || undefined,
@@ -3225,10 +3224,10 @@ async function evaluationCreateModal() {
 }
 
 // Modale de DÉTAIL : éléments + verdicts fonctionnalités + règles + pièces.
-async function evaluationDetailModal(evaluationId) {
+async function recetteDetailModal(recetteId) {
   let d;
-  try { d = await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}`); } catch (e) { alert('Impossible de charger la recette : ' + (e.message || e)); return; }
-  const ev = d.evaluation || {};
+  try { d = await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}`); } catch (e) { alert('Impossible de charger la recette : ' + (e.message || e)); return; }
+  const ev = d.recette || {};
   const editable = ev.status !== 'done';
   // Écritures : l'évaluateur (propriétaire) et l'admin ; l'exécuteur ET le
   // superviseur sont en LECTURE SEULE (ADR-002) — leurs POST seraient refusés
@@ -3275,7 +3274,7 @@ async function evaluationDetailModal(evaluationId) {
   showModal(`
     <div class="modal modal-wide">
       <h2>Détail de la recette</h2>
-      <p class="muted">${esc(ev.title || evaluationId)} — <code>${esc(ev.project || '')}</code> ${evaluationStatusBadge(ev.status)}</p>
+      <p class="muted">${esc(ev.title || recetteId)} — <code>${esc(ev.project || '')}</code> ${recetteStatusBadge(ev.status)}</p>
       ${ev.description ? `<div class="eval-block"><span class="lbl">Parcours évalué</span><div class="muted-sm" style="white-space:pre-wrap">${esc(ev.description)}</div></div>` : ''}
       <h3>Éléments <span class="muted-sm">(recommandations / problèmes)</span></h3>
       <div class="recette-list" id="eval-items-list">
@@ -3360,14 +3359,14 @@ async function evaluationDetailModal(evaluationId) {
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
   // ADMIN : rattacher un élément EXISTANT (POST /api/links) ou en CRÉER un
-  // manquant (marqué émergent d'origine `recette`) puis le rattacher aussitôt.
+  // manquant (marqué émergent d'origine `cadrage`) puis le rattacher aussitôt.
   if (canLink) {
     const linkToEval = async (kind, targetId) => {
-      if (!targetId) { evaluationDetailModal(evaluationId); return; }
+      if (!targetId) { recetteDetailModal(recetteId); return; }
       try {
-        await api('/api/links', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: kind === 'rule' ? 'evaluation_rule' : 'evaluation_feature', a: evaluationId, b: targetId }) });
+        await api('/api/links', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: kind === 'rule' ? 'recette_rule' : 'recette_feature', a: recetteId, b: targetId }) });
       } catch (e) { alert('Rattachement impossible : ' + (e.message || e)); }
-      evaluationDetailModal(evaluationId);
+      recetteDetailModal(recetteId);
     };
     const attachF = document.getElementById('eval-attach-feature');
     if (attachF) attachF.addEventListener('change', () => linkToEval('feature', attachF.value));
@@ -3386,30 +3385,30 @@ async function evaluationDetailModal(evaluationId) {
   // Tests E2E du projet (ADR-003) : exécuter / lire les preuves depuis la recette.
   document.querySelectorAll('#modal-backdrop [data-e2e-detail]').forEach((b) => b.addEventListener('click', () => e2eDetailModal(b.dataset.e2eDetail)));
   document.querySelectorAll('#modal-backdrop [data-e2e-run]').forEach((b) => b.addEventListener('click', () => e2eRunModal(b.dataset.e2eRun)));
-  document.querySelectorAll('#modal-backdrop [data-e2e-incoherent]').forEach((b) => b.addEventListener('click', () => e2eIncoherentModal(b.dataset.e2eIncoherent, () => evaluationDetailModal(evaluationId))));
+  document.querySelectorAll('#modal-backdrop [data-e2e-incoherent]').forEach((b) => b.addEventListener('click', () => e2eIncoherentModal(b.dataset.e2eIncoherent, () => recetteDetailModal(recetteId))));
   const addBtn = document.getElementById('eval-item-add');
-  if (addBtn) addBtn.onclick = () => evaluationItemModal(evaluationId, null);
+  if (addBtn) addBtn.onclick = () => recetteItemModal(recetteId, null);
   document.querySelectorAll('#modal-backdrop [data-eval-item-edit]').forEach((b) => b.addEventListener('click', () => {
     const it = items.find((x) => String(x.itemId) === String(b.dataset.evalItemEdit));
-    evaluationItemModal(evaluationId, it);
+    recetteItemModal(recetteId, it);
   }));
   document.querySelectorAll('#modal-backdrop [data-eval-item-del]').forEach((b) => b.addEventListener('click', async () => {
     if (!confirm('Retirer cet élément ?')) return;
-    try { await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/items/${b.dataset.evalItemDel}`, { method: 'DELETE' }); evaluationDetailModal(evaluationId); }
+    try { await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/items/${b.dataset.evalItemDel}`, { method: 'DELETE' }); recetteDetailModal(recetteId); }
     catch (e) { alert('Échec : ' + (e.message || e)); }
   }));
   // Décision ADMIN (« à traiter » / « non retenu ») — route admin-only côté serveur.
   document.querySelectorAll('#modal-backdrop [data-eval-item-decide]').forEach((b) => b.addEventListener('click', async () => {
     try {
-      await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/items/${b.dataset.evalItemDecide}/decision`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision: b.dataset.decision }) });
-      evaluationDetailModal(evaluationId);
+      await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/items/${b.dataset.evalItemDecide}/decision`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision: b.dataset.decision }) });
+      recetteDetailModal(recetteId);
     } catch (e) { alert('Échec de la décision : ' + (e.message || e)); }
   }));
   // Pièces portées par un élément (`itemId`).
-  document.querySelectorAll('#modal-backdrop [data-eval-item-piece]').forEach((b) => b.addEventListener('click', () => evaluationItemPieceModal(evaluationId, Number(b.dataset.evalItemPiece))));
+  document.querySelectorAll('#modal-backdrop [data-eval-item-piece]').forEach((b) => b.addEventListener('click', () => recetteItemPieceModal(recetteId, Number(b.dataset.evalItemPiece))));
   document.querySelectorAll('#modal-backdrop [data-eval-verdict]').forEach((sel) => sel.addEventListener('change', async () => {
     try {
-      await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/verdicts`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fonctionnaliteId: sel.dataset.evalVerdict, verdict: sel.value || null }) });
+      await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/verdicts`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fonctionnaliteId: sel.dataset.evalVerdict, verdict: sel.value || null }) });
     } catch (e) { alert('Échec du verdict : ' + (e.message || e)); }
   }));
   // TESTS STANDARD (préprod) : POST asynchrone → suivi du job jusqu'au
@@ -3425,7 +3424,7 @@ async function evaluationDetailModal(evaluationId) {
     const pages = document.getElementById('epf-pages').value.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
     const routes = document.getElementById('epf-routes').value.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
     try {
-      const r = await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/perf-run`, {
+      const r = await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/perf-run`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           url: targetUrl,
@@ -3438,13 +3437,13 @@ async function evaluationDetailModal(evaluationId) {
       });
       msg.textContent = `Tests standard lancés (job ${r.jobId})…`;
       out.textContent = 'En cours — parcours + capture erreurs + stress. Cela peut prendre plusieurs minutes.';
-      pollEvaluationPerfJob(evaluationId, r.jobId, out, msg);
+      pollRecettePerfJob(recetteId, r.jobId, out, msg);
     } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
   });
 }
 
 // Modale AJOUT / ÉDITION d'un élément (recommandation | problème).
-function evaluationItemModal(evaluationId, item) {
+function recetteItemModal(recetteId, item) {
   const isEdit = !!(item && item.itemId);
   const cat = (item && item.category) || 'recommandation';
   const sev = (item && item.severity) || 'medium';
@@ -3488,21 +3487,21 @@ function evaluationItemModal(evaluationId, item) {
       };
       if (isEdit) {
         body.status = document.getElementById('ei-status').value;
-        await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/items/${item.itemId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/items/${item.itemId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       } else {
-        await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/items`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/items`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       }
-      evaluationDetailModal(evaluationId);
+      recetteDetailModal(recetteId);
     } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
   });
 }
 
 // Modale PIÈCES d'un ÉLÉMENT : liste + ajout (lien / document / photo / vidéo).
-// La pièce est rattachée à l'élément via `itemId` (contrat `evaluation_doc_add`).
-async function evaluationItemPieceModal(evaluationId, itemId) {
+// La pièce est rattachée à l'élément via `itemId` (contrat `recette_doc_add`).
+async function recetteItemPieceModal(recetteId, itemId) {
   let d;
-  try { d = await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}`); } catch (e) { alert('Impossible de charger la recette : ' + (e.message || e)); return; }
-  const ev = d.evaluation || {};
+  try { d = await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}`); } catch (e) { alert('Impossible de charger la recette : ' + (e.message || e)); return; }
+  const ev = d.recette || {};
   const item = (ev.items || []).find((x) => Number(x.itemId) === Number(itemId)) || {};
   const pieces = (ev.documents || []).filter((doc) => Number(doc.itemId) === Number(itemId));
   // Lecture seule stricte du superviseur (ADR-002) : ni ajout ni retrait de pièce.
@@ -3556,7 +3555,7 @@ async function evaluationItemPieceModal(evaluationId, itemId) {
     modeSel.addEventListener('change', sync); sync();
   }
   document.querySelectorAll('#modal-backdrop [data-eval-item-doc-del]').forEach((b) => b.addEventListener('click', async () => {
-    try { await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/documents/${b.dataset.evalItemDocDel}`, { method: 'DELETE' }); evaluationItemPieceModal(evaluationId, itemId); }
+    try { await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/documents/${b.dataset.evalItemDocDel}`, { method: 'DELETE' }); recetteItemPieceModal(recetteId, itemId); }
     catch (e) { alert('Échec : ' + (e.message || e)); }
   }));
   const itemPieceForm = document.getElementById('eval-item-piece-form');
@@ -3578,17 +3577,17 @@ async function evaluationItemPieceModal(evaluationId, itemId) {
         body.artifactId = document.getElementById('eip-art').value;
         if (!body.artifactId) throw new Error('artefact requis');
       }
-      await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/documents`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      evaluationItemPieceModal(evaluationId, itemId);
+      await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/documents`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      recetteItemPieceModal(recetteId, itemId);
     } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
   });
 }
 
 // Modale PIÈCES : liste + ajout (lien / document / photo / vidéo).
-async function evaluationPiecesModal(evaluationId) {
+async function recettePiecesModal(recetteId) {
   let d;
-  try { d = await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}`); } catch (e) { alert('Impossible de charger la recette : ' + (e.message || e)); return; }
-  const ev = d.evaluation || {};
+  try { d = await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}`); } catch (e) { alert('Impossible de charger la recette : ' + (e.message || e)); return; }
+  const ev = d.recette || {};
   // Lecture seule stricte du superviseur (ADR-002) : pas d'ajout ni de retrait.
   const editable = ev.status !== 'done' && !IS_SUPERVISOR;
   let allArtifacts = [];
@@ -3596,7 +3595,7 @@ async function evaluationPiecesModal(evaluationId) {
   showModal(`
     <div class="modal modal-wide">
       <h2>Pièces de la recette</h2>
-      <p class="muted">${esc(ev.title || evaluationId)}</p>
+      <p class="muted">${esc(ev.title || recetteId)}</p>
       <div class="recette-list">
         ${(ev.documents || []).map((doc) => `<div class="recette-item">
           <code class="muted-sm">${evalNatureIcon(doc.nature)}</code>
@@ -3640,7 +3639,7 @@ async function evaluationPiecesModal(evaluationId) {
     modeSel.addEventListener('change', sync); sync();
   }
   document.querySelectorAll('#modal-backdrop [data-eval-doc-del]').forEach((b) => b.addEventListener('click', async () => {
-    try { await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/documents/${b.dataset.evalDocDel}`, { method: 'DELETE' }); evaluationPiecesModal(evaluationId); }
+    try { await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/documents/${b.dataset.evalDocDel}`, { method: 'DELETE' }); recettePiecesModal(recetteId); }
     catch (e) { alert('Échec : ' + (e.message || e)); }
   }));
   const form = document.getElementById('eval-piece-form');
@@ -3662,17 +3661,17 @@ async function evaluationPiecesModal(evaluationId) {
         body.artifactId = document.getElementById('ep2-art').value;
         if (!body.artifactId) throw new Error('artefact requis');
       }
-      await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/documents`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      evaluationPiecesModal(evaluationId);
+      await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/documents`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      recettePiecesModal(recetteId);
     } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
   });
 }
 
 // Clôture d'une recette évaluateur (aucune tâche créée).
-async function evaluationFinishConfirm(evaluationId) {
+async function recetteFinishConfirm(recetteId) {
   if (!confirm('Terminer cette recette ? (aucune tâche ne sera créée)')) return;
   try {
-    await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/finish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+    await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/finish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
     refreshActive();
   } catch (e) { alert('Échec : ' + (e.message || e)); }
 }
@@ -3740,17 +3739,17 @@ async function batchDetailModal(batchId) {
   };
 }
 
-// Détail d'une recette en modale (titre court + description longue + périmètre).
-async function recetteDetailModal(recetteId) {
+// Détail d'un cadrage en modale (titre court + description longue + périmètre).
+async function cadrageDetailModal(cadrageId) {
   const T = cadrageTerms();
   let d;
-  try { d = await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}`); } catch (e) { alert(`Impossible de charger ${T.theEntity} : ` + (e.message || e)); return; }
-  const rec = d.recette || {};
+  try { d = await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}`); } catch (e) { alert(`Impossible de charger ${T.theEntity} : ` + (e.message || e)); return; }
+  const rec = d.cadrage || {};
   const tasks = rec.tasks || [];
   const items = rec.items || [];
   const project = rec.project || '';
   // Fonctionnalités / règles métier rattachées au cadrage (ADR-001), exposées par
-  // GET /api/recettes/:id (B006). L'émergence est affichée (origine `recette`).
+  // GET /api/cadrages/:id (B006). L'émergence est affichée (origine `cadrage`).
   const recFeatures = rec.fonctionnalites || [];
   const recRules = rec.regles || [];
   // Écritures du cadrage : masquées au superviseur (lecture seule stricte, ADR-002)
@@ -3772,8 +3771,8 @@ async function recetteDetailModal(recetteId) {
   }
   showModal(`
     <div class="modal modal-wide">
-      <h2>${esc(rec.title || recetteId)}</h2>
-      <p class="muted">${badge(rec.status)} · ${recetteScopeChips(rec)}${rec.confirmed_at ? ` · confirmée ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}</p>
+      <h2>${esc(rec.title || cadrageId)}</h2>
+      <p class="muted">${badge(rec.status)} · ${cadrageScopeChips(rec)}${rec.confirmed_at ? ` · confirmée ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}</p>
       ${rec.description ? `<p class="modal-request">${esc(rec.description)}</p>` : ''}
       ${tasks.length ? `<div class="actions-section"><h3>Tâches couvertes (${tasks.length})</h3><div class="recette-list">${tasks.map((t) => {
         const tid = (t && typeof t === 'object') ? (t.taskId || t.task_id || '') : (t || '');
@@ -3782,8 +3781,8 @@ async function recetteDetailModal(recetteId) {
         const tproj = (t && typeof t === 'object') ? (t.project || '') : '';
         return `<div class="recette-item"><code class="muted-sm">${esc(tid)}</code><div class="recette-task">${tproj ? `<code class="chip-project">${esc(tproj)}</code>` : ''}<strong>${esc(ttl)}</strong>${req ? `<p class="muted-sm">${esc(req)}</p>` : ''}</div>${canEditRec ? `<button type="button" class="ghost rec-task-del" data-rec-task-del="${esc(tid)}" title="Détacher cette tâche (elle reste intacte)">✕ retirer</button>` : ''}</div>`;
       }).join('')}</div>${canEditRec ? `<div class="rec-tasks-add"><select id="rec-task-add"><option value="">+ Ajouter une tâche couverte…</option></select></div>` : ''}</div></div>` : `<p class="muted-sm">Aucune tâche couverte (${T.entityLower} exploratoire).</p>`}
-      ${items.length ? `<div class="actions-section"><h3>${T.elementsCap} (${items.length})</h3><div class="recette-list">${items.map((it) => `<div class="recette-item"><span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span>${it.project ? `<code class="chip-project">${esc(it.project)}</code>` : ''}${it.execOrder != null ? `<span class="badge order-badge" title="Ordre d'exécution">ordre ${esc(it.execOrder)}</span>` : ''}${testIntentBadge(it)}${docIntentBadge(it)}${it.vigilance ? `<span class="badge danger" title="${esc(it.vigilance)}">⚠ vigilance</span>` : ''}<span>${esc(it.title || it.content.slice(0, 80))}</span>${canEditRec && it.status !== 'task_created' ? `<button type="button" class="ghost rec-item-del" data-rec-item-del="${it.id}" title="Retirer cet élément (fusion/consolidation)">✕</button>` : ''}</div>`).join('')}</div></div>` : ''}
-      ${(IS_EXECUTEUR || IS_ADMIN || IS_SUPERVISOR) ? `<div class="actions-section"><h3>Éléments évaluateur à traiter</h3><div class="recette-list">${(rec.evaluationItems || []).map((it) => `<div class="recette-item">${evalCategoryBadge(it.category)} ${evalSeverityBadge(it.severity)}<span>${esc(it.content)}</span><span class="muted-sm">repris par ce cadrage</span>${canEditRec ? `<button type="button" class="ghost rec-eval-item-del" data-rec-eval-item-del="${it.itemId}" title="Retirer la reprise (l'élément reste « à traiter »)">✕ retirer</button>` : ''}</div>`).join('') || '<p class="muted-sm">Aucun élément évaluateur repris dans ce cadrage.</p>'}</div>${canEditRec ? `<div class="rec-tasks-add"><select id="rec-eval-item-add"><option value="">+ Reprendre un élément « à traiter »…</option></select></div>` : ''}</div>` : ''}
+      ${items.length ? `<div class="actions-section"><h3>${T.elementsCap} (${items.length})</h3><div class="recette-list">${items.map((it) => `<div class="recette-item"><span class="badge ${CADRAGE_CLS_BADGE[it.classification] || 'queued'}">${CADRAGE_CLS_LABEL[it.classification] || it.classification}</span>${it.project ? `<code class="chip-project">${esc(it.project)}</code>` : ''}${it.execOrder != null ? `<span class="badge order-badge" title="Ordre d'exécution">ordre ${esc(it.execOrder)}</span>` : ''}${testIntentBadge(it)}${docIntentBadge(it)}${it.vigilance ? `<span class="badge danger" title="${esc(it.vigilance)}">⚠ vigilance</span>` : ''}<span>${esc(it.title || it.content.slice(0, 80))}</span>${canEditRec && it.status !== 'task_created' ? `<button type="button" class="ghost rec-item-del" data-rec-item-del="${it.id}" title="Retirer cet élément (fusion/consolidation)">✕</button>` : ''}</div>`).join('')}</div></div>` : ''}
+      ${(IS_EXECUTEUR || IS_ADMIN || IS_SUPERVISOR) ? `<div class="actions-section"><h3>Éléments évaluateur à traiter</h3><div class="recette-list">${(rec.recetteItems || []).map((it) => `<div class="recette-item">${evalCategoryBadge(it.category)} ${evalSeverityBadge(it.severity)}<span>${esc(it.content)}</span><span class="muted-sm">repris par ce cadrage</span>${canEditRec ? `<button type="button" class="ghost rec-eval-item-del" data-rec-eval-item-del="${it.itemId}" title="Retirer la reprise (l'élément reste « à traiter »)">✕ retirer</button>` : ''}</div>`).join('') || '<p class="muted-sm">Aucun élément évaluateur repris dans ce cadrage.</p>'}</div>${canEditRec ? `<div class="rec-tasks-add"><select id="rec-eval-item-add"><option value="">+ Reprendre un élément « à traiter »…</option></select></div>` : ''}</div>` : ''}
       <div class="actions-section"><h3>Fonctionnalités &amp; règles métier rattachées</h3>
         <div class="recette-list">
           ${recFeatures.map((f) => `<div class="recette-item"><code class="chip">${esc(f.ref || f.id)}</code>${f.emergent ? ` <span class="chip" title="Créé depuis ${T.theEntity} — marqué émergent">émergent</span>` : ''}<span>${esc((f.userStory || '').slice(0, 90))}</span></div>`).join('') || '<p class="muted-sm">Aucune fonctionnalité rattachée.</p>'}
@@ -3804,14 +3803,14 @@ async function recetteDetailModal(recetteId) {
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
   // ADMIN : rattacher un élément EXISTANT (POST /api/links) ou en CRÉER un
-  // manquant (émergent origine `recette`) puis le rattacher aussitôt.
+  // manquant (émergent origine `cadrage`) puis le rattacher aussitôt.
   if (canLinkRec) {
     const linkToRec = async (kind, targetId) => {
-      if (!targetId) { closeModal(); recetteDetailModal(recetteId); return; }
+      if (!targetId) { closeModal(); cadrageDetailModal(cadrageId); return; }
       try {
-        await api('/api/links', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: kind === 'rule' ? 'recette_rule' : 'recette_feature', a: recetteId, b: targetId }) });
+        await api('/api/links', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: kind === 'rule' ? 'cadrage_rule' : 'cadrage_feature', a: cadrageId, b: targetId }) });
       } catch (e) { alert('Rattachement impossible : ' + (e.message || e)); }
-      closeModal(); recetteDetailModal(recetteId);
+      closeModal(); cadrageDetailModal(cadrageId);
     };
     const aF = document.getElementById('rec-attach-feature');
     if (aF) aF.addEventListener('change', () => linkToRec('feature', aF.value));
@@ -3823,8 +3822,8 @@ async function recetteDetailModal(recetteId) {
         const ent = kind === 'rule' ? (created && created.rule) : (created && created.feature);
         await linkToRec(kind, ent && ent.id);
       };
-      if (kind === 'rule') ruleFormModal(null, [], onSaved, [], { projectId: project, fromRecette: true, recetteId });
-      else featureFormModal(null, [], onSaved, { projectId: project, fromRecette: true, recetteId });
+      if (kind === 'rule') ruleFormModal(null, [], onSaved, [], { projectId: project, fromCadrage: true, cadrageId });
+      else featureFormModal(null, [], onSaved, { projectId: project, fromCadrage: true, cadrageId });
     }));
   }
   if (canEditRec) {
@@ -3834,7 +3833,7 @@ async function recetteDetailModal(recetteId) {
     if (taskAddSel) {
       (async () => {
         try {
-          const d = await api(`${recettesApiBase()}/candidates?project=${encodeURIComponent(project)}`);
+          const d = await api(`${cadragesApiBase()}/candidates?project=${encodeURIComponent(project)}`);
           const cands = (d.candidates || []).filter((c) => !coveredIds.has(c.id));
           taskAddSel.innerHTML = `<option value="">+ Ajouter une tâche couverte…</option>` + cands.map((c) => `<option value="${esc(c.id)}">[${esc(c.project)}] ${esc((c.title || c.request || c.id).slice(0, 70))}</option>`).join('');
         } catch {}
@@ -3842,66 +3841,66 @@ async function recetteDetailModal(recetteId) {
           const t = taskAddSel.value;
           if (!t) return;
           try {
-            await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/tasks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: t }) });
-            closeModal(); recetteDetailModal(recetteId);
+            await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}/tasks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: t }) });
+            closeModal(); cadrageDetailModal(cadrageId);
           } catch (e) { alert('Échec : ' + (e.message || e)); taskAddSel.value = ''; }
         });
       })();
     }
     document.querySelectorAll('#modal-backdrop [data-rec-task-del]').forEach((b) => b.addEventListener('click', async () => {
       try {
-        await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/tasks/${encodeURIComponent(b.dataset.recTaskDel)}`, { method: 'DELETE' });
-        closeModal(); recetteDetailModal(recetteId);
+        await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}/tasks/${encodeURIComponent(b.dataset.recTaskDel)}`, { method: 'DELETE' });
+        closeModal(); cadrageDetailModal(cadrageId);
       } catch (e) { alert('Échec : ' + (e.message || e)); }
     }));
     document.querySelectorAll('#modal-backdrop [data-rec-item-del]').forEach((b) => b.addEventListener('click', async () => {
       if (!confirm(`Retirer cet ${T.element} ? (utilisé pour la fusion/consolidation d'éléments)`)) return;
       try {
-        await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/items/${b.dataset.recItemDel}`, { method: 'DELETE' });
-        closeModal(); recetteDetailModal(recetteId);
+        await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}/items/${b.dataset.recItemDel}`, { method: 'DELETE' });
+        closeModal(); cadrageDetailModal(cadrageId);
       } catch (e) { alert('Échec : ' + (e.message || e)); }
     }));
-    // Reprise d'un ÉLÉMENT DE RECETTE ÉVALUATEUR « à traiter » (sélection en
+    // Reprise d'un ÉLÉMENT DE CADRAGE ÉVALUATEUR « à traiter » (sélection en
     // contexte) — traçage « repris par le cadrage X ».
     const evalItemAddSel = document.getElementById('rec-eval-item-add');
     if (evalItemAddSel) {
       (async () => {
         try {
-          const dd = await api(`/api/evaluations/treatable?project=${encodeURIComponent(project)}`);
-          const already = new Set((rec.evaluationItems || []).map((x) => Number(x.itemId)));
+          const dd = await api(`/api/recettes/treatable?project=${encodeURIComponent(project)}`);
+          const already = new Set((rec.recetteItems || []).map((x) => Number(x.itemId)));
           const cands = (dd.items || []).filter((c) => !already.has(Number(c.itemId)));
-          evalItemAddSel.innerHTML = `<option value="">+ Reprendre un élément « à traiter »…</option>` + cands.map((c) => `<option value="${c.itemId}">[${esc(c.evaluationTitle || c.evaluationId || '')}] ${esc((c.content || '').slice(0, 70))}</option>`).join('');
+          evalItemAddSel.innerHTML = `<option value="">+ Reprendre un élément « à traiter »…</option>` + cands.map((c) => `<option value="${c.itemId}">[${esc(c.recetteTitle || c.recetteId || '')}] ${esc((c.content || '').slice(0, 70))}</option>`).join('');
         } catch {}
         evalItemAddSel.addEventListener('change', async () => {
           const v = evalItemAddSel.value;
           if (!v) return;
           try {
-            await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/evaluation-items`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ itemId: Number(v) }) });
-            closeModal(); recetteDetailModal(recetteId);
+            await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}/recette-items`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ itemId: Number(v) }) });
+            closeModal(); cadrageDetailModal(cadrageId);
           } catch (e) { alert('Échec : ' + (e.message || e)); evalItemAddSel.value = ''; }
         });
       })();
     }
     document.querySelectorAll('#modal-backdrop [data-rec-eval-item-del]').forEach((b) => b.addEventListener('click', async () => {
       try {
-        await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/evaluation-items/${b.dataset.recEvalItemDel}`, { method: 'DELETE' });
-        closeModal(); recetteDetailModal(recetteId);
+        await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}/recette-items/${b.dataset.recEvalItemDel}`, { method: 'DELETE' });
+        closeModal(); cadrageDetailModal(cadrageId);
       } catch (e) { alert('Échec : ' + (e.message || e)); }
     }));
   }
 }
 
-// Documents d'une recette : liste, ajout (import / artefact), lecture, retrait.
-async function recetteDocsModal(recetteId) {
+// Documents d'un cadrage : liste, ajout (import / artefact), lecture, retrait.
+async function cadrageDocsModal(cadrageId) {
   const T = cadrageTerms();
   let d;
-  try { d = await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}`); } catch (e) { alert(`Impossible de charger ${T.theEntity} : ` + (e.message || e)); return; }
-  const rec = d.recette || {};
+  try { d = await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}`); } catch (e) { alert(`Impossible de charger ${T.theEntity} : ` + (e.message || e)); return; }
+  const rec = d.cadrage || {};
   const docs = rec.documents || [];
   showModal(`
     <div class="modal modal-wide">
       <h2>${T.docTitle}</h2>
-      <p class="muted">${esc(rec.title || recetteId)} — <span class="code">${esc(rec.project || '')}</span></p>
+      <p class="muted">${esc(rec.title || cadrageId)} — <span class="code">${esc(rec.project || '')}</span></p>
       <div class="recette-list">
         ${docs.map((doc) => `<div class="recette-item">
           <code class="muted-sm">${doc.source === 'artifact' ? '🔗' : '📄'}</code>
@@ -3916,23 +3915,23 @@ async function recetteDocsModal(recetteId) {
       <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
-  document.getElementById('rec-doc-add').onclick = () => recetteDocAddModal(recetteId);
+  document.getElementById('rec-doc-add').onclick = () => cadrageDocAddModal(cadrageId);
   document.querySelectorAll('#modal-backdrop [data-doc-del]').forEach((b) => b.addEventListener('click', async () => {
     try {
-      await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/documents/${b.dataset.docDel}`, { method: 'DELETE' });
-      closeModal(); recetteDocsModal(recetteId);
+      await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}/documents/${b.dataset.docDel}`, { method: 'DELETE' });
+      closeModal(); cadrageDocsModal(cadrageId);
     } catch (e) { alert('Échec : ' + (e.message || e)); }
   }));
   document.querySelectorAll('#modal-backdrop [data-doc-view]').forEach((b) => b.addEventListener('click', async () => {
     try {
-      const v = await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/documents/${b.dataset.docView}/view`);
+      const v = await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}/documents/${b.dataset.docView}/view`);
       showModal(`<div class="modal modal-wide modal-md"><div class="md-head"><strong>${esc(v.title || 'Document')}</strong></div><div class="md-body markdown-view">${v.html}</div><div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div></div>`);
       document.getElementById('modal-cancel').onclick = closeModal;
     } catch (e) { alert('Impossible d\'ouvrir le document : ' + (e.message || e)); }
   }));
 }
 
-async function recetteDocAddModal(recetteId) {
+async function cadrageDocAddModal(cadrageId) {
   const T = cadrageTerms();
   let arts = [];
   try { arts = ((await api('/api/artifacts')).artifacts || []); } catch {}
@@ -3980,14 +3979,14 @@ async function recetteDocAddModal(recetteId) {
         body.artifactId = document.getElementById('rd-artifact').value;
         if (!body.artifactId) throw new Error('artefact requis');
       }
-      await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/documents`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}/documents`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       closeModal();
-      recetteDocsModal(recetteId);
+      cadrageDocsModal(cadrageId);
     } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
   });
 }
 
-async function recetteCreateModal() {
+async function cadrageCreateModal() {
   const T = cadrageTerms();
   let projects = [];
   try { projects = ((await api('/api/projects')).projects || []); } catch {}
@@ -4045,7 +4044,7 @@ async function recetteCreateModal() {
     candBox.innerHTML = '<p class="muted-sm">Chargement…</p>';
     if (!proj) { candBox.innerHTML = '<p class="muted-sm">Choisissez un projet.</p>'; return; }
     try {
-      const d = await api(`${recettesApiBase()}/candidates?project=${encodeURIComponent(proj)}`);
+      const d = await api(`${cadragesApiBase()}/candidates?project=${encodeURIComponent(proj)}`);
       const c = d.candidates || [];
       candBox.innerHTML = c.length
         ? `<div class="recette-cand-list">${c.map((t) => `
@@ -4060,9 +4059,9 @@ async function recetteCreateModal() {
     } catch (e) { candBox.innerHTML = '<p class="muted-sm">Erreur de chargement : ' + esc(e.message || e) + '</p>'; }
   };
   document.getElementById('rm-load-cands').addEventListener('click', loadCandidates);
-  // ADR rattachées à la recette (item 125) : sélection multi-lignes des ADR du
-  // projet (+ repos transverses). Les ADR cochées sont rattachées à la recette
-  // (recette_doc_add côté pilot) ET leur bloc est injecté dans le prompt.
+  // ADR rattachées au cadrage (item 125) : sélection multi-lignes des ADR du
+  // projet (+ repos transverses). Les ADR cochées sont rattachées au cadrage
+  // (cadrage_doc_add côté pilot) ET leur bloc est injecté dans le prompt.
   const adrBox = document.getElementById('rm-adr-pick');
   const reposForProject = (pid) => { const p = projects.find((x) => x.id === pid); return (p && p.repos) || []; };
   const loadAdrs = async () => {
@@ -4105,13 +4104,13 @@ async function recetteCreateModal() {
       ...features.map((x) => x.role).filter(Boolean),
       ...rules.flatMap((x) => x.roles || []),
     ])].sort();
-    featureBox.innerHTML = frSelectorHtml('feature', features, { prefix: 'rm-feature-pick', roles, projectId: proj, fromRecette: true, entityWord: 'cadrage' });
+    featureBox.innerHTML = frSelectorHtml('feature', features, { prefix: 'rm-feature-pick', roles, projectId: proj, fromCadrage: true, entityWord: 'cadrage' });
     bindFrSelector('rm-feature-pick', { projectId: proj, projectRoles: roles, entityWord: 'cadrage' });
-    ruleBox.innerHTML = frSelectorHtml('rule', rules, { prefix: 'rm-rule-pick', roles, projectId: proj, fromRecette: true, entityWord: 'cadrage' });
+    ruleBox.innerHTML = frSelectorHtml('rule', rules, { prefix: 'rm-rule-pick', roles, projectId: proj, fromCadrage: true, entityWord: 'cadrage' });
     bindFrSelector('rm-rule-pick', { projectId: proj, projectRoles: roles, entityWord: 'cadrage' });
   };
   // Éléments de recette évaluateur « à traiter » (T-20260922-141007-p4dc) :
-  // candidats du projet sélectionné chargés via GET /api/evaluations/treatable
+  // candidats du projet sélectionné chargés via GET /api/recettes/treatable
   // (garde `decision='a_traiter'` portée par le registre). Rafraîchi au
   // changement de projet, comme les fieldsets ADR / Fonctionnalités / Règles.
   const evalItemBox = document.getElementById('rm-eval-item-pick');
@@ -4122,7 +4121,7 @@ async function recetteCreateModal() {
     evalItemBox.innerHTML = '<p class="muted-sm">Chargement des éléments « à traiter »…</p>';
     let items = [];
     try {
-      const d = await api(`/api/evaluations/treatable?project=${encodeURIComponent(proj)}`);
+      const d = await api(`/api/recettes/treatable?project=${encodeURIComponent(proj)}`);
       items = (d && d.items) || [];
     } catch (e) {
       evalItemBox.innerHTML = '<p class="muted-sm">Erreur de chargement : ' + esc(e.message || e) + '</p>';
@@ -4205,7 +4204,7 @@ async function recetteCreateModal() {
           if (art) documents.push({ mode: 'artifact', artifactId: art, title, nature });
         }
       }
-      const created = await api(recettesApiBase(), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+      const created = await api(cadragesApiBase(), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         project: proj,
         title: document.getElementById('rm-title').value.trim(),
         description: document.getElementById('rm-description').value.trim() || undefined,
@@ -4216,17 +4215,17 @@ async function recetteCreateModal() {
         ruleIds: selectedFrIds('rule', 'rm-rule-pick'), // toujours un tableau (vide = aucune règle métier)
         organizationId: currentOrg || undefined,
       }) });
-      // Reprise des ÉLÉMENTS DE RECETTE ÉVALUATEUR cochés (T-20260922-141007-p4dc) :
+      // Reprise des ÉLÉMENTS DE CADRAGE ÉVALUATEUR cochés (T-20260922-141007-p4dc) :
       // le cadrage est créé (comportement inchangé) PUIS les éléments cochés sont
-      // rattachés via POST /api/recettes/:id/evaluation-items. Erreurs NON
+      // rattachés via POST /api/cadrages/:id/recette-items. Erreurs NON
       // bloquantes mais reportées dans le message de la modale.
-      const createdId = created && created.recette && (created.recette.recetteId || created.recette.id);
+      const createdId = created && created.cadrage && (created.cadrage.cadrageId || created.cadrage.id);
       const evalItemIds = selectedEvalItemIds('rm-eval-item-pick');
       const linkErrors = [];
       if (createdId && evalItemIds.length) {
         for (const itemId of evalItemIds) {
           try {
-            await api(`${recettesApiBase()}/${encodeURIComponent(createdId)}/evaluation-items`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ itemId: Number(itemId) }) });
+            await api(`${cadragesApiBase()}/${encodeURIComponent(createdId)}/recette-items`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ itemId: Number(itemId) }) });
           } catch (err) { linkErrors.push(`#${itemId} : ${err.message || err}`); }
         }
       }
@@ -4245,17 +4244,17 @@ async function recetteCreateModal() {
   });
 }
 
-// Modal de recette (items) : 'finish' = clôture avec confirmation (in_progress) ;
-// 'detail' = lecture seule (recette terminée) — même présentation, sans action de clôture.
+// Modal de cadrage (items) : 'finish' = clôture avec confirmation (in_progress) ;
+// 'detail' = lecture seule (cadrage terminée) — même présentation, sans action de clôture.
 // En mode 'finish', chaque élément est modifiable/supprimable avant clôture, et la
-// recette peut être terminée AVEC ou SANS génération de tâches.
-async function recetteItemsModal(recetteId, mode = 'finish') {
+// cadrage peut être terminée AVEC ou SANS génération de tâches.
+async function cadrageItemsModal(cadrageId, mode = 'finish') {
   const T = cadrageTerms();
   const readOnly = mode === 'detail';
   const CLASS_OPTS = ['rework', 'bug', 'improvement', 'feature'];
   let d;
-  try { d = await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}`); } catch (e) { alert(`Impossible de charger ${T.theEntity} : ` + (e.message || e)); return; }
-  const rec = d.recette || {};
+  try { d = await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}`); } catch (e) { alert(`Impossible de charger ${T.theEntity} : ` + (e.message || e)); return; }
+  const rec = d.cadrage || {};
   // Points de vigilance ADR (item 126) : un point OUVERT BLOQUE la terminaison.
   if (!Array.isArray(rec.adrVigilancesOpen)) rec.adrVigilancesOpen = (rec.adrVigilances || []).filter((v) => v.status === 'open');
   const vigList = () => rec.adrVigilancesOpen || [];
@@ -4266,7 +4265,7 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
     const truncated = full.length > 120;
     const show = truncated ? full.slice(0, 120) + '…' : full;
     return `<div class="recette-item finish-item" data-item-id="${it.id}">
-      <span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span>
+      <span class="badge ${CADRAGE_CLS_BADGE[it.classification] || 'queued'}">${CADRAGE_CLS_LABEL[it.classification] || it.classification}</span>
       ${it.project ? `<code class="chip-project">${esc(it.project)}</code>` : ''}
       <div class="recette-task">
         <strong>${esc(it.title || it.content.slice(0, 60))}</strong>
@@ -4290,7 +4289,7 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
   const editForm = (it) => `<div class="recette-item finish-item finish-item-edit" data-item-id="${it.id}">
     <div class="recette-task">
       <div class="finish-field"><span>Classification</span>
-        <select class="fe-classification">${CLASS_OPTS.map((c) => `<option value="${c}" ${it.classification === c ? 'selected' : ''}>${RECETTE_CLS_LABEL[c]}</option>`).join('')}</select></div>
+        <select class="fe-classification">${CLASS_OPTS.map((c) => `<option value="${c}" ${it.classification === c ? 'selected' : ''}>${CADRAGE_CLS_LABEL[c]}</option>`).join('')}</select></div>
       <div class="finish-field"><span>Titre court (titre de la tâche créée)</span>
         <input class="fe-title" value="${esc(it.title || '')}"></div>
       <div class="finish-field"><span>Contenu (remarque / demande / constat)</span>
@@ -4328,7 +4327,7 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
     <div class="modal modal-wide modal-finish" id="finish-modal">
       <div class="finish-head"><h2 style="margin:0">${readOnly ? T.detail : T.finish}</h2>
         <button class="ghost" id="finish-fullscreen" title="Plein écran">⛶</button></div>
-      <p class="muted">${esc(rec.title || recetteId)} — ${recetteScopeChips(rec)}${readOnly && rec.confirmed_at ? ` · clôturée le ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}</p>
+      <p class="muted">${esc(rec.title || cadrageId)} — ${cadrageScopeChips(rec)}${readOnly && rec.confirmed_at ? ` · clôturée le ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}</p>
       ${!readOnly && vigList().length ? `<div class="adr-vig-block" id="adr-vig-block">
         <strong>⚠ Terminaison bloquée — points de vigilance ADR ouverts :</strong>
         <ul class="adr-vig-reasons">${vigReasonsHtml()}</ul>
@@ -4371,7 +4370,7 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
       const original = b.innerHTML;
       setBtnBusy(b, 'Suppression');
       try {
-        await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/items/${b.dataset.itemDel}`, { method: 'DELETE' });
+        await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}/items/${b.dataset.itemDel}`, { method: 'DELETE' });
         await reloadItems();
       } catch (e) {
         b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
@@ -4396,7 +4395,7 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
       };
       try {
         setBtnBusy(b, 'Enregistrement');
-        await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/items/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields }) });
+        await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}/items/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields }) });
         await reloadItems();
       } catch (e) {
         msg.textContent = e.message || e;
@@ -4412,8 +4411,8 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
   };
   const reloadItems = async () => {
     try {
-      const dd = await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}`);
-      items = (dd.recette && dd.recette.items) || [];
+      const dd = await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}`);
+      items = (dd.cadrage && dd.cadrage.items) || [];
     } catch { /* conserve l'état courant */ }
     renderItems();
   };
@@ -4439,9 +4438,9 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ resolution: reason.trim(), resolutionKind: 'manual' }),
           });
-          const dd = await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}`);
-          rec.adrVigilances = (dd.recette && dd.recette.adrVigilances) || [];
-          rec.adrVigilancesOpen = (dd.recette && dd.recette.adrVigilancesOpen) || rec.adrVigilances.filter((v) => v.status === 'open');
+          const dd = await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}`);
+          rec.adrVigilances = (dd.cadrage && dd.cadrage.adrVigilances) || [];
+          rec.adrVigilancesOpen = (dd.cadrage && dd.cadrage.adrVigilancesOpen) || rec.adrVigilances.filter((v) => v.status === 'open');
           const blk = document.getElementById('adr-vig-block');
           if (vigList().length) {
             if (blk) { blk.querySelector('.adr-vig-reasons').innerHTML = vigReasonsHtml(); wireVigBlock(); }
@@ -4470,9 +4469,9 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
     try {
       const payload = items.map((it) => ({ itemId: it.id, content: it.content, classification: it.classification, title: it.title, acceptance: it.acceptance, scope: it.scope, execOrder: it.execOrder }));
       const launchMode = (document.querySelector('input[name="rec-launch-mode"]:checked') || {}).value || 'batch';
-      const r = await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/finish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: payload, launchMode, createTasks: true }) });
+      const r = await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}/finish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: payload, launchMode, createTasks: true }) });
       msg.textContent = r.created && r.created.length
-        ? 'Tâches créées : ' + r.created.map((c) => `${c.taskId} (${RECETTE_CLS_LABEL[c.classification]})`).join(', ')
+        ? 'Tâches créées : ' + r.created.map((c) => `${c.taskId} (${CADRAGE_CLS_LABEL[c.classification]})`).join(', ')
         : T.doneNoTasks;
       msg.className = 'msg ok';
       closeModal();
@@ -4494,7 +4493,7 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
     setBtnBusy(noTasksBtn, 'Clôture');
     if (confirmBtn) confirmBtn.disabled = true;
     try {
-      await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/finish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ createTasks: false }) });
+      await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}/finish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ createTasks: false }) });
       closeModal();
       alert(T.doneNoTasks);
       refreshActive();
@@ -4507,8 +4506,8 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
   };
 }
 
-function finishRecetteModal(recetteId) { return recetteItemsModal(recetteId, 'finish'); }
-function recetteDetailItemsModal(recetteId) { return recetteItemsModal(recetteId, 'detail'); }
+function finishCadrageModal(cadrageId) { return cadrageItemsModal(cadrageId, 'finish'); }
+function cadrageDetailItemsModal(cadrageId) { return cadrageItemsModal(cadrageId, 'detail'); }
 
 // --- Plans (plans d'action, persistance SQLite) ----------------------------
 function progressBar(pct) {
@@ -5200,7 +5199,7 @@ async function renderProjects() {
             <div class="project-kv"><span class="lbl">Repos</span><div class="repo-badges">${repoBadges}</div></div>
           </div>
           <div class="project-card-actions">
-            <button class="ghost" data-open-project="${esc(p.id)}" title="Ouvrir le projet : tâches, recettes, tests E2E, déploiements, décisions, plans, archives…">Ouvrir</button>
+            <button class="ghost" data-open-project="${esc(p.id)}" title="Ouvrir le projet : tâches, cadrages, tests E2E, déploiements, décisions, plans, archives…">Ouvrir</button>
             <button class="ghost" data-project-detail="${esc(p.id)}" title="Détails du projet (modifier, repos, documents…)">Détail</button>
           </div>
         </article>`;
@@ -6084,7 +6083,7 @@ async function renderSprints() {
   }));
   // Suppression d'un sprint (bouton masqué pour le sprint par défaut) :
   // confirmation → DELETE ; le registre refuse (409) le sprint par défaut ou
-  // portant tâches/recettes → message explicite affiché tel quel.
+  // portant tâches/cadrages → message explicite affiché tel quel.
   pane.querySelectorAll('[data-sp-del]').forEach((b) => b.addEventListener('click', async () => {
     if (!confirm('Supprimer ce sprint ? Ses liens (fonctionnalités, règles, pièces) seront détachés ; les entités restent au projet.')) return;
     try {
@@ -6106,7 +6105,7 @@ async function sprintDetailModal(sprintId) {
       ${sec('Fonctionnalités', d.fonctionnalites, (f) => `<code class="chip">${esc(f.ref)}</code> ${esc(f.userStory || '')}${f.emergent ? ' <span class="chip">émergente</span>' : ''}`)}
       ${sec('Règles métier', d.regles, (r) => `<code class="chip">${esc(r.ref)}</code> ${esc(r.content || '')}${r.emergent ? ' <span class="chip">émergente</span>' : ''}`)}
       ${sec('Tâches', d.tasks, (t) => `<code class="chip">${esc(t.id)}</code> ${esc(t.title || t.request || '')} ${badge(t.status)}${t.emergent ? ' <span class="chip">émergente</span>' : ''}`)}
-      ${sec('Recettes', d.recettes, (r) => `<code class="chip">${esc(r.recetteId)}</code> ${esc(r.title || '')}`)}
+      ${sec('Cadrages', d.cadrages, (r) => `<code class="chip">${esc(r.cadrageId)}</code> ${esc(r.title || '')}`)}
       <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
     </div>`);
     document.getElementById('modal-cancel').onclick = closeModal;
@@ -6168,7 +6167,7 @@ async function openMigrationSession(btn) {
 
 // Ouvre la session de sprint (agent-sprint) : reprend la session rattachée au
 // sprint si elle existe (jamais de doublon) ; `force = true` en démarre une
-// nouvelle. Miroir de `openRecetteSession` (route POST /api/sprints/:id/session).
+// nouvelle. Miroir de `openCadrageSession` (route POST /api/sprints/:id/session).
 async function openSprintSession(sprintId, force, btn) {
   const original = btn ? btn.innerHTML : null;
   setBtnBusy(btn, 'Ouverture');
@@ -6186,7 +6185,7 @@ async function openSprintSession(sprintId, force, btn) {
 // ===========================================================================
 // ONGLET FONCTIONNALITÉS / RÈGLES MÉTIER (ADR-001, T5) — table structurée
 // (Ref / rôle / user story), règles métier, liens fonctionnalité↔règle /
-// ↔scénario Gherkin / ↔ADR, visibilité des rattachements sprint/tâches/recettes,
+// ↔scénario Gherkin / ↔ADR, visibilité des rattachements sprint/tâches/cadrages,
 // CRUD (création / modification : l'agent propose, l'humain valide/ajuste).
 // ===========================================================================
 
@@ -6209,7 +6208,7 @@ const LINK_PRESETS = {
     feature_adr:     { side: 'a', other: 'adr',     label: 'Fonctionnalité ↔ ADR' },
     feature_sprint:  { side: 'a', other: 'sprint',  label: 'Fonctionnalité ↔ Sprint' },
     task_feature:    { side: 'b', other: 'task',    label: 'Tâche ↔ Fonctionnalité' },
-    recette_feature: { side: 'b', other: 'recette', label: 'Recette ↔ Fonctionnalité' },
+    cadrage_feature: { side: 'b', other: 'cadrage', label: 'Cadrage ↔ Fonctionnalité' },
   },
   rule: {
     feature_rule: { side: 'b', other: 'feature', label: 'Fonctionnalité ↔ Règle métier' },
@@ -6260,7 +6259,7 @@ function linkModal(preset, entityId, refs, onSaved) {
 
 function featureFormModal(feature, pieces, onSaved, opts = {}) {
   const isEdit = !!(feature && feature.id);
-  // Contexte de création : projet explicite + signal d'émergence `recette`
+  // Contexte de création : projet explicite + signal d'émergence `cadrage`
   // (création depuis une recette évaluateur / un cadrage). `opts` est OPTIONNEL :
   // la création standard (onglet Fonctionnalités & Règles) reste inchangée.
   const proj = opts.projectId || currentProject;
@@ -6346,11 +6345,11 @@ function featureFormModal(feature, pieces, onSaved, opts = {}) {
       if (isEdit) {
         result = await api(`/api/features/${encodeURIComponent(feature.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       } else {
-        // Création en contexte recette/cadrage : `fromRecette` (émergence origine
-        // `recette`) + `recetteId` transmis au registre (réservé admin côté serveur).
+        // Création en contexte cadrage/cadrage : `fromCadrage` (émergence origine
+        // `cadrage`) + `cadrageId` transmis au registre (réservé admin côté serveur).
         const createBody = { projectId: proj, ...body };
-        if (opts.fromRecette) createBody.fromRecette = true;
-        if (opts.recetteId) createBody.recetteId = opts.recetteId;
+        if (opts.fromCadrage) createBody.fromCadrage = true;
+        if (opts.cadrageId) createBody.cadrageId = opts.cadrageId;
         const created = await api('/api/features', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(createBody) });
         result = created;
         const newId = created && created.feature && created.feature.id;
@@ -6458,10 +6457,10 @@ function ruleFormModal(rule, pieces, onSaved, projectRoles, opts = {}) {
       if (isEdit) {
         result = await api(`/api/rules/${encodeURIComponent(rule.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       } else {
-        // Création en contexte recette/cadrage (miroir de featureFormModal).
+        // Création en contexte cadrage/cadrage (miroir de featureFormModal).
         const createBody = { projectId: proj, ...body };
-        if (opts.fromRecette) createBody.fromRecette = true;
-        if (opts.recetteId) createBody.recetteId = opts.recetteId;
+        if (opts.fromCadrage) createBody.fromCadrage = true;
+        if (opts.cadrageId) createBody.cadrageId = opts.cadrageId;
         const created = await api('/api/rules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(createBody) });
         result = created;
         const newId = created && created.rule && created.rule.id;
@@ -6491,11 +6490,11 @@ async function featureDetailModal(featureId) {
       <p>${esc(f.userStory || '')}</p>
       ${sec('Règles métier', f.regles, (r) => `<code class="chip">${esc(r.ref)}</code> ${esc(r.content || '')}`)}
       <div style="margin:8px 0"><strong>Tests E2E liés</strong> (${(f.gherkin || []).length})<div class="recette-list" style="max-height:20vh;overflow:auto">${(f.gherkin || []).length ? f.gherkin.map((g) => `<div class="recette-item"><div><button type="button" class="chip fr-e2e-link" data-fr-e2e="${esc(g.e2eTestId)}" title="${esc(g.title || g.scenario || '')}">${esc(g.title || g.scenario || g.e2eTestId)}</button> <code class="chip">${esc(g.status || '')}</code></div></div>`).join('') : '<p class="muted-sm">Aucun test E2E lié.</p>'}</div></div>
-      <div style="margin:8px 0"><strong>Verdicts d'évaluation</strong> (${(f.evaluationVerdicts || []).length}) <span class="muted-sm">— lecture seule, axe distinct du statut de développement</span><div class="recette-list" style="max-height:20vh;overflow:auto">${(f.evaluationVerdicts || []).length ? f.evaluationVerdicts.map((v) => `<div class="recette-item"><div><code class="chip">${esc(v.evaluationId)}</code> ${esc(v.title || '')} — <strong>${esc(v.verdict || 'sans verdict')}</strong>${v.verdictComment ? ` — ${esc(v.verdictComment)}` : ''}</div></div>`).join('') : '<p class="muted-sm">Aucun verdict d\'évaluation.</p>'}</div></div>
+      <div style="margin:8px 0"><strong>Verdicts d'évaluation</strong> (${(f.recetteVerdicts || []).length}) <span class="muted-sm">— lecture seule, axe distinct du statut de développement</span><div class="recette-list" style="max-height:20vh;overflow:auto">${(f.recetteVerdicts || []).length ? f.recetteVerdicts.map((v) => `<div class="recette-item"><div><code class="chip">${esc(v.recetteId)}</code> ${esc(v.title || '')} — <strong>${esc(v.verdict || 'sans verdict')}</strong>${v.verdictComment ? ` — ${esc(v.verdictComment)}` : ''}</div></div>`).join('') : '<p class="muted-sm">Aucun verdict d\'évaluation.</p>'}</div></div>
       ${sec('ADR', f.adrs, (a) => `<code class="chip">${esc(a.adrId)}</code> ${esc(a.title || '')}`)}
       ${sec('Sprints', f.sprints, (s) => `<code class="chip">${esc(s.id)}</code> ${esc(s.title || '')} ${sprintStatusBadge(s.status)}`)}
       ${sec('Tâches', f.tasks, (t) => `<code class="chip">${esc(t.id)}</code> ${esc(t.title || t.request || '')}`)}
-      ${sec('Recettes', f.recettes, (r) => `<code class="chip">${esc(r.recetteId)}</code> ${esc(r.title || '')}`)}
+      ${sec('Cadrages', f.cadrages, (r) => `<code class="chip">${esc(r.cadrageId)}</code> ${esc(r.title || '')}`)}
       <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
     </div>`);
     document.getElementById('modal-cancel').onclick = closeModal;
@@ -6527,7 +6526,7 @@ async function ruleDetailModal(ruleId) {
 // `/api/features/:id` + `/api/rules/:id` (N+1) ont disparu. L'index alimente À
 // LA FOIS la colonne « Liens » (`frLinkCellHtml`) ET les filtres « sans lien »
 // (`frFilter*`).
-// Structure : { features: { id: { rules, gherkin, adrs, sprints, tasks, recettes } },
+// Structure : { features: { id: { rules, gherkin, adrs, sprints, tasks, cadrages } },
 //               rules:    { id: { features, sprints } } }.
 // Repli non bloquant : une entité SANS `links` (registre non encore déployé) est
 // ABSENTE de l'index → ses liens s'affichent `—`/« aucun lien », jamais
@@ -6553,7 +6552,7 @@ function frLinkCellHtml(kind, id, linkIndex) {
     if (o.adrs) parts.push(`${o.adrs} ADR`);
     if (o.sprints) parts.push(`${o.sprints} sprint(s)`);
     if (o.tasks) parts.push(`${o.tasks} tâche(s)`);
-    if (o.recettes) parts.push(`${o.recettes} recette(s)`);
+    if (o.cadrages) parts.push(`${o.cadrages} cadrage(s)`);
   } else {
     if (o.features) parts.push(`${o.features} fonctionnalité(s)`);
     if (o.sprints) parts.push(`${o.sprints} sprint(s)`);
@@ -6736,7 +6735,7 @@ function frFilterRules(rules, filter, linkIndex) {
 // (`?cascadeAdrs=1`). Aucune suppression silencieuse d'ADR.
 async function deleteFeatureFlow(featureId, onDone) {
   if (!featureId) return;
-  if (!confirm('Supprimer cette fonctionnalité ? Ses liens (règles, Gherkin, ADR, sprints, tâches, recettes) seront détachés.')) return;
+  if (!confirm('Supprimer cette fonctionnalité ? Ses liens (règles, Gherkin, ADR, sprints, tâches, cadrages) seront détachés.')) return;
   const del = (cascade) => api(`/api/features/${encodeURIComponent(featureId)}${cascade ? '?cascadeAdrs=1' : ''}`, { method: 'DELETE' });
   try {
     await del(false);
@@ -6764,19 +6763,19 @@ async function deleteRuleFlow(ruleId, onDone) {
   } catch (e) { alert('Suppression impossible : ' + ((e && e.message) || e)); }
 }
 
-// Suppression d'une RECETTE ENTIÈRE (cadrage technique) depuis le panneau —
+// Suppression d'une CADRAGE ENTIÈRE (cadrage technique) depuis le panneau —
 // ADMIN uniquement. DOUBLE confirmation (action IRRÉVERSIBLE) → DELETE
-// `/api/recettes/:id` (nettoyage en CASCADE côté registre : éléments, liens de
+// `/api/cadrages/:id` (nettoyage en CASCADE côté registre : éléments, liens de
 // tâches, documents/artefacts, points de vigilance ADR liés, liens
 // sprint/fonctionnalité/règle/ADR/projet, signaux de cardinalité ouverts). Les
-// tâches et éléments d'évaluation rattachés RESTENT au registre.
-async function deleteRecetteFlow(recetteId, title, onDone) {
-  if (!recetteId) return;
-  const label = title || recetteId;
-  if (!confirm(`Supprimer DÉFINITIVEMENT ${label} ?\n\nToute sa famille sera nettoyée (éléments, liens de tâches, documents, points de vigilance ADR, liens sprint/fonctionnalité/règle/ADR). Les tâches et éléments d'évaluation rattachés restent au registre.`)) return;
-  if (!confirm(`Confirmer la suppression IRRÉVERSIBLE de ${recetteId} ?`)) return;
+// tâches et éléments de recette évaluateur rattachés RESTENT au registre.
+async function deleteCadrageFlow(cadrageId, title, onDone) {
+  if (!cadrageId) return;
+  const label = title || cadrageId;
+  if (!confirm(`Supprimer DÉFINITIVEMENT ${label} ?\n\nToute sa famille sera nettoyée (éléments, liens de tâches, documents, points de vigilance ADR, liens sprint/fonctionnalité/règle/ADR). Les tâches et éléments de recette évaluateur rattachés restent au registre.`)) return;
+  if (!confirm(`Confirmer la suppression IRRÉVERSIBLE de ${cadrageId} ?`)) return;
   try {
-    await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}`, { method: 'DELETE' });
+    await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}`, { method: 'DELETE' });
     if (typeof onDone === 'function') await onDone();
   } catch (e) { alert('Suppression impossible : ' + ((e && e.message) || e)); }
 }
@@ -7050,7 +7049,7 @@ async function renderFeaturesRules() {
     api(`/api/e2e-tests?project=${encodeURIComponent(currentProject)}`).catch(() => ({ tests: [] })),
     api(`/api/sprints?projectId=${encodeURIComponent(currentProject)}`).catch(() => ({ sprints: [] })),
     api('/api/tasks').catch(() => ({ tasks: [] })),
-    api(`${recettesApiBase()}?project=${encodeURIComponent(currentProject)}`).catch(() => ({ recettes: [] })),
+    api(`${cadragesApiBase()}?project=${encodeURIComponent(currentProject)}`).catch(() => ({ cadrages: [] })),
     api(`/api/pieces?projectId=${encodeURIComponent(currentProject)}`).catch(() => ({ pieces: [] })),
   ]);
   const features = featRes.features || [];
@@ -7063,7 +7062,7 @@ async function renderFeaturesRules() {
     adr: (docRes.docs || []).filter((d) => d.kind === 'adr-tech').map((d) => ({ id: d.docId, label: `${d.title || d.docId}` })),
     sprint: (sprintRes.sprints || []).map((s) => ({ id: s.id, label: `${s.title || s.id} (${s.status})` })),
     task: (taskRes.tasks || []).filter((t) => !t.project || t.project === currentProject).map((t) => ({ id: t.id, label: `${t.id} — ${(t.title || t.request || '').slice(0, 50)}` })),
-    recette: (recRes.recettes || []).map((r) => ({ id: r.recette_id, label: `${r.recette_id} — ${(r.title || '').slice(0, 50)}` })),
+    cadrage: (recRes.cadrages || []).map((r) => ({ id: r.cadrage_id, label: `${r.cadrage_id} — ${(r.title || '').slice(0, 50)}` })),
   };
   // Index DÉTERMINISTE des liens : alimente la colonne « Liens » ET les filtres
   // « sans lien » des DEUX sous-onglets — désormais SANS appel réseau (dérivé du
@@ -7115,9 +7114,9 @@ const CARDINALITY_CARDS = [
   { view: 'tache_sans_adr',              label: 'Tâches sans ADR',               tab: 'tasks',    filter: 'tache_sans_adr' },
   { view: 'tache_sans_fonctionnalite',   label: 'Tâches sans fonctionnalité',    tab: 'tasks',    filter: 'tache_sans_fonctionnalite' },
   { view: 'tache_sans_sprint',           label: 'Tâches sans sprint',            tab: 'tasks',    filter: 'tache_sans_sprint' },
-  { view: 'recette_sans_adr',            label: 'Cadrages sans ADR',             tab: 'recettes', filter: 'recette_sans_adr' },
-  { view: 'recette_sans_fonctionnalite', label: 'Cadrages sans fonctionnalité',  tab: 'recettes', filter: 'recette_sans_fonctionnalite' },
-  { view: 'recette_sans_sprint',         label: 'Cadrages sans sprint',          tab: 'recettes', filter: 'recette_sans_sprint' },
+  { view: 'cadrage_sans_adr',            label: 'Cadrages sans ADR',             tab: 'cadrages', filter: 'cadrage_sans_adr' },
+  { view: 'cadrage_sans_fonctionnalite', label: 'Cadrages sans fonctionnalité',  tab: 'cadrages', filter: 'cadrage_sans_fonctionnalite' },
+  { view: 'cadrage_sans_sprint',         label: 'Cadrages sans sprint',          tab: 'cadrages', filter: 'cadrage_sans_sprint' },
   { view: 'adr_sans_fonctionnalite',     label: 'ADR sans fonctionnalité',       tab: 'adr',      filter: 'adr_sans_fonctionnalite' },
   { view: 'sprint_sans_fonctionnalite',  label: 'Sprints sans fonctionnalité',   tab: 'sprints',  filter: 'sprint_sans_fonctionnalite' },
   { view: 'sprint_sans_regle',           label: 'Sprints sans règle métier',     tab: 'sprints',  filter: 'sprint_sans_regle' },
@@ -7386,15 +7385,15 @@ function frSelectorHtml(kind, items, opts = {}) {
   const label = isRule ? 'règle métier' : 'fonctionnalité';
   const unit = isRule ? 'règles' : 'fonctionnalités';
   // Contexte de création : projet explicite (sinon projet courant) + signal
-  // d'émergence `recette` (création depuis une recette évaluateur / un cadrage).
+  // d'émergence `cadrage` (création depuis une recette évaluateur / un cadrage).
   const createProject = opts.projectId || currentProject || '';
   // Bouton « ＋ Créer une … manquante » : ADMIN uniquement (ADR-001). Le clic est
   // câblé par `bindFrSelector` (ouvre la modale de création puis coche l'élément).
   const createBtn = IS_ADMIN
-    ? `<button type="button" class="ghost" data-fr-create="${isRule ? 'rule' : 'feature'}" title="Créer une ${label} manquante (marquée émergente, rattachée à ${opts.entityWord ? `ce ${opts.entityWord}` : 'la recette/cadrage'})">＋ Créer une ${label} manquante</button>`
+    ? `<button type="button" class="ghost" data-fr-create="${isRule ? 'rule' : 'feature'}" title="Créer une ${label} manquante (marquée émergente, rattachée à ${opts.entityWord ? `ce ${opts.entityWord}` : 'le cadrage/cadrage'})">＋ Créer une ${label} manquante</button>`
     : '';
   return `
-    <div class="adr-pick" id="${esc(prefix)}" data-unit="${esc(unit)}" data-project-id="${esc(createProject)}" data-from-recette="${opts.fromRecette ? '1' : '0'}" data-recette-id="${esc(opts.recetteId || '')}">
+    <div class="adr-pick" id="${esc(prefix)}" data-unit="${esc(unit)}" data-project-id="${esc(createProject)}" data-from-cadrage="${opts.fromCadrage ? '1' : '0'}" data-recette-id="${esc(opts.cadrageId || '')}">
       <div class="adr-pick-filters">
         <input type="search" class="adr-pick-search" placeholder="Rechercher une ${label}…">
         <select class="adr-pick-role">${roleOpts}</select>
@@ -7414,7 +7413,7 @@ function selectedFrIds(kind, prefix) {
 // Câble recherche + filtre rôle du sélecteur Fonctionnalités/Règles `prefix`.
 // `opts` (optionnel) : `{ pieces, projectRoles, onCreated(kind, newId, entity) }`.
 // Si le bouton admin « ＋ Créer une … manquante » est présent, son clic ouvre la
-// modale de création (contexte projet + émergence `recette`), puis la nouvelle
+// modale de création (contexte projet + émergence `cadrage`), puis la nouvelle
 // ligne est insérée COCHÉE dans la liste et `onCreated` est appelé (rattachement).
 function bindFrSelector(prefix, opts = {}) {
   const root = document.getElementById(prefix);
@@ -7457,7 +7456,7 @@ function bindFrSelector(prefix, opts = {}) {
     row.className = 'adr-pick-row';
     row.dataset.search = [it.ref, meta].join(' ').toLowerCase();
     row.dataset.role = isRule ? (it.roleGlobal ? '__global__' : (Array.isArray(it.roles) ? it.roles.join(' ') : '')) : (it.role || '');
-    row.innerHTML = `<input type="checkbox" class="adr-pick-cb" value="${esc(it.id)}" checked><span class="adr-pick-head"><strong>${esc(ref)}</strong> ${badge} <span class="chip" title="Élément créé depuis ${opts.entityWord ? `ce ${opts.entityWord}` : 'la recette/cadrage'}">émergent</span></span><span class="adr-pick-meta">${meta ? adrCellText(meta, 120) : '<span class="muted-sm">—</span>'}</span>`;
+    row.innerHTML = `<input type="checkbox" class="adr-pick-cb" value="${esc(it.id)}" checked><span class="adr-pick-head"><strong>${esc(ref)}</strong> ${badge} <span class="chip" title="Élément créé depuis ${opts.entityWord ? `ce ${opts.entityWord}` : 'le cadrage/cadrage'}">émergent</span></span><span class="adr-pick-meta">${meta ? adrCellText(meta, 120) : '<span class="muted-sm">—</span>'}</span>`;
     const placeholder = list.querySelector('p.muted-sm');
     if (placeholder) placeholder.remove();
     list.prepend(row);
@@ -7470,26 +7469,26 @@ function bindFrSelector(prefix, opts = {}) {
     createBtn.addEventListener('click', () => {
       const kind = createBtn.dataset.frCreate === 'rule' ? 'rule' : 'feature';
       const projectId = root.dataset.projectId || currentProject;
-      const fromRecette = root.dataset.fromRecette === '1';
-      const recetteId = root.dataset.recetteId || '';
+      const fromCadrage = root.dataset.fromCadrage === '1';
+      const cadrageId = root.dataset.cadrageId || '';
       const onSaved = async (created) => {
         const entity = kind === 'rule' ? (created && created.rule) : (created && created.feature);
         const newId = entity && entity.id;
         if (entity) appendRow(kind, entity);
         if (typeof opts.onCreated === 'function') await opts.onCreated(kind, newId, entity);
       };
-      if (kind === 'rule') ruleFormModal(null, opts.pieces || [], onSaved, opts.projectRoles || [], { projectId, fromRecette, recetteId });
-      else featureFormModal(null, opts.pieces || [], onSaved, { projectId, fromRecette, recetteId });
+      if (kind === 'rule') ruleFormModal(null, opts.pieces || [], onSaved, opts.projectRoles || [], { projectId, fromCadrage, cadrageId });
+      else featureFormModal(null, opts.pieces || [], onSaved, { projectId, fromCadrage, cadrageId });
     });
   }
   apply();
 }
 
 // ===========================================================================
-// Sélecteur multi-lignes ÉLÉMENTS DE RECETTE ÉVALUATEUR « à traiter »
+// Sélecteur multi-lignes ÉLÉMENTS DE CADRAGE ÉVALUATEUR « à traiter »
 // (T-20260922-141007-p4dc) — réutilise les classes CSS `.adr-pick*` (aucun CSS
 // ajouté), comme les sélecteurs ADR / Fonctionnalités / Règles. Les candidats
-// proviennent de `GET /api/evaluations/treatable?project=…` : uniquement les
+// proviennent de `GET /api/recettes/treatable?project=…` : uniquement les
 // éléments `decision='a_traiter'` (garde portée par le registre). AUCUN coché
 // par défaut (la reprise est un choix explicite).
 //   evalItemSelectorHtml(items, { prefix }) → HTML (message explicite si vide)
@@ -7501,7 +7500,7 @@ function evalItemSelectorHtml(items, opts = {}) {
   const list = items || [];
   const rows = list.map((it) => {
     const id = it.itemId;
-    const origin = it.evaluationTitle || it.evaluationId || `#${id}`;
+    const origin = it.recetteTitle || it.recetteId || `#${id}`;
     const repris = (Array.isArray(it.reprisPar) && it.reprisPar.length)
       ? `<span class="muted-sm" title="Déjà repris par un cadrage">· déjà repris par ${esc(it.reprisPar.map((r) => r.title || r.cadrageId).join(', '))}</span>`
       : '';
@@ -8022,13 +8021,13 @@ async function taskActionsModal(taskId) {
   const task = detail.task || {};
   const execs = detail.executions || [];
   const status = execs[0]?.status || task.status || 'queued';
-  const recette = task.recette_status || 'pending';
+  const cadrage = task.cadrage_status || 'pending';
   const decisions = detail.decisions || [];
   // Décisions humaines ACTIONNABLES = awaiting sans permission_id (canal B :
   // besoin/prérequis/validation demandés par un agent) — les permissions d'outil
   // (permission_id présent) restent résolues dans la session de l'agent.
   // Une tâche `done` n'a PLUS d'attente humaine : on ne propose aucune action.
-  const awaiting = status === 'done' ? [] : decisions.filter((d) => d.status === 'awaiting' && d.kind !== 'recette' && !d.permission_id);
+  const awaiting = status === 'done' ? [] : decisions.filter((d) => d.status === 'awaiting' && d.kind !== 'cadrage' && !d.permission_id);
   const linked = detail.linkedTasks || [];
 
   showModal(`
@@ -8037,7 +8036,7 @@ async function taskActionsModal(taskId) {
       <p class="muted-sm"><strong>Titre :</strong> ${esc((task.title && task.title.trim()) ? task.title : '—')}</p>
       <div class="modal-request">${esc(task.request || '—')}</div>
       ${(() => { let c = ''; try { const a = typeof task.acceptance_criteria === 'string' ? JSON.parse(task.acceptance_criteria) : (task.acceptance_criteria || []); c = Array.isArray(a) ? a.join(' · ') : String(a || ''); } catch { c = String(task.acceptance_criteria || ''); } return c ? `<p class="muted-sm"><strong>Critère d'acceptation :</strong> ${esc(c)}</p>` : ''; })()}
-      <p class="muted-sm">Projet <span class="code">${esc(task.project)}</span> · Type <span class="code">${esc(task.type)}</span> · ${badge(status)} · Recette ${recetteBadge(recette)}</p>
+      <p class="muted-sm">Projet <span class="code">${esc(task.project)}</span> · Type <span class="code">${esc(task.type)}</span> · ${badge(status)} · Cadrage ${cadrageBadge(cadrage)}</p>
       ${(task.repos && task.repos.length) ? `<p class="muted-sm"><strong>Repos ciblés (${task.repos.length}) :</strong> ${task.repos.map((r) => `<code class="chip">${esc(r.id)}${r.mainBranch ? ' · ' + esc(r.mainBranch) : ''}</code>`).join(' ')}</p>` : ''}
 
       ${linked.length ? `
@@ -8079,7 +8078,7 @@ async function taskActionsModal(taskId) {
           </div>`).join('')}
       </div>` : ''}
 
-      ${status === 'done' ? recetteSectionHtml(recette, detail) : ''}
+      ${status === 'done' ? cadrageSectionHtml(cadrage, detail) : ''}
 
       <div class="actions-section">
         <h3>Tests E2E</h3>
@@ -8122,12 +8121,12 @@ async function taskActionsModal(taskId) {
   if (editBtn) editBtn.onclick = () => { closeModal(); taskEditModal(taskId, detail); };
   const rework = document.getElementById('act-rework');
   if (rework) rework.onclick = () => { closeModal(); reworkTaskModal(taskId); };
-  const recetteSession = document.getElementById('act-recette-session');
-  if (recetteSession) recetteSession.onclick = () => openRecetteSession(recetteSession.dataset.recId, false, recetteSession);
-  const recetteFinish = document.getElementById('act-recette-finish');
-  if (recetteFinish) recetteFinish.onclick = () => { closeModal(); finishRecetteModal(recetteFinish.dataset.recId); };
-  const recetteDetail = document.getElementById('act-recette-detail');
-  if (recetteDetail) recetteDetail.onclick = () => { closeModal(); recetteDetailItemsModal(recetteDetail.dataset.recId); };
+  const cadrageSession = document.getElementById('act-recette-session');
+  if (cadrageSession) cadrageSession.onclick = () => openCadrageSession(cadrageSession.dataset.recId, false, cadrageSession);
+  const cadrageFinish = document.getElementById('act-recette-finish');
+  if (cadrageFinish) cadrageFinish.onclick = () => { closeModal(); finishCadrageModal(cadrageFinish.dataset.recId); };
+  const cadrageDetail = document.getElementById('act-recette-detail');
+  if (cadrageDetail) cadrageDetail.onclick = () => { closeModal(); cadrageDetailItemsModal(cadrageDetail.dataset.recId); };
   const archive = document.getElementById('act-archive');
   if (archive) archive.onclick = () => { closeModal(); openArchiveConfirm(taskId); };
   document.querySelectorAll('#modal-backdrop [data-goto-task]').forEach((b) => b.addEventListener('click', () => { const tid = b.dataset.gotoTask; closeModal(); taskActionsModal(tid); refreshActive(); }));
@@ -8312,15 +8311,15 @@ async function launchTaskModal(taskId) {
 }
 
 async function reworkTaskModal(taskId) {
-  // Bug 5/6 — préremplir la session courante et les remarques (rejet de recette).
+  // Bug 5/6 — préremplir la session courante et les remarques (rejet de cadrage).
   let latestSession = '';
   let defaultRemarks = '';
   try {
     const d = await api(`/api/tasks/${encodeURIComponent(taskId)}`);
     const sessions = (d.sessions && d.sessions.length) ? d.sessions : [];
     if (sessions.length) latestSession = sessions[sessions.length - 1].sessionId || '';
-    const rejectedRecette = (d.decisions || []).filter((x) => x.kind === 'recette' && x.status === 'rejected');
-    if (rejectedRecette.length) defaultRemarks = rejectedRecette[rejectedRecette.length - 1].resolution || '';
+    const rejectedCadrage = (d.decisions || []).filter((x) => x.kind === 'cadrage' && x.status === 'rejected');
+    if (rejectedCadrage.length) defaultRemarks = rejectedCadrage[rejectedCadrage.length - 1].resolution || '';
   } catch { /* valeurs par défaut vides */ }
 
   showModal(`
@@ -8367,9 +8366,9 @@ async function reworkTaskModal(taskId) {
   };
 }
 
-// --- Recette (v0.7.0) : section + clôture -----------------------------------
-const RECETTE_CLS_LABEL = { rework: 'Rework', bug: 'Bug', improvement: 'Improvement', feature: 'Feature' };
-const RECETTE_CLS_BADGE = { rework: 'danger', bug: 'danger', improvement: 'approve', feature: 'ghost' };
+// --- Cadrage (v0.7.0) : section + clôture -----------------------------------
+const CADRAGE_CLS_LABEL = { rework: 'Rework', bug: 'Bug', improvement: 'Improvement', feature: 'Feature' };
+const CADRAGE_CLS_BADGE = { rework: 'danger', bug: 'danger', improvement: 'approve', feature: 'ghost' };
 
 function testIntentBadge(it) {
   const t = it && it.testIntent;
@@ -8389,10 +8388,10 @@ function docIntentBadge(it) {
   return `<span class="badge" style="background:rgba(140,190,255,.16);color:#8cbeff;border:1px solid rgba(140,190,255,.35)" title="Intention doc : ${esc(d.action)} (${typeLabel})${d.summary ? ' — ' + esc(d.summary) : ''}${d.reason ? ' — ' + esc(d.reason) : ''}">📄 ${esc(typeLabel)} : ${esc(actionLabel)}${esc(target)}</span>`;
 }
 
-function recetteItemRow(it) {
+function cadrageItemRow(it) {
   return `<div class="recette-item">
     <code class="muted-sm">#${it.id || it.itemId}</code>
-    <span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span>
+    <span class="badge ${CADRAGE_CLS_BADGE[it.classification] || 'queued'}">${CADRAGE_CLS_LABEL[it.classification] || it.classification}</span>
     ${it.project ? `<code class="chip-project">${esc(it.project)}</code>` : ''}
     ${it.execOrder != null ? `<span class="badge order-badge" title="Ordre d'exécution (même numéro = parallèle)">ordre ${esc(it.execOrder)}</span>` : ''}
     ${testIntentBadge(it)}
@@ -8403,29 +8402,29 @@ function recetteItemRow(it) {
   </div>`;
 }
 
-function recetteSectionHtml(recetteStatus, detail) {
+function cadrageSectionHtml(cadrageStatus, detail) {
   const T = cadrageTerms();
-  const rec = detail && detail.recette;
+  const rec = detail && detail.cadrage;
   if (!rec) {
     return `<div class="actions-section"><h3>${T.entity}</h3>
-      <p class="muted-sm">Cette tâche n'est couverte par aucun cadrage. Créez un cadrage (onglet <a href="#" onclick="goToTab('recettes'); return false;">Cadrage technique</a>) pour couvrir plusieurs tâches d'un même périmètre (1 ${T.entityLower} = 1 projet).</p>
+      <p class="muted-sm">Cette tâche n'est couverte par aucun cadrage. Créez un cadrage (onglet <a href="#" onclick="goToTab('cadrages'); return false;">Cadrage technique</a>) pour couvrir plusieurs tâches d'un même périmètre (1 ${T.entityLower} = 1 projet).</p>
     </div>`;
   }
   const st = rec.status;
-  const title = rec.title || rec.recetteId;
+  const title = rec.title || rec.cadrageId;
   const items = rec.items || [];
   const btns = (st === 'in_progress' || st === 'pending') ? `
     <div class="actions-buttons">
-      <button class="launch-btn" id="act-recette-session" data-rec-id="${esc(rec.recetteId)}" title="${rec.sessionId ? T.sessionResume : T.sessionHint}">${T.session}</button>
-      ${st === 'in_progress' ? `<button class="approve" id="act-recette-finish" data-rec-id="${esc(rec.recetteId)}">${T.finish}</button>` : ''}
+      <button class="launch-btn" id="act-recette-session" data-rec-id="${esc(rec.cadrageId)}" title="${rec.sessionId ? T.sessionResume : T.sessionHint}">${T.session}</button>
+      ${st === 'in_progress' ? `<button class="approve" id="act-recette-finish" data-rec-id="${esc(rec.cadrageId)}">${T.finish}</button>` : ''}
     </div>` : (st === 'done' ? `
     <div class="actions-buttons">
-      <button class="ghost" id="act-recette-detail" data-rec-id="${esc(rec.recetteId)}">${T.detail}</button>
+      <button class="ghost" id="act-recette-detail" data-rec-id="${esc(rec.cadrageId)}">${T.detail}</button>
     </div>` : '');
-  const statusTxt = st === 'done' ? `faite${rec.confirmed_at ? ` le ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}` : RECETTE_STATUS_LABEL[st] || st;
+  const statusTxt = st === 'done' ? `faite${rec.confirmed_at ? ` le ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}` : CADRAGE_STATUS_LABEL[st] || st;
   return `<div class="actions-section"><h3>${T.entity} — ${statusTxt}</h3>
-    <p class="muted-sm"><strong>${esc(title)}</strong> ${recetteScopeChips(rec)}</p>
-    ${items.length ? `<div class="recette-list">${items.map(recetteItemRow).join('')}</div>` : '<p class="muted-sm">Aucun élément relevé.</p>'}
+    <p class="muted-sm"><strong>${esc(title)}</strong> ${cadrageScopeChips(rec)}</p>
+    ${items.length ? `<div class="recette-list">${items.map(cadrageItemRow).join('')}</div>` : '<p class="muted-sm">Aucun élément relevé.</p>'}
     ${btns}
   </div>`;
 }
@@ -8486,7 +8485,7 @@ async function renderObservability() {
   const pane = document.getElementById('pane-observability');
   pane.innerHTML = `<h2>Observabilité — KPI du système</h2><p class="muted">Flow · Orchestration · Agents · Quality (Phase 1 — v0.2.0)</p><p class="muted">Chargement…</p>`;
   try {
-    const [summary, statusData, throughputData, leadtimeData, agentsData, costsData, phasesData, blockedData, successfailureData, hardeningData, qualityData, reworkData, cvtData, recetteData] = await Promise.all([
+    const [summary, statusData, throughputData, leadtimeData, agentsData, costsData, phasesData, blockedData, successfailureData, hardeningData, qualityData, reworkData, cvtData, cadrageData] = await Promise.all([
       api('/api/metrics/summary'),
       api('/api/metrics/status'),
       api('/api/metrics/throughput?days=14'),
@@ -8500,7 +8499,7 @@ async function renderObservability() {
       api('/api/metrics/quality'),
       api('/api/metrics/rework?days=30'),
       api('/api/metrics/costvsthroughput?days=30'),
-      api('/api/metrics/recette'),
+      api('/api/metrics/cadrage'),
     ]);
 
     destroyObsCharts();
@@ -8514,7 +8513,7 @@ async function renderObservability() {
         ${kpiCard('Lead Time moyen', fmtMin(summary.leadTimeAvg), 'demande → terminé')}
         ${kpiCard('Lead Time P95', fmtMin(summary.leadTimeP95), 'expérience des tâches lentes')}
         ${kpiCard('Cycle Time moyen', fmtMin(summary.cycleTimeAvg), 'exécution → terminé')}
-        ${kpiCard('Success Rate', (summary.successRate ?? 0) + ' %', `${summary.successCount}/${summary.completed} done + recette approuvée`)}
+        ${kpiCard('Success Rate', (summary.successRate ?? 0) + ' %', `${summary.successCount}/${summary.completed} done + cadrage approuvée`)}
         ${kpiCard('Throughput', summary.throughput, 'tâches / jour (7 j)')}
         ${kpiCard('Rework Rate', (summary.reworkRate ?? 0) + ' %', 'reprises / rejets')}
       </div>
@@ -8598,13 +8597,13 @@ async function renderObservability() {
       </div>
 
       <div class="obs-panel">
-        <h3>Recette (v0.7) — éléments détectés &amp; tâches générées</h3>
+        <h3>Cadrage (v0.7) — éléments détectés &amp; tâches générées</h3>
         <div class="kpi-grid">
-          ${kpiCard('Recettes', (summary.recette?.statuses || []).reduce((a, s) => a + s.count, 0), 'opérations')}
-          ${kpiCard('En cours', (summary.recette?.statuses || []).find((s) => s.status === 'in_progress')?.count || 0, 'recette active')}
-          ${kpiCard('Éléments détectés', summary.recette?.itemsTotal || 0, 'remarques/constats')}
-          ${kpiCard('Tâches générées', summary.recette?.tasksGenerated || 0, 'issues de recette')}
-          ${kpiCard('Durée moyenne', fmtMin(summary.recette?.avgDurationMin), 'par recette')}
+          ${kpiCard('Cadrages', (summary.cadrage?.statuses || []).reduce((a, s) => a + s.count, 0), 'opérations')}
+          ${kpiCard('En cours', (summary.cadrage?.statuses || []).find((s) => s.status === 'in_progress')?.count || 0, 'cadrage active')}
+          ${kpiCard('Éléments détectés', summary.cadrage?.itemsTotal || 0, 'remarques/constats')}
+          ${kpiCard('Tâches générées', summary.cadrage?.tasksGenerated || 0, 'issues de cadrage')}
+          ${kpiCard('Durée moyenne', fmtMin(summary.cadrage?.avgDurationMin), 'par cadrage')}
           ${kpiCard('Taux de rework', (summary.reworkRate ?? 0) + ' %', 'éléments rework / total')}
         </div>
         <div class="obs-row" style="margin:8px 0 0">
@@ -8728,9 +8727,9 @@ async function renderObservability() {
         },
         options: { scales: { y: { position: 'left', title: { display: true, text: '€' } }, y1: { position: 'right', grid: { drawOnChartArea: false }, title: { display: true, text: 'tâches' } } } },
       });
-      // Phase D — recette : éléments par classification + tâches générées.
-      const recByClass = summary.recette?.byClass || { rework: 0, bug: 0, improvement: 0, feature: 0 };
-      const recGen = summary.recette?.byGeneratedClass || { rework: 0, bug: 0, improvement: 0, feature: 0 };
+      // Phase D — cadrage : éléments par classification + tâches générées.
+      const recByClass = summary.cadrage?.byClass || { rework: 0, bug: 0, improvement: 0, feature: 0 };
+      const recGen = summary.cadrage?.byGeneratedClass || { rework: 0, bug: 0, improvement: 0, feature: 0 };
       obsCharts.recClass = new Chart(document.getElementById('obs-rec-class'), {
         type: 'bar',
         data: { labels: ['Rework', 'Bug', 'Improvement', 'Feature'], datasets: [{ label: 'éléments', data: [recByClass.rework, recByClass.bug, recByClass.improvement, recByClass.feature], backgroundColor: ['#e03131', '#f76707', '#1971c2', '#2f9e44'] }] },
@@ -8878,8 +8877,8 @@ function e2eVarModal(project, projects, existingName) {
 }
 
 const RENDER = {
-  overview: renderOverview, observability: renderObservability, projects: renderProjects, tasks: renderTasks, e2etests: renderE2ETests, e2esecrets: renderE2ESecrets, recettes: renderRecettes,
-  evaluations: renderEvaluations,
+  overview: renderOverview, observability: renderObservability, projects: renderProjects, tasks: renderTasks, e2etests: renderE2ETests, e2esecrets: renderE2ESecrets, cadrages: renderCadrages,
+  recettes: renderRecettes,
   events: renderEvents, deployments: renderDeployments, decisions: renderDecisions, artifacts: renderArtifacts, adr: renderAdrs, plans: renderPlans, archives: renderArchives, ecosystem: renderEcosystem, workspaces: renderWorkspaces, users: renderUsers,
   sprints: renderSprints, features: renderFeaturesRules,
 };

@@ -1,15 +1,15 @@
 // perf-run-worker.mjs — Exécuteur de TEST DE PERFORMANCE ASYNCHRONE (process
 // détaché par le panneau). Miroir de `e2e-run-worker.mjs`.
 //
-// Le POST /api/evaluations/:id/perf-run du panneau HTTP ne doit pas bloquer
+// Le POST /api/recettes/:id/perf-run du panneau HTTP ne doit pas bloquer
 // pendant les minutes du run (navigation + stress). Il détache ce worker
-// (spawn + unref) qui fait l'appel MCP `evaluation_perf_run` (long) puis écrit
+// (spawn + unref) qui fait l'appel MCP `recette_perf_run` (long) puis écrit
 // un marqueur de fin. Le front suit l'état via
-// GET /api/evaluations/:id/perf-jobs/:jobId.
+// GET /api/recettes/:id/perf-jobs/:jobId.
 //
 // Usage :
 //   node perf-run-worker.mjs <fichier-payload.json> <fichier-resultat.json>
-// Le payload contient les arguments `evaluation_perf_run` ; le worker relaie
+// Le payload contient les arguments `recette_perf_run` ; le worker relaie
 // vers le MCP et écrit {ok, result} ou {ok:false, error} dans le fichier
 // résultat.
 import { readFileSync, writeFileSync } from "node:fs";
@@ -30,7 +30,7 @@ catch (e) {
 
 const startedAt = new Date().toISOString();
 try {
-  const result = await taskOrchestrator("evaluation_perf_run", payload);
+  const result = await taskOrchestrator("recette_perf_run", payload);
   writeFileSync(resultFile, JSON.stringify({ ok: true, startedAt, finishedAt: new Date().toISOString(), result }, null, 2));
 } catch (e) {
   const msg = String((e && e.message) || e);

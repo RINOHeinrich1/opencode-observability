@@ -12,7 +12,7 @@ queued → started → planning → awaiting_validation → planned → in_progr
                                                                           │
                                                               [cadrage]   ▼
                                           cadrage technique (v0.7) : pending → in_progress → done
-                                          (session dédiée agent-recette → éléments de cadrage → « Terminer le cadrage »)
+                                          (session dédiée agent-cadrage → éléments de cadrage → « Terminer le cadrage »)
                                           └─→ nouvelles tâches (rework/bug/improvement/feature) liées à la tâche
 ```
 
@@ -26,10 +26,10 @@ queued → started → planning → awaiting_validation → planned → in_progr
 | `in_progress` | Plans en exécution | orchestrator |
 | `rework` | Reprise après rejet (review) — **non terminal** depuis v0.2.1 | panneau/orchestrator |
 | `done` | Tous les plans terminés | orchestrator |
-| recette `pending/in_progress/done` | Cadrage technique (v0.7, ex-« recette » côté exécuteur, ADR-001) : pas fait → en cours (session `agent-recette`) → fait | auto à `done` + humain |
+| cadrage `pending/in_progress/done` | Cadrage technique (v0.7, ex-« recette » côté exécuteur, ADR-001) : pas fait → en cours (session `agent-cadrage`) → fait | auto à `done` + humain |
 
 **Attente humaine visible** (v0.4.1) : une tâche avec une décision `validation`/
-`review` en attente affiche un badge « ⏳ attente humaine » (la recette est suivie
+`review` en attente affiche un badge « ⏳ attente humaine » (le cadrage est suivi
 via sa propre table, pas une décision — v0.7.5).
 
 ## 1bis. Cadrage technique (exécuteur) = phase distincte (v0.7.0)
@@ -39,33 +39,33 @@ via sa propre table, pas une décision — v0.7.5).
 > techniques). Il est **distinct** de la page **« Recette »** de
 > l'**évaluateur** (vérification produit, §1bis.ter). Côté UI, routes et prompt,
 > l'exécuteur voit « Cadrage technique » et ses « **éléments de cadrage** ». Les
-> tables (`recettes`, `recette_*`) et l'historique sont **conservés** (renommage
+> tables (`cadrages`, `cadrage_*`) et l'historique sont **conservés** (renommage
 > des surfaces, jamais des données).
 
 - Le cadrage technique est un **objet de PROJET** (v0.8.0) : titre propre, session
   dédiée, couvrant **0..N tâches** (ou aucune — cadrage exploratoire). Créé
-  depuis l'onglet **Cadrage technique** (exécuteur) / **Recettes** (autres rôles)
+  depuis l'onglet **Cadrage technique** (exécuteur) / **Cadrages** (autres rôles)
   (projet + titre + tâches couvertes optionnelles).
 - **Contexte du cadrage (sélecteurs multi-lignes, toutes cochées par défaut)** :
   **ADR** (`adrIds` → bloc « ADR de référence »), **Fonctionnalités** (`featureIds`
   → bloc « Fonctionnalités de référence ») et **Règles métier** (`ruleIds` → bloc
   « Règles métier de référence »). Les sélections sont **rattachées au cadrage**
-  (`recette_adr` / `recette_fonctionnalites` / `recette_regles`) et **injectées
-  dans le prompt** de la session `agent-recette`.
+  (`cadrage_adr` / `cadrage_fonctionnalites` / `cadrage_regles`) et **injectées
+  dans le prompt** de la session `agent-cadrage`.
 - Le panneau propose **« Session du cadrage »** : lance la session dédiée
-  `agent-recette` (contexte réel : titre, projet, tâches couvertes, commits,
+  `agent-cadrage` (contexte réel : titre, projet, tâches couvertes, commits,
   artefacts, événements, plans). L'agent **enregistre les éléments de cadrage** avec
   **classification** (`rework` / `bug` / `improvement` / `feature`), **titre
   court**, **critère d'acceptation** et **scope** suggéré.
 - **« Terminer le cadrage »** → synthèse consolidée → **confirmation** → création
-  de **nouvelles tâches** via `task_register` (typées, `recette_class`,
+  de **nouvelles tâches** via `task_register` (typées, `cadrage_class`,
   **liées** à la tâche initiale via `task_links`, scope transmis) → cadrage
   `done`. La tâche initiale reste `done` et **intacte**.
 - **Modification / suppression des éléments à la clôture** (v0.9.59) : dans la
   modale « Terminer le cadrage », chaque élément est **éditable** (classification,
   titre, contenu, critère d'acceptation, scope, ordre d'exécution, vigilance) et
   **supprimable** avant confirmation ; les corrections sont persistées
-  (`recette_item_update` / `recette_item_delete`). Un élément en cours d'édition
+  (`cadrage_item_update` / `cadrage_item_delete`). Un élément en cours d'édition
   doit être enregistré ou annulé avant de terminer.
 - **Clôture sans génération de tâches** (v0.9.59) : le bouton **« Terminer sans
   créer de tâches »** clôt le cadrage (`done`) **sans** `task_register` ; les
@@ -82,10 +82,10 @@ Un cadrage technique peut révéler qu'une **décision d'architecture est manqua
 la terminaison** du cadrage — jamais de validation silencieuse :
 
 - **Signalement** : `adr_report_missing` (ADR manquante pour une entité
-  réellement discutée) ou `adr_report_conflict` (conflit code ↔ ADR, `recetteId`
+  réellement discutée) ou `adr_report_conflict` (conflit code ↔ ADR, `cadrageId`
   fourni) → point persisté dans `adr_vigilances` (`type` = `missing`/`conflict`,
   `status` = `open`, `reason` explicite).
-- **Blocage** : `recette_confirm` est **REFUSÉ** tant qu'un point est `open`, avec
+- **Blocage** : `cadrage_confirm` est **REFUSÉ** tant qu'un point est `open`, avec
   la **raison explicite** (« ADR manquant pour [entité] » / « Conflit d'ADR :
   [ancienne] vs [nouvelle] »). Le panneau effectue le **même pré-check** avant
   toute création de tâches et **bloque** le bouton « Terminer le cadrage ».
@@ -93,18 +93,18 @@ la terminaison** du cadrage — jamais de validation silencieuse :
   `resolutionKind` = `adr_created`/`adr_deprecated`/`decision`/`manual`), ou la
   résolution de la **décision humaine** `kind='conflict'` (qui clôt le conflit).
 - **Historique append-only filtrable** : `adr_vigilance_list` /
-  `GET /api/adr-vigilances` (projet, recette, type, statut, dates).
+  `GET /api/adr-vigilances` (projet, cadrage, type, statut, dates).
 
 Voir [`13-adr-et-artefacts.md`](13-adr-et-artefacts.md) §3.
 
 ## 1bis.ter. Recette de l'évaluateur produit = phase distincte (v0.9.42)
 
 > **ADR-001/002** — la **Recette de l'évaluateur** est un **objet de premier
-> niveau distinct** du Cadrage technique. Identifiant de code **`evaluations`**
+> niveau distinct** du Cadrage technique. Identifiant de code **`recettes`**
 > (libellé UI **« Recette »**) : elle ne réutilise **pas** l'entité/route
-> `recettes` (ancre du Cadrage technique exécuteur). Tables dédiées
-> `evaluations` / `evaluation_fonctionnalites` / `evaluation_regles` /
-> `evaluation_items`.
+> `cadrages` (ancre du Cadrage technique exécuteur). Tables dédiées
+> `recettes` / `recette_fonctionnalites` / `recette_regles` /
+> `recette_items`.
 
 - **Rôle** : l'**évaluateur** vérifie la **cohérence produit**, l'**expérience
   réelle des utilisateurs**, le **design** et la **performance** — il ne se soucie
@@ -116,25 +116,25 @@ Voir [`13-adr-et-artefacts.md`](13-adr-et-artefacts.md) §3.
   **joint des pièces** : **lien**, **document**, **photo**, **vidéo**.
 - **Verdicts au niveau des fonctionnalités** : le verdict (`conforme` /
   `non_conforme` / `a_ameliorer`) est **porté par le lien**
-  `evaluation_fonctionnalites` (il n'altère pas la table `fonctionnalites`).
+  `recette_fonctionnalites` (il n'altère pas la table `fonctionnalites`).
 - **Distinction verdict ↔ statut de développement** : le **verdict d'évaluation**
   (conformité **produit**) et le **statut de développement**
   (`complet`/`partiel`/`non_demarre`/`incoherent`, **analyse du code**, colonne
   `fonctionnalites.dev_status`) sont **DEUX AXES DISTINCTS** — jamais fusionnés.
-  `feature_get` expose les verdicts en **lecture seule** (`evaluationVerdicts`) à
+  `feature_get` expose les verdicts en **lecture seule** (`recetteVerdicts`) à
   côté du statut de développement ; voir
   [`15-statuts-fonctionnalites-regles.md`](15-statuts-fonctionnalites-regles.md).
 - **Cycle de vie** : 3 statuts — `pending` → `in_progress` → `done`
-  (`evaluation_confirm`). **AUCUNE conversion directe en tâches** : les éléments
-  restent attachés à la recette.
+  (`recette_confirm`). **AUCUNE conversion directe en tâches** : les éléments
+  restent attachés au cadrage.
 - **Visibilité** (ADR-002) : l'évaluateur ne voit que **SES** recettes (filtre
-  `recetteOwnerScope` sur `evaluations.created_by`) ; **admin/superviseur** voient
+  `recetteOwnerScope` sur `recettes.created_by`) ; **admin/superviseur** voient
   **toutes** les recettes (superviseur en **lecture seule**) ; l'**exécuteur** les
-  voit en **lecture seule** (`/api/evaluations` en GET).
-- **Routes** : `/api/evaluations*` (liste, création, détail, `items`, `verdicts`,
+  voit en **lecture seule** (`/api/recettes` en GET).
+- **Routes** : `/api/recettes*` (liste, création, détail, `items`, `verdicts`,
   `documents`, `finish`, `file`) — **additives**, sans collision avec
-  `/api/recettes*` / `/api/cadrages*`.
-- **MCP** : famille `evaluation_*` (voir `05-reference.md` §1bis).
+  `/api/cadrages*`.
+- **MCP** : famille `recette_*` (voir `05-reference.md` §1bis).
 
 ### Workflow admin → exécuteur des éléments de recette (v0.9.66)
 
@@ -145,35 +145,34 @@ Voir [`13-adr-et-artefacts.md`](13-adr-et-artefacts.md) §3.
 > **reprend en contexte** d'un **cadrage technique** — c'est le cadrage qui produit
 > les tâches techniques.
 
-- **Décision admin** : `POST /api/evaluations/:id/items/:itemId/decision`
-  (**ADMIN-ONLY**, 403 sinon) → tool `evaluation_item_decision`
+- **Décision admin** : `POST /api/recettes/:id/items/:itemId/decision`
+  (**ADMIN-ONLY**, 403 sinon) → tool `recette_item_decision`
   (`pending` | `a_traiter` | `non_retenu`), `decided_at`/`decided_by` tracés.
   L'évaluateur **informe** (il ne décide pas) ; le **statut de suivi**
   (`open`/`treated`/`dismissed`) reste **distinct** de la **décision**.
 - **Exécuteur (lecture seule, ADR-002)** : la page « Recette » lui est accessible
-  en **lecture seule** (onglet `evaluations`) ; `GET /api/evaluations/:id` **filtre
+  en **lecture seule** (onglet `recettes`) ; `GET /api/recettes/:id` **filtre
   côté serveur** les éléments pour ne renvoyer que `decision='a_traiter'`. La liste
-  `GET /api/evaluations` expose `treatable_count` (compteur « à traiter ») et
-  `GET /api/evaluations/treatable?project=` liste les éléments à traiter (entrée de
+  `GET /api/recettes` expose `treatable_count` (compteur « à traiter ») et
+  `GET /api/recettes/treatable?project=` liste les éléments à traiter (entrée de
   sélection d'un cadrage).
-- **Reprise en cadrage technique** : `POST /api/recettes/:id/evaluation-items`
-  (alias `/api/cadrages/:id/evaluation-items`) rattache un élément « à traiter »
-  au cadrage ; `DELETE …/evaluation-items/:itemId` le détache. La **garde
+- **Reprise en cadrage technique** : `POST /api/cadrages/:id/recette-items` rattache un élément « à traiter »
+  au cadrage ; `DELETE …/recette-items/:itemId` le détache. La **garde
   « a_traiter »** est portée par le registre (un élément non « à traiter » est
-  refusé). Le cadrage expose ses éléments repris (`evaluationItems` sur
-  `GET /api/recettes/:id`) et le traçage « **repris par le cadrage X** »
+  refusé). Le cadrage expose ses éléments repris (`recetteItems` sur
+  `GET /api/cadrages/:id`) et le traçage « **repris par le cadrage X** »
   (`reprisPar` par élément dans le détail de l'évaluation).
-- **Pièces par élément** : `POST /api/evaluations/:id/documents` accepte `itemId`
+- **Pièces par élément** : `POST /api/recettes/:id/documents` accepte `itemId`
   (pièce rattachée à un **élément** précis — `meta.itemId`), sans table nouvelle.
-- **Prompt de cadrage** : `buildRecettePrompt` injecte un bloc « **Éléments de
+- **Prompt de cadrage** : `buildCadragePrompt` injecte un bloc « **Éléments de
   recette évaluateur repris en contexte** » (itemId, catégorie, sévérité, contenu,
   pièces) + la consigne que c'est **le cadrage** qui définit les tâches techniques.
-- **MCP** : `evaluation_item_decision`, `evaluation_items_treatable`,
-  `cadrage_evaluation_item_link`/`_unlink`/`_list` (voir `05-reference.md` §1bis).
+- **MCP** : `recette_item_decision`, `recette_items_treatable`,
+  `cadrage_recette_item_link`/`_unlink`/`_list` (voir `05-reference.md` §1bis).
 
 ### Périmètre E2E de l'évaluateur (v0.9.67)
 
-> **ADR-003** — depuis sa **recette** (`evaluations`), l'évaluateur peut
+> **ADR-003** — depuis sa **recette** (`recettes`), l'évaluateur peut
 > **exécuter les tests E2E du projet**, **lire les preuves** rattachées aux
 > exécutions (détails, **vidéos**, rapport texte) et — **unique écriture
 > permise** — **marquer un test « incohérent »** avec des **remarques
@@ -210,10 +209,10 @@ Voir [`13-adr-et-artefacts.md`](13-adr-et-artefacts.md) §3.
 > **ADR-003** — les **TESTS STANDARD** sont des outils de l'évaluateur **distincts
 > des tests E2E Playwright** : parcours de pages avec informations réseau ET
 > capture des erreurs console/réseau, métriques Core Web Vitals, et **stress test
-> des routes d'API**. Ils produisent des **pièces `performance`** rattachables à
-> la recette (et à un élément via `itemId`), à côté des recommandations/problèmes.
+> des routes d'API**. Ils produisent des **pièces `performance`** rattachables
+> au cadrage (et à un élément via `itemId`), à côté des recommandations/problèmes.
 
-- **Outil** : `evaluation_perf_run` (MCP) / `POST /api/evaluations/:id/perf-run`
+- **Outil** : `recette_perf_run` (MCP) / `POST /api/recettes/:id/perf-run`
   (panneau, **asynchrone** → job suivi via `GET …/perf-jobs/:jobId`). La page
   Recette expose la section « **Tests standard (parcours + stress routes API)** ».
 - **Parcours de pages** : `pages` (URLs supplémentaires, ≤ 10 ; défaut `url`) —
@@ -232,8 +231,8 @@ Voir [`13-adr-et-artefacts.md`](13-adr-et-artefacts.md) §3.
   Web Vitals et la capture console ; sans Playwright, mesure réseau/stress via
   `fetch` (vitals/console indisponibles, avertissement explicite).
 - **Preuves** : le rapport (résumé + erreurs console/réseau + stress par route)
-  est enregistré comme pièce `evaluation_doc` `nature='performance'` (famille
-  `evaluations*`, **aucune table neuve**) ; l'UI affiche le détail dépliable.
+  est enregistré comme pièce `recette_doc` `nature='performance'` (famille
+  `recettes*`, **aucune table neuve**) ; l'UI affiche le détail dépliable.
 - **Distinct des tests E2E** : aucune fusion — les tests E2E restent les entités
   Playwright (§1bis.ter « Périmètre E2E de l'évaluateur »).
 
@@ -254,7 +253,7 @@ Un **sprint** est l'unité de temps d'un projet (table `sprints`). Cycle :
 - **Reprise** (`sprint_reopen`) : repasse `open`, prolonge l'échéance ; elle
   **suspend** la garde d'émergence (les éléments suivants ne sont plus émergents).
 - **Rapport** (`sprint_report`) : agrégation du registre (fonctionnalités/règles
-  implémentées ventilées écosystème / hors écosystème, tâches, pièces, recettes).
+  implémentées ventilées écosystème / hors écosystème, tâches, pièces, cadrages).
 - Un **sprint par défaut** (`is_default`, au plus 1 par projet) porte les « anciens
   sprints » (migration).
 
@@ -270,7 +269,7 @@ faux émergent). Un sprint rouvert **suspend** la règle.
 ### Cardinalités heuristiques (NON bloquantes)
 
 Le framework **signale** (sans jamais bloquer) les manques de cardinalité d'une
-entité : tâche/recette **sans ADR / sans fonctionnalité / sans sprint**, ADR **sans
+entité : tâche/cadrage **sans ADR / sans fonctionnalité / sans sprint**, ADR **sans
 fonctionnalité**, sprint **sans fonctionnalité / sans règle**, éléments **émergents**.
 
 - **Agrégat** : `cardinality_report({ projectId })` (+ `GET /api/cardinality`) ;
@@ -280,7 +279,7 @@ fonctionnalité**, sprint **sans fonctionnalité / sans règle**, éléments **�
   **raison tracée** (jamais de clôture silencieuse) ; l'index partiel unique garantit
   **un seul signal `open` par entité**. Un signal `open` devenu obsolète est marqué
   `stale`.
-- **Règle d'or** : ce sont des **signaux à traiter** (en recette / par une tâche
+- **Règle d'or** : ce sont des **signaux à traiter** (en cadrage / par une tâche
   dédiée), **jamais** des blocages.
 
 ### Lien ADR d'une tâche — proposé → validé
@@ -289,7 +288,7 @@ Le lien entre une tâche et une ADR (`task_adr`) suit un workflow **à deux temp
 
 - `task_adr_propose({ taskId, adrId, reason })` — action **agent** → `status='propose'`
   (**NON effectif** ; idempotent, ne rétrograde jamais un lien validé).
-- `task_adr_validate({ taskId, adrId })` — action **HUMAINE** (en recette) →
+- `task_adr_validate({ taskId, adrId })` — action **HUMAINE** (en cadrage) →
   `status='valide'` (**EFFECTIF**).
 - `task_adr_list` expose l'état (`effective`), `task_adr_unlink` détache.
 - **L'agent ne valide JAMAIS lui-même** ; il **propose** (`adrIds` à la création de
@@ -331,7 +330,7 @@ planned → in_progress → validating → review → approved/rejected
 |---|---|---|
 | `validation` | Après la planification | acceptée → tâche `planned` ; rejetée → tâche `aborted` (agrégation auto) |
 | `review` | Avant merge (par plan) | approuvée/rejetée → **plan** `approved/rejected` |
-| `recette` | Après `done` | approuvée/rejetée → colonne `recette_status` (sans toucher l'exécution) |
+| `cadrage` | Après `done` | approuvée/rejetée → colonne `cadrage_status` (sans toucher l'exécution) |
 | `permission` | Demande de permission opencode | tracée (sans transition) |
 
 Chaque décision a : `kind`, `detail`, `planId` (si lié à un plan), `status`
@@ -345,7 +344,7 @@ signale l'utilisateur avec les données de la base :
 
 | État observé | Notification |
 |---|---|
-| Décision humaine `awaiting` (validation/review/permission/recette) | « Décision requise » (pièce jointe : plan si validation) |
+| Décision humaine `awaiting` (validation/review/permission/cadrage) | « Décision requise » (pièce jointe : plan si validation) |
 | Décision résolue (`approved`/`rejected`) | « Décision approuvée/rejetée » |
 | Décision expirée | « Décision expirée » (escalade) |
 | Tâche `blocked`/`failed`/`aborted`/`crashed`, événement `BLOCKED` | « Tâche <statut> » |
@@ -387,7 +386,7 @@ build-notify ──▶ (worktree, code, commit) ──▶ validating → review 
 humain ──review par plan──▶ plan approved/rejected (indépendant)
 orchestrator ──▶ merge_pending → merged → deploy… → done (par plan)
 orchestrator ──▶ task done (tous les plans done)
-humain ──Valider la recette──▶ recette approved/rejected
+humain ──Valider le cadrage──▶ cadrage approved/rejected
 ```
 
 ## 6. Traçabilité fine : commits + sessions
@@ -405,11 +404,11 @@ humain ──Valider la recette──▶ recette approved/rejected
 ## English version
 
 **1. Task lifecycle** — `queued → started → planning → awaiting_validation → planned →
-in_progress → done`, then acceptance (`recette`: `pending → approved/rejected`).
+in_progress → done`, then acceptance (`cadrage`: `pending → approved/rejected`).
 Who sets each state: `queued` (panel/orchestrator), `started` (panel "Launch"),
 `planning` (orchestrator delegates to atomic-plan), `awaiting_validation`
 (orchestrator), `planned` (automatic via `decision_resolve` aggregation),
-`in_progress` (orchestrator), `done` (orchestrator when all plans are done), recette
+`in_progress` (orchestrator), `done` (orchestrator when all plans are done), cadrage
 (human via "Validate acceptance").
 
 **2. Plan (sub-task) lifecycle** — each plan follows its own cycle, in parallel:
@@ -420,8 +419,8 @@ Approval is **independent per plan** (one can be `approved` while another is
 task; the task stays `in_progress` until all plans are `done`.
 
 **3. Human decisions** — `validation` (after planning → task `planned`/`aborted`),
-`review` (before merge → plan `approved`/`rejected`), `recette` (after `done` →
-`recette_status` column), `permission` (opencode permission, traced only). Each
+`review` (before merge → plan `approved`/`rejected`), `cadrage` (after `done` →
+`cadrage_status` column), `permission` (opencode permission, traced only). Each
 decision has `kind`, `detail`, `planId`, `status`, `resolution`.
 
 **4. Notifications (v0.1.0)** — centralized: the `opencode-notifier` daemon
@@ -430,8 +429,8 @@ emails the user with database data. Agents never send emails; the MCP `notify`
 tool was removed.
 
 **4bis. ADR governance in acceptance** — a missing/conflicting architecture
-decision detected during a recette/test becomes an **open global vigilance**
-(`adr_vigilances`, `type` = `missing`/`conflict`) that **blocks** `recette_confirm`
+decision detected during a cadrage/test becomes an **open global vigilance**
+(`adr_vigilances`, `type` = `missing`/`conflict`) that **blocks** `cadrage_confirm`
 (registry guard + panel pre-check) with an explicit reason. It is lifted in a
 **traced** way (mandatory `resolution` via `adr_vigilance_resolve`, or by
 resolving the human `conflict` decision). History is append-only and filterable.
@@ -448,8 +447,8 @@ ADR link** follows **proposed → validated**: `task_adr_propose` (agent, **not
 effective**) → `task_adr_validate` (human, **effective**) — agents never
 self-validate. **Dedicated sessions**: sprint session (`agent-sprint`; does not touch
 `open`/`close`) and migration session (converts monolithic ADRs to atomic ones +
-attaches legacy elements without false emergence; one per project). Recette creation
-injects **ADR + Features + Rules** context into the `agent-recette` prompt.
+attaches legacy elements without false emergence; one per project). Cadrage creation
+injects **ADR + Features + Rules** context into the `agent-cadrage` prompt.
 
 **5. Example sequence (2 plans)** — human creates task → panel launches (`started`) →
 orchestrator plans (`planning`) → atomic-plan produces 2 plans → `awaiting_validation`

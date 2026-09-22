@@ -13,13 +13,13 @@ couple **(`doc_type`, `content_id`)** :
 | Colonne | Rôle |
 |---------|------|
 | `doc_type` | **Type d'artefact** (taxonomie ci-dessous, énumérée). |
-| `content_id` | Identifiant de l'**entité porteuse** (taskId, recetteId, projectId, docId/artifactId). |
+| `content_id` | Identifiant de l'**entité porteuse** (taskId, cadrageId, recetteId, projectId, docId/artifactId). |
 | `kind` | **NATURE** de l'artefact (`plan` \| `audit` \| `report` \| `autre`), **distincte** de `doc_type`. |
-| `nature` | Liaison libre (« à quoi sert le document / comment l'exploiter » — recettes). |
+| `nature` | Liaison libre (« à quoi sert le document / comment l'exploiter » — cadrages). |
 | `source` | Domaine d'origine : `import` \| `artifact` \| `registry` \| `ref`. |
 | `meta` | **JSONB** — champs propres à une famille (ex. `{ "artifactId": … }`, `{ "targetDocId": … }`). |
 | `artifact_id` | PK **stable** (ex. `ART-…`, `doc-…`, `att-…`, `ART-REC-…`) — jamais réattribuée. |
-| `id` | IDENTITY (ordre d'insertion) — exposé en `documentId` entier pour la famille recette. |
+| `id` | IDENTITY (ordre d'insertion) — exposé en `documentId` entier pour la famille cadrage. |
 
 **`content_type` est un nom RÉSERVÉ** (futur « type d'artefact ») : il n'est **jamais**
 créé ni utilisé. Ne pas l'ajouter.
@@ -31,7 +31,7 @@ créé ni utilisé. Ne pas l'ajouter.
 rattachement N:N ADR ↔ projet/repo est porté par `artifact_projects` /
 `artifact_repos`.
 
-## 2. Taxonomie `doc_type` (14 familles nommées + `autre`)
+## 2. Taxonomie `doc_type` (15 familles nommées + `autre`)
 
 | `doc_type` | Définition | Exemple |
 |------------|-----------|---------|
@@ -44,8 +44,9 @@ rattachement N:N ADR ↔ projet/repo est porté par `artifact_projects` /
 | `task_synthese` | Synthèse de tâche / de planification. | artefact `kind='report'` produit par `atomic-plan` |
 | `task_report` | Rapport de fin de tâche. | rapport `build-notify` (`report-<scope>-<ts>.md`) |
 | `audit_report` | Rapport d'audit d'architecture. | artefact tâche `kind='audit'` |
-| `recette_report` | Rapport / constat de recette. | `recette_documents` lié à un artefact `kind='report'` |
-| `recette_doc` | Document d'appui de recette (importé ou lié, `nature` conservée). | `recette_documents` importé |
+| `cadrage_report` | Rapport / constat de cadrage. | `recette_documents` (legacy) lié à un artefact `kind='report'` |
+| `cadrage_doc` | Document d'appui de cadrage (importé ou lié, `nature` conservée). | `recette_documents` (legacy) importé |
+| `recette_doc` | **Pièce** d'une recette évaluateur (lien/document/photo/vidéo/maquette/performance, `nature` conservée). `content_id = recetteId`. | `recette_doc_add` / `recette_maquette_add` / `recette_perf_run` |
 | `e2e_report` | Rapport TEXTE de run E2E Playwright. | `e2e_executions.report_artifact_id` |
 | `e2e_video` | Vidéo de preuve E2E (**preuve HUMAINE**, jamais analysée par l'IA). | `e2e_executions.video_url` / `storage/e2e` |
 | `piece` | **Pièce client** d'un projet — **matière première des sprints** : `markdown` \| `pdf` \| `docx` \| `lien` externe public (Drive). `content_id = projectId`. | `piece_add` ; docs ADR-12 requalifiés (`meta.piece_client`) |
@@ -62,8 +63,8 @@ rattachement N:N ADR ↔ projet/repo est porté par `artifact_projects` /
 | `artifacts.kind='audit'` | `audit_report` | `task_id` | `audit` | — | `import` | — |
 | `artifacts.kind='report'` | `task_report` | `task_id` | `report` | — | `import` | — |
 | `artifacts.kind='autre'` | `autre` | `task_id` | `autre` | — | `import` | — |
-| `recette_documents` (lié artefact `kind='report'`) | `recette_report` | `recette_id` | `report` | `nature` | `source` | `{ legacyId, artifactId }` |
-| `recette_documents` (autre) | `recette_doc` | `recette_id` | `report` | `nature` | `source` | `{ legacyId, artifactId }` |
+| `recette_documents` (legacy, lié artefact `kind='report'`) | `cadrage_report` | `cadrage_id` | `report` | `nature` | `source` | `{ legacyId, artifactId }` |
+| `recette_documents` (legacy, autre) | `cadrage_doc` | `cadrage_id` | `report` | `nature` | `source` | `{ legacyId, artifactId }` |
 | `docs.kind='adr-tech'` | `adr` | `docs.id` | `autre` | — | `registry` | `meta` |
 | `docs.kind='specs-fonctionnelles'` | `specs` | `docs.id` | `autre` | — | `registry` | `meta` |
 | `docs.kind='scenarios-gherkin'` | `gherkin` | `docs.id` | `autre` | — | `registry` | `meta` |
@@ -91,7 +92,8 @@ rattachement N:N ADR ↔ projet/repo est porté par `artifact_projects` /
 | **task** (`plan`, `task_synthese`, `task_report`, `audit_report`, `autre`) | `deleteTask(taskId)` | `DELETE FROM artifacts WHERE content_id = $1 AND doc_type = ANY(TASK_DOC_TYPES)` |
 | **docs** (`adr`, `specs`, `gherkin`, `project_doc`, `adr_file`) | `deleteDoc(docId)` | Supprime l'artefact + ses pièces jointes (`adr_file` avec `content_id = docId`) + liens `artifact_projects`/`artifact_repos` (CASCADE) |
 | **e2e** (`e2e_report`, `e2e_video`) | `updateE2EExecution` | Upsert idempotent par (`content_id`, `path`) — pas de suppression |
-| **recette** (`recette_doc`, `recette_report`) | `removeRecetteDocument(documentId)` | `DELETE FROM artifacts WHERE id = $1 AND doc_type = ANY(RECETTE_DOC_TYPES)` |
+| **cadrage** (`cadrage_doc`, `cadrage_report`) | `removeCadrageDocument(documentId)` | `DELETE FROM artifacts WHERE id = $1 AND doc_type = ANY(CADRAGE_DOC_TYPES)` |
+| **recette** (`recette_doc`) | `removeRecetteDocument(documentId)` | `DELETE FROM artifacts WHERE id = $1 AND doc_type = ANY(RECETTE_DOC_TYPES)` |
 | **projet** (`project_doc`) | — | **Aucun chemin de suppression** aujourd'hui (pas de `deleteProject` nettoyant). Si un chemin est ajouté, il devra nettoyer cette famille. |
 | **pièce client** (`piece`) | `removePiece(pieceId)` (`piece_delete`) | `DELETE FROM artifacts WHERE artifact_id = $1 AND doc_type = 'piece'` — les liens `artifact_projects` et `sprint_pieces` suivent en **CASCADE**. |
 
@@ -104,6 +106,6 @@ rattachement N:N ADR ↔ projet/repo est porté par `artifact_projects` /
 ## 6. Rétrocompatibilité
 
 - `artifact_list(taskId)` → `WHERE content_id = $1 AND doc_type = ANY(TASK_DOC_TYPES)` (4 agents + panneau).
-- `recette_get` → `documents[]` conserve `documentId` **entier** (= `artifacts.id`).
+- `cadrage_get` → `documents[]` conserve `documentId` **entier** (= `artifacts.id`).
 - `doc_list(includeRepoDocs)` / `doc_get` / `doc_register` / `doc_update` / `adr_list` / `adr_get` : signatures **inchangées** (stockage unifié).
 - Jointures E2E : `e2e_executions.report_artifact_id` et `video_url` pointent toujours un `artifact_id` **préservé** par la migration.

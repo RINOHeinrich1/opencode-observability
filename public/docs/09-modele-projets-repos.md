@@ -101,9 +101,9 @@ Projet ──────── N:N ──────── Repo
 **Ne change pas (reste au niveau projet)**
 - `tasks.project`, `recettes.project`, `e2e_test_projects` (`coveredProjects`),
   filtres UI « projet » : tout cela reste **projet**.
-- **Recette (v0.9.34)** : 1 recette = **1 projet unique** (`recettes.project`).
+- **Cadrage (v0.9.34)** : 1 cadrage = **1 projet unique** (`cadrages.project`).
   Sa portée réelle = les **repos transverses du projet** (`project_repos`),
-  jamais des projets supplémentaires. La table `recette_projects` (multi-projets)
+  jamais des projets supplémentaires. La table `cadrage_projects` (multi-projets)
   est **légacy** : conservée pour l'historique, plus lue ni écrite.
 
 **Change / est introduit**

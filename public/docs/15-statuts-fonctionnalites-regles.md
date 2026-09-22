@@ -83,7 +83,7 @@ recette).
 ### 2.4 Verdicts d'évaluation (`evaluationVerdicts`) — LECTURE SEULE
 
 Les **verdicts de la recette évaluateur** (`conforme` / `non_conforme` /
-`a_ameliorer`) sont **portés par le lien** `evaluation_fonctionnalites` (ADR-001),
+`a_ameliorer`) sont **portés par le lien** `recette_fonctionnalites` (ADR-001),
 **au niveau des fonctionnalités**. `feature_get` les expose en **LECTURE SEULE**
 sous `evaluationVerdicts` :
 

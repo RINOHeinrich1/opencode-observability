@@ -289,16 +289,16 @@ interprétée par l'IA — docs/07 §7, docs/08 §6.3). Pour qu'une recette puis
 s'appuyer dessus :
 
 - **rattachement** : `artifact_add` (kind=`report`, chemin du rapport) sur la
-  tâche, puis `recette_doc_add` pour lier le rapport à la recette couvrant la
+  tâche, puis `cadrage_doc_add` pour lier le rapport au cadrage couvrant la
   tâche (nature : « preuve E2E du run post-déploiement ») ;
-- **consultation par `agent-recette`** : via `e2e_list(taskId=…)` /
+- **consultation par `agent-cadrage`** : via `e2e_list(taskId=…)` /
   `e2e_execution_list` — lecture du **rapport texte uniquement** ; l'agent peut
   aussi relancer un test si besoin (`e2e_run`, `origin=recette`) ; verdict posé
   sur le rapport texte (docs/08 §6.3) ;
 - **règle « échecs hors périmètre = écarts tracés, jamais silencieux »**
   (décision 3 du §7) : tout échec hors périmètre constaté dans le rapport est
   **consigné** (constat visible : `task_event`, mention explicite au rapport /
-  synthèse de recette, voire **élément de recette** `recette_item_add` ou tâche
+  synthèse de cadrage, voire **élément de cadrage** `cadrage_item_add` ou tâche
   émergente **proposée**) — il n'est ni corrigé par l'agent (hors périmètre), ni
   passé sous silence. La recette humaine tranche in fine
   (`recette approved` / `rejected`), éclairée par ces écarts tracés.
@@ -310,7 +310,7 @@ s'appuyer dessus :
 | Rattacher le run à la tâche | `e2e_test_link` (`task_e2e` `REGRESSION`/`REQUIRED`) | tests « preuve » identifiés pour la tâche |
 | Tracer le déploiement | `deployment_record` (`deploy_pending → deploying → deployed → post_deploy_verified`) | état du déploiement visible ; le run E2E alimente `post_deploy_verified` |
 | Clore le plan / la tâche | `plan_transition` (`deployed → post_deploy_verified → done`) | plan `done` → tâche `done` (tous plans done) |
-| Prouver en recette | `artifact_add` / `recette_doc_add` + `e2e_list` / `e2e_execution_list` | rapport texte consultable par `agent-recette` et l'humain |
+| Prouver en recette | `artifact_add` / `recette_doc_add` + `e2e_list` / `e2e_execution_list` | rapport texte consultable par `agent-cadrage` et l'humain |
 
 ---
 
@@ -334,7 +334,7 @@ s'appuyer dessus :
   deployed → post_deploy_verified`, + `deploy_failed`) et `plan_transition`
   (`… → deployed → post_deploy_verified → done`).
 - MCP task-orchestrator — outils de la chaîne de preuve : `e2e_test_link`,
-  `deployment_record`, `plan_transition`, `artifact_add`, `recette_doc_add`,
+  `deployment_record`, `plan_transition`, `artifact_add`, `cadrage_doc_add`,
   `e2e_list`, `e2e_execution_list`.
 
 ---

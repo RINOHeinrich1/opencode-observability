@@ -72,9 +72,9 @@ export const canWrite = (user) => !!(user && !isReadOnly(user));
 
 // Pages autorisées par rôle (source UNIQUE UI + serveur, ADR-002). L'`evaluateur`
 // n'accède qu'à Fonctionnalités & Règles, Tests E2E et Recette (page
-// `evaluations` — SA page, distincte du Cadrage technique) (+ Projets pour
+// `recettes` — SA page, distincte du Cadrage technique) (+ Projets pour
 // choisir un projet). L'`executeur` accède à Vue d'ensemble, Tâches, Cadrage
-// technique (onglet `recettes`), Recette évaluateur (`evaluations`, lecture
+// technique (onglet `cadrages`), Recette évaluateur (`recettes`, lecture
 // seule), Tests E2E, Fonctionnalités & Règles, Décisions, ADR et Workspaces
 // (+ Projets pour choisir un projet) ; les onglets Sprints, Artefacts, Vars &
 // Secrets, Archives et Écosystème/Utilisateurs sont masqués. Les Déploiements
@@ -83,12 +83,12 @@ export const canWrite = (user) => !!(user && !isReadOnly(user));
 // Ensemble COMPLET des pages du panneau : `admin` et `supervisor` partagent le
 // MÊME périmètre de pages (seule la capacité d'ÉCRITURE diffère — ADR-002).
 // Source unique pour éviter la duplication de la liste entre ces rôles.
-const ALL_PAGES = ["projects", "overview", "tasks", "recettes", "evaluations", "e2etests", "decisions", "artifacts", "adr", "sprints", "features", "e2esecrets", "archives", "ecosystem", "workspaces", "users"];
+const ALL_PAGES = ["projects", "overview", "tasks", "cadrages", "recettes", "e2etests", "decisions", "artifacts", "adr", "sprints", "features", "e2esecrets", "archives", "ecosystem", "workspaces", "users"];
 export const ROLE_PAGES = {
   admin: ALL_PAGES,
   supervisor: ALL_PAGES,
-  evaluateur: ["projects", "features", "e2etests", "evaluations"],
-  executeur: ["projects", "overview", "tasks", "recettes", "evaluations", "e2etests", "decisions", "adr", "features", "workspaces"],
+  evaluateur: ["projects", "features", "e2etests", "recettes"],
+  executeur: ["projects", "overview", "tasks", "cadrages", "recettes", "e2etests", "decisions", "adr", "features", "workspaces"],
 };
 // FAIL-CLOSED : un rôle inconnu (dont l'ancien `user` non normalisé) n'obtient
 // AUCUNE page. Les rôles sont normalisés en amont (`currentUser`).

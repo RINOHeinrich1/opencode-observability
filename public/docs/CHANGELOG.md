@@ -5,6 +5,31 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## 2026-09-22 · Nomenclature « Cadrage technique » (`CT-*`) / « Recette » (`RECT-*`) — ADR-004 (v0.9.71)
+
+Alignement de la **nomenclature** et du **modèle de données** des deux objets de
+premier niveau issus d'ADR-001 — voir
+[`../adr/ADR-004-nomenclature-cadrage-technique-recette.md`](../adr/ADR-004-nomenclature-cadrage-technique-recette.md).
+
+- **Identifiants** : **Cadrage technique = `CT-*`** ; **Recette (évaluateur) = `RECT-*`**
+  (ex-`RECT-*` pour le cadrage, ex-`EVAL-*` pour la recette — correspondance conservée
+  par la migration).
+- **Objets et tables distincts** : `cadrages` + `cadrage_items` (cadrage, exécuteur) et
+  `recettes` + `recette_items` (recette, évaluateur) ; liens `cadrage_*` et `recette_*`
+  (ex-`recette_*` pour le cadrage, ex-`evaluation_*` pour la recette).
+- **Contrats panneau** : routes canoniques `/api/cadrages*` (cadrage) et `/api/recettes*`
+  (recette) — l'alias `/api/recettes*` du cadrage est **supprimé** (collision résolue) ;
+  alias transitoire `/api/evaluations*` conservé pour la recette. `tasks.cadrage_id` /
+  `batches.cadrage_id`, `decisions.kind='cadrage'`, doc_types `cadrage_doc`/`cadrage_report`
+  (cadrage) et `recette_doc` (recette). ACL rôle-aware alignée.
+- **Outils MCP** : `cadrage_*` (cadrage) et `recette_*` (recette) — alias `evaluation_*`
+  conservés pour la transition.
+- **UI** : onglets **Cadrage technique** (`cadrages`) et **Recette** (`recettes`) ;
+  libellés et données alignés (`cadrage_status`/`cadrage_class`, `cadrageId`/`recetteId`).
+- **Non renommés (contrats conservés)** : `task_recette`/`task_recette_reset`,
+  `task_sessions.kind='recette'`, origine E2E `origin='recette'`, `verdict_by='agent-recette'`,
+  répertoires runtime `storage/evaluation-*` (et `storage/recette-docs`).
+
 ## 2026-09-22 · Suppression du rôle « user » (migration vers exécuteur) (v0.9.70)
 
 Le rôle `user` du panneau est **supprimé** (ADR-002), avec **migration tracée**

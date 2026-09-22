@@ -632,11 +632,11 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 .link-row input.link-desc { flex: 1; }
 .link-item { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 5px 0; border-bottom: 1px dashed var(--border); }
 
-/* ===== Recette (v0.7.0) ===== */
+/* ===== Cadrage (v0.7.0) ===== */
 .recette-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
 .recette-item { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px dashed var(--border); font-size: 13px; }
 
-/* ===== Grouper par recette (v0.7.6) ===== */
+/* ===== Grouper par cadrage (v0.7.6) ===== */
 .filter-check { display: inline-flex; align-items: center; gap: 5px; margin-left: 8px; }
 .recette-group-head td { background: rgba(255,255,255,0.05); font-weight: 600; cursor: default; }
 .recette-group-head .tree-toggle { margin-right: 6px; }
@@ -695,27 +695,27 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 .recette-cand:hover { background: rgba(255,255,255,0.05); }
 .recette-cand span { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 
-/* ===== Recette : titre cliquable + description (v0.8.5) ===== */
+/* ===== Cadrage : titre cliquable + description (v0.8.5) ===== */
 .recette-title { cursor: pointer; }
 .recette-title:hover { text-decoration: underline; }
 
-/* ===== Recette : modale de détail défilante, aucun contenu tronqué (v0.8.8) ===== */
+/* ===== Cadrage : modale de détail défilante, aucun contenu tronqué (v0.8.8) ===== */
 .modal.modal-wide, .modal.modal-md { max-height: 86vh; overflow-y: auto; }
 .recette-item { overflow: visible; white-space: normal; word-break: break-word; }
 .recette-item span { flex: 1; min-width: 120px; }
 
-/* ===== Recette : tâche couverte (titre + demande complète, non tronquée) ===== */
+/* ===== Cadrage : tâche couverte (titre + demande complète, non tronquée) ===== */
 .recette-task { flex: 1; min-width: 0; }
 .recette-task p { margin: 3px 0 0; white-space: normal; word-break: break-word; }
 
-/* ===== Documents de recette : champs responsives (v0.8.10) ===== */
+/* ===== Documents de cadrage : champs responsives (v0.8.10) ===== */
 #rm-docs-list .link-row { flex-wrap: wrap; align-items: flex-start; padding: 8px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; }
 #rm-docs-list .rd-head { display: flex; gap: 8px; align-items: center; width: 100%; flex-wrap: wrap; }
 #rm-docs-list .rd-head .rd-title { flex: 1 1 180px; min-width: 140px; }
 #rm-docs-list .rd-file, #rm-docs-list .rd-art { flex: 1 1 200px; min-width: 160px; }
 #rm-docs-list .rd-nature { flex: 1 1 100%; min-width: 0; width: 100%; box-sizing: border-box; resize: vertical; }
 
-/* ===== Recette : ordre, vigilance, groupe parallèle (v0.9.0) ===== */
+/* ===== Cadrage : ordre, vigilance, groupe parallèle (v0.9.0) ===== */
 .badge.order-badge { background: #3b2a5b; color: #d0b8ff; }
 .badge.vig-badge { background: #5b2a2a; color: #ffb8b8; }
 .recette-order-row td { background: rgba(255,255,255,0.03); font-weight: 600; padding: 4px 12px; }
@@ -815,7 +815,7 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 .dec-act { display: flex; flex-direction: column; gap: 6px; min-width: 150px; }
 .dec-act .decision-remarks { width: 100%; box-sizing: border-box; padding: 4px 6px; font-size: 12px; }
 
-/* ===== Recette (v0.9.0+) : 1 projet unique + repos transverses du projet ===== */
+/* ===== Cadrage (v0.9.0+) : 1 projet unique + repos transverses du projet ===== */
 .chip-project {
   display: inline-block; padding: 1px 8px; margin: 1px 3px 1px 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
@@ -834,7 +834,7 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 #rm-project { width: 100%; max-width: 460px; }
 #rm-load-cands { font-size: 12px; }
 
-/* ===== Gestion tâches couvertes d'une recette (v0.9.0) ===== */
+/* ===== Gestion tâches couvertes d'un cadrage (v0.9.0) ===== */
 .rec-tasks-add { margin-top: 8px; }
 .rec-tasks-add select { width: 100%; max-width: 460px; }
 .rec-task-del { font-size: 12px; padding: 2px 8px; }
@@ -1010,7 +1010,7 @@ body.evaluateur .readonly-banner { display: inline-block !important; }
 .adr-pick-head { grid-column: 2; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .adr-pick-meta { grid-column: 2; font-size: 11px; color: var(--muted, #9aa4b2); }
 
-/* --- Vigilances ADR des recettes (item 126) : historique filtrable + blocage.
+/* --- Vigilances ADR des cadrages (item 126) : historique filtrable + blocage.
    Historique APPEND-ONLY : table compacte, raison en évidence, aucun bouton
    de suppression (seule la levée tracée est proposée sur les points ouverts). */
 .adr-vig-section { margin-top: 22px; }
@@ -1039,7 +1039,7 @@ body.evaluateur .readonly-banner { display: inline-block !important; }
 .adr-vig-block .adr-vig-reasons li { margin-bottom: 4px; }
 
 /* --- Gestionnaire central d'artefacts (T-20260920-162801-jxtr) -------------
-   Onglet « Artefacts » : liste TOUTES les entités (tâche/recette/projet/ADR/E2E),
+   Onglet « Artefacts » : liste TOUTES les entités (tâche/cadrage/projet/ADR/E2E),
    colonnes Entité / Type (doc_type) / Nature (kind), filtres + recherche. */
 .art-filters {
   display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 10px 0 14px;
@@ -1090,7 +1090,7 @@ body.evaluateur .readonly-banner { display: inline-block !important; }
 .fr-filters { flex-wrap: wrap; }
 .fr-filters .adr-search { flex: 1 1 220px; }
 
-/* ===== Page « Recette » de l'ÉVALUATEUR (onglet `evaluations`) =============
+/* ===== Page « Recette » de l'ÉVALUATEUR (onglet `recettes`) =============
    Éléments catégorisés (recommandation/problème), badges de sévérité et
    verdicts par fonctionnalité. Classes ADDITIVES (aucune collision). */
 .eval-block { margin: 8px 0 14px; }

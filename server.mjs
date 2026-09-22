@@ -20,7 +20,7 @@ import { generateSubtitledVideo, generateNarratedVideo } from "./subtitles.mjs";
 
 // --- ACL rôle `evaluateur` (ADR-002) — allowlist FAIL-CLOSED ----------------
 // L'évaluateur n'accède qu'aux pages Fonctionnalités & Règles, Tests E2E et
-// Recettes (+ lecture Projets/Repos pour choisir un projet). Toute route NON
+// Recette (évaluateur) (+ lecture Projets/Repos pour choisir un projet). Toute route NON
 // listée est refusée en 403 : la protection est côté serveur, jamais l'UI.
 // Les RÉGLAGES TECHNIQUES E2E (`/api/e2e-vars`, `/api/e2e-secrets`) sont HORS
 // périmètre évaluateur (ADR-003) : le run est lancé tel qu'enregistré.
@@ -29,12 +29,12 @@ const EVALUATEUR_ALLOWED_API = [
   "/api/me", "/api/config", "/api/orgs", "/api/session/organization", "/api/render-md",
   "/api/projects", "/api/repos", "/api/pieces", "/api/features", "/api/rules", "/api/links",
   "/api/cardinality", "/api/sprints", "/api/docs", "/api/e2e-tests", "/api/e2e/jobs",
-  "/api/e2e/agent-sessions", "/api/e2e/file", "/api/evaluations",
+  "/api/e2e/agent-sessions", "/api/e2e/file", "/api/recettes",
   "/api/batches", "/api/adr-vigilances",
 ];
 // Interdits EXPLICITES (défense en profondeur) même si un préfixe de l'allowlist
 // les couvrirait : `/api/docs/file` sert le contenu des ADR (onglet ADR interdit).
-const EVALUATEUR_DENIED_API = ["/api/docs/file", "/api/e2e-secrets", "/api/recettes", "/api/cadrages"];
+const EVALUATEUR_DENIED_API = ["/api/docs/file", "/api/e2e-secrets", "/api/cadrages"];
 // Écritures autorisées (méthodes non-GET) : SES recettes évaluateur
 // (création/items/documents/verdicts/finish/session), le lancement d'un test E2E, le
 // marquage « incohérent » d'un test, le dépôt de pièces, la levée d'une
@@ -44,12 +44,12 @@ const EVALUATEUR_DENIED_API = ["/api/docs/file", "/api/e2e-secrets", "/api/recet
 const EVALUATEUR_WRITE_PATTERNS = [
   /^\/api\/session\/organization$/,
   /^\/api\/pieces$/,
-  /^\/api\/evaluations$/,
-  /^\/api\/evaluations\/[^/]+\/(items|documents|verdicts|finish|session)(\/.*)?$/,
+  /^\/api\/recettes$/,
+  /^\/api\/recettes\/[^/]+\/(items|documents|verdicts|finish|session)(\/.*)?$/,
   // Lancement d'un TEST DE PERFORMANCE préprod depuis sa recette (maquette +
   // perf — ADR-003). La LECTURE de la maquette est déjà couverte par le préfixe
-  // `/api/evaluations` de l'allowlist ; seul le déclenchement est ajouté ici.
-  /^\/api\/evaluations\/[^/]+\/perf-run$/,
+  // `/api/recettes` de l'allowlist ; seul le déclenchement est ajouté ici.
+  /^\/api\/recettes\/[^/]+\/perf-run$/,
   /^\/api\/e2e-tests\/[^/]+\/run$/,
   // SEULE écriture E2E permise à l'évaluateur : marquer un test « incohérent »
   // (signal comportement réel ≠ scénario) avec remarques. Créer / modifier /
@@ -61,7 +61,7 @@ const EVALUATEUR_WRITE_PATTERNS = [
 
 // --- ACL rôle `executeur` (ADR-001/002) — allowlist FAIL-CLOSED -------------
 // L'exécuteur accède à Vue d'ensemble, Tâches, Cadrage technique (onglet
-// `recettes`), Tests E2E, Fonctionnalités & Règles, Décisions, ADR et
+// `cadrages`), Tests E2E, Fonctionnalités & Règles, Décisions, ADR et
 // Workspaces (+ lecture Projets/Repos/Pièces/Sprints pour choisir un projet et
 // tracer un sprint). Toute route NON listée est refusée en 403 (protection
 // serveur, jamais l'UI). Les Déploiements sont atteints via le modal de tâche
@@ -71,7 +71,7 @@ const EXECUTEUR_ALLOWED_API = [
   "/api/projects", "/api/repos", "/api/pieces",
   "/api/features", "/api/rules", "/api/links", "/api/cardinality", "/api/sprints",
   "/api/docs", "/api/e2e-tests", "/api/e2e/jobs", "/api/e2e/agent-sessions", "/api/e2e/file",
-  "/api/e2e-vars", "/api/recettes", "/api/cadrages", "/api/evaluations", "/api/tasks", "/api/plans", "/api/events",
+  "/api/e2e-vars", "/api/cadrages", "/api/recettes", "/api/tasks", "/api/plans", "/api/events",
   "/api/deployments", "/api/decisions", "/api/batches", "/api/adr-vigilances", "/api/artifacts",
 ];
 // Interdits EXPLICITES (défense en profondeur) : secrets E2E et gestion des
@@ -85,27 +85,19 @@ const EXECUTEUR_DENIED_API = ["/api/e2e-secrets", "/api/users"];
 const EXECUTEUR_WRITE_PATTERNS = [
   /^\/api\/session\/organization$/,
   /^\/api\/pieces$/,
-  /^\/api\/recettes$/,
-  /^\/api\/recettes\/[^/]+\/(items|documents|session|finish|tasks|evaluation-items)(\/.*)?$/,
-  // Alias « Cadrage technique » (ADR-001) — mêmes capacités que /api/recettes*.
   /^\/api\/cadrages$/,
-  /^\/api\/cadrages\/[^/]+\/(items|documents|session|finish|tasks|evaluation-items)(\/.*)?$/,
+  /^\/api\/cadrages\/[^/]+\/(items|documents|session|finish|tasks|recette-items)(\/.*)?$/,
   /^\/api\/e2e-tests\/[^/]+\/run$/,
   /^\/api\/adr-vigilances\/[^/]+\/resolve$/,
   /^\/api\/tasks$/,
   /^\/api\/tasks\/[^/]+\/(edit|archive|restore)$/,
 ];
 
-// --- Alias de routes « Cadrage technique » (ADR-001) -----------------------
-// `/api/cadrages*` est un ALIAS ADDITIF de `/api/recettes*` (mêmes handlers ;
-// AUCUNE route supprimée). L'historique et les appels legacy `/api/recettes*`
-// (pilot.mjs, autres rôles) restent strictement inchangés. La réécriture est
-// appliquée APRÈS le contrôle ACL : chaque rôle reste maître de son périmètre
-// (l'exécuteur autorise explicitement `/api/cadrages*` — cf. ROLE_ACL).
-const CADRAGE_ROUTE_RE = /^\/api\/cadrages(?=\/|$)/;
-function aliasCadrageRoute(p) {
-  return CADRAGE_ROUTE_RE.test(p) ? p.replace(/^\/api\/cadrages/, "/api/recettes") : p;
-}
+// --- Routes « Cadrage technique » (ADR-004) --------------------------------
+// `/api/cadrages*` est la route CANONIQUE du cadrage technique (plus d'alias :
+// l'ancien alias `/api/cadrages*` → `/api/recettes*` est SUPPRIMÉ car
+// `/api/recettes*` est désormais la route canonique de la RECETTE évaluateur —
+// les deux objets ne peuvent pas partager le même chemin).
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -116,8 +108,8 @@ mkdirSync(join(E2E_STORAGE_DIR, "runs"), { recursive: true });
 const EVALUATION_STORAGE_DIR = join(__dirname, "storage", "evaluation-docs");
 mkdirSync(EVALUATION_STORAGE_DIR, { recursive: true });
 // MAQUETTES d'évaluation (HTML/CSS/JS, données mock) — pages STATIQUES servies
-// par le panneau via `GET /api/evaluations/:id/maquette/*`. Le tool MCP
-// `evaluation_maquette_add` écrit dans CE répertoire (même chemin des deux
+// par le panneau via `GET /api/recettes/:id/maquette/*`. Le tool MCP
+// `recette_maquette_add` écrit dans CE répertoire (même chemin des deux
 // côtés). Garde anti-traversée stricte au service.
 const EVALUATION_MAQUETTE_DIR = process.env.EVALUATION_MAQUETTE_DIR || join(__dirname, "storage", "evaluation-maquettes");
 mkdirSync(EVALUATION_MAQUETTE_DIR, { recursive: true });
@@ -325,7 +317,7 @@ async function registryStats(url, forcedOrg, ownerScope, projectAccess) {
   return { tasks, byStatus, openDecisions, archived: archived.size, project: project || null };
 }
 
-// Garde : l'utilisateur (username) est-il propriétaire de l'entité (tasks/recettes/e2e) ?
+// Garde : l'utilisateur (username) est-il propriétaire de l'entité (tasks/cadrages/e2e) ?
 // Renvoie true si l'entité est introuvable (la route renverra 404 elle-même).
 async function userOwnsEntity(username, kind, id) {
   const db = registry();
@@ -334,12 +326,12 @@ async function userOwnsEntity(username, kind, id) {
       const r = (await db.query("SELECT created_by FROM tasks WHERE id = $1", [id])).rows[0];
       return !r || r.created_by === username;
     }
-    if (kind === "recettes") {
-      const r = (await db.query("SELECT created_by FROM recettes WHERE recette_id = $1", [id])).rows[0];
+    if (kind === "cadrages") {
+      const r = (await db.query("SELECT created_by FROM cadrages WHERE cadrage_id = $1", [id])).rows[0];
       return !r || r.created_by === username;
     }
-    if (kind === "evaluations") {
-      const r = (await db.query("SELECT created_by FROM evaluations WHERE evaluation_id = $1", [id])).rows[0];
+    if (kind === "recettes") {
+      const r = (await db.query("SELECT created_by FROM recettes WHERE recette_id = $1", [id])).rows[0];
       return !r || r.created_by === username;
     }
     if (kind === "e2e-tests") {
@@ -440,16 +432,16 @@ async function registryTasks(url, forcedOrg, ownerScope, projectAccess, sprintSc
   let rows = [];
   try {
     const res = await db.query(
-      `SELECT t.id, t.project, t.type, t.priority, t.request, t.title, t.created_at, t.session_id, t.recette_status, t.recette_class, t.organization_id, t.created_by,
+      `SELECT t.id, t.project, t.type, t.priority, t.request, t.title, t.created_at, t.session_id, t.cadrage_status, t.cadrage_class, t.organization_id, t.created_by,
          ${latestStatusSubquery()} AS status,
          (SELECT attempt FROM executions e WHERE e.task_id = t.id ORDER BY attempt DESC LIMIT 1) AS attempt,
          (SELECT rework_count FROM executions e WHERE e.task_id = t.id ORDER BY attempt DESC LIMIT 1) AS rework_count,
-         COALESCE(t.recette_id, (SELECT l.linked_task_id FROM task_links l WHERE l.task_id = t.id AND l.description LIKE 'Issu de la recette%' ORDER BY l.id LIMIT 1)) AS recette_source,
-         (SELECT r.title FROM recettes r WHERE r.recette_id = t.recette_id) AS recette_source_title,
-         (SELECT ri.exec_order FROM recette_items ri WHERE ri.created_task_id = t.id ORDER BY ri.id LIMIT 1) AS recette_order,
-         (SELECT ri.vigilance FROM recette_items ri WHERE ri.created_task_id = t.id ORDER BY ri.id LIMIT 1) AS recette_vigilance,
+         COALESCE(t.cadrage_id, (SELECT l.linked_task_id FROM task_links l WHERE l.task_id = t.id AND l.description LIKE 'Issu de la recette%' ORDER BY l.id LIMIT 1)) AS cadrage_source,
+         (SELECT r.title FROM cadrages r WHERE r.cadrage_id = t.cadrage_id) AS cadrage_source_title,
+         (SELECT ri.exec_order FROM cadrage_items ri WHERE ri.created_task_id = t.id ORDER BY ri.id LIMIT 1) AS cadrage_order,
+         (SELECT ri.vigilance FROM cadrage_items ri WHERE ri.created_task_id = t.id ORDER BY ri.id LIMIT 1) AS cadrage_vigilance,
          EXISTS (SELECT 1 FROM decisions d WHERE d.task_id = t.id AND d.status = 'awaiting'
-                 AND d.permission_id IS NULL AND d.kind <> 'recette'
+                 AND d.permission_id IS NULL AND d.kind <> 'cadrage'
                  AND (SELECT status FROM executions e WHERE e.task_id = t.id ORDER BY attempt DESC LIMIT 1) <> 'done') AS waiting_human
        FROM tasks t ORDER BY t.created_at DESC`,
     );
@@ -512,7 +504,7 @@ async function registryTaskDetail(id) {
   );
   const linkedTasks = await q(
     `SELECT l.linked_task_id, l.description, l.relation_type AS "relationType",
-            t.request AS linked_request, t.recette_status AS linked_recette,
+            t.request AS linked_request, t.cadrage_status AS linked_cadrage,
             (SELECT x.status FROM executions x WHERE x.task_id = l.linked_task_id ORDER BY attempt DESC LIMIT 1) AS linked_status,
             (SELECT COUNT(*) FROM plans p WHERE p.task_id = l.linked_task_id) AS linked_plans,
             (SELECT COUNT(*) FROM artifacts a WHERE a.task_id = l.linked_task_id) AS linked_artifacts
@@ -522,25 +514,25 @@ async function registryTaskDetail(id) {
   );
   // Tâches émergentes créées depuis cette tâche (lien inverse emergent).
   const emergentFrom = await q(
-    `SELECT t.id AS task_id, t.request, t.title, t.recette_status,
+    `SELECT t.id AS task_id, t.request, t.title, t.cadrage_status,
             (SELECT x.status FROM executions x WHERE x.task_id = t.id ORDER BY attempt DESC LIMIT 1) AS status,
             l.description AS reason
      FROM task_links l JOIN tasks t ON t.id = l.task_id
      WHERE l.linked_task_id = $1 AND l.relation_type = 'emergent' ORDER BY l.id ASC`,
     [id],
   );
-  let recette = null;
+  let cadrage = null;
   const rec = (await q(
-    `SELECT r.*, rt.task_id FROM recettes r
-     LEFT JOIN recette_tasks rt ON rt.recette_id = r.recette_id
+    `SELECT r.*, rt.task_id FROM cadrages r
+     LEFT JOIN cadrage_tasks rt ON rt.cadrage_id = r.cadrage_id
      WHERE rt.task_id = $1 ORDER BY r.created_at DESC LIMIT 1`, [id],
   ))[0];
   if (rec) {
-    const items = mapRecetteItems(await q("SELECT id, project, content, classification, discussion, scope, title, acceptance, exec_order, vigilance, test_intent, doc_intent, status, created_task_id, created_at FROM recette_items WHERE recette_id = $1 ORDER BY id ASC", [rec.recette_id]));
-    const tasks = (await q("SELECT task_id FROM recette_tasks WHERE recette_id = $1", [rec.recette_id])).map((x) => x.task_id);
-    recette = { recetteId: rec.recette_id, project: rec.project, repos: await reposOfProject(rec.project), title: rec.title, sessionId: rec.session_id, status: rec.status, confirmedAt: rec.confirmed_at, confirmedBy: rec.confirmed_by, tasks, items };
+    const items = mapCadrageItems(await q("SELECT id, project, content, classification, discussion, scope, title, acceptance, exec_order, vigilance, test_intent, doc_intent, status, created_task_id, created_at FROM cadrage_items WHERE cadrage_id = $1 ORDER BY id ASC", [rec.cadrage_id]));
+    const tasks = (await q("SELECT task_id FROM cadrage_tasks WHERE cadrage_id = $1", [rec.cadrage_id])).map((x) => x.task_id);
+    cadrage = { cadrageId: rec.cadrage_id, project: rec.project, repos: await reposOfProject(rec.project), title: rec.title, sessionId: rec.session_id, status: rec.status, confirmedAt: rec.confirmed_at, confirmedBy: rec.confirmed_by, tasks, items };
   }
-  return { task: { ...task, repos: taskRepos }, executions, events, deployments, decisions, artifacts, sessions, linkedTasks, emergentFrom, recette, archived: (await archivedTaskIds()).has(id) };
+  return { task: { ...task, repos: taskRepos }, executions, events, deployments, decisions, artifacts, sessions, linkedTasks, emergentFrom, cadrage, archived: (await archivedTaskIds()).has(id) };
 }
 
 async function snapshotForTask(taskId) {
@@ -635,12 +627,12 @@ async function registryDeployments(url) {
 
 // Taxonomie `doc_type` (source de vérité : public/docs/nomenclature-doc-type.md).
 const DOC_TYPES = ["adr", "specs", "gherkin", "project_doc", "adr_file", "plan", "task_synthese",
-  "task_report", "audit_report", "recette_report", "recette_doc", "evaluation_doc", "e2e_report", "e2e_video", "piece", "autre"];
+  "task_report", "audit_report", "cadrage_report", "cadrage_doc", "recette_doc", "e2e_report", "e2e_video", "piece", "autre"];
 const TASK_DOC_TYPES = ["plan", "task_synthese", "task_report", "audit_report", "autre"];
-const RECETTE_DOC_TYPES = ["recette_doc", "recette_report"];
+const CADRAGE_DOC_TYPES = ["cadrage_doc", "cadrage_report"];
 // Pièces jointes d'une ÉVALUATION (« Recette » évaluateur) — famille ISOLÉE des
 // pièces client (autorise lien/document/photo/vidéo, ADR-001).
-const EVALUATION_DOC_TYPES = ["evaluation_doc"];
+const RECETTE_DOC_TYPES = ["recette_doc"];
 const DOCS_DOC_TYPES = ["adr", "specs", "gherkin", "project_doc"];
 const ARTIFACT_KINDS = ["plan", "audit", "report", "autre"];
 
@@ -676,10 +668,10 @@ async function registryArtifacts(url) {
   let rows = [];
   try {
     rows = (await db.query(
-      `SELECT a.*, t.title AS task_title, r.title AS recette_title, p.name AS project_name
+      `SELECT a.*, t.title AS task_title, r.title AS cadrage_title, p.name AS project_name
        FROM artifacts a
        LEFT JOIN tasks t ON t.id = a.content_id AND a.doc_type = ANY($${taskTypeParam})
-       LEFT JOIN recettes r ON r.recette_id = a.content_id
+       LEFT JOIN cadrages r ON r.cadrage_id = a.content_id
        LEFT JOIN projects p ON p.id = a.content_id
        ${conds.length ? "WHERE " + conds.join(" AND ") : ""}
        ORDER BY a.id DESC LIMIT 1000`,
@@ -692,8 +684,8 @@ async function registryArtifacts(url) {
     .map((a) => ({
       ...a,
       entity: a.content_id,
-      entity_label: a.task_title || a.recette_title || a.project_name || a.content_id,
-      entity_kind: a.task_title ? "task" : (a.recette_title ? "recette" : (a.project_name ? "project" : (String(a.content_id || "").startsWith("doc-") ? "doc" : "entity"))),
+      entity_label: a.task_title || a.cadrage_title || a.project_name || a.content_id,
+      entity_kind: a.task_title ? "task" : (a.cadrage_title ? "cadrage" : (a.project_name ? "project" : (String(a.content_id || "").startsWith("doc-") ? "doc" : "entity"))),
     }));
   return { artifacts };
 }
@@ -1017,7 +1009,7 @@ async function handleUserAction(req, res, user, path) {
   return sendJson(res, 405, { error: "méthode non autorisée" });
 }
 
-function mapRecetteItems(rows) {
+function mapCadrageItems(rows) {
   return rows.map((i) => ({
     id: i.id,
     content: i.content,
@@ -1038,7 +1030,7 @@ function mapRecetteItems(rows) {
 }
 
 // Repos transverses par projet (project_repos — ADR 11) — la portée réelle
-// d'une recette du projet. Indexé par project_id.
+// d'un cadrage du projet. Indexé par project_id.
 async function reposByProjectIds(ids) {
   if (!ids || !ids.length) return {};
   const rows = (await registry().query(
@@ -1323,7 +1315,7 @@ async function registryE2ETestDetail(res, id, user) {
     repos,
   };
   if (!isEvaluateur) {
-    // ADR-12 : documents de référence du projet (contexte test-agent / recette).
+    // ADR-12 : documents de référence du projet (contexte test-agent / cadrage).
     const docs = (await q(
       `SELECT DISTINCT a.artifact_id AS "docId", a.doc_type AS kind, a.title, a.path, a.description
        FROM artifacts a
@@ -1518,6 +1510,8 @@ async function handleE2ERun(res, id, b) {
     const forbidden = Object.keys(paramValues).filter((k) => secretKeys.includes(k));
     if (forbidden.length) return sendJson(res, 400, { error: `secret(s) non surchargeable(s) en clair — sélectionner par nom : ${forbidden.join(", ")}` });
   }
+  // NB : `origin='recette'` (origine E2E déclenchée par la recette évaluateur) est
+  // un contrat CONSERVÉ par ADR-004 — ne pas renommer en 'cadrage'.
   const runOrigin = ["manual", "task", "recette", "ci", "session"].includes(origin) ? origin : "manual";
   // Run ASYNCHRONE : le POST retourne immédiatement ; un worker détaché relaie
   // l'appel MCP e2e_run (jusqu'à 15 min) et écrit un marqueur de fin. Le front
@@ -1694,11 +1688,6 @@ const server = createServer(async (req, res) => {
     // (`evaluateur`, `executeur` — dispatcher unique `enforceRoleAcl`).
     if (enforceRoleAcl(user, path, req.method, res)) return;
 
-    // Alias « Cadrage technique » (ADR-001) : `/api/cadrages*` → `/api/recettes*`
-    // (mêmes handlers). Appliqué APRÈS l'ACL (le périmètre du rôle est évalué sur
-    // le chemin demandé) et AVANT les gardes de propriété / lecture seule.
-    path = aliasCadrageRoute(path);
-
     // Rôle SUPERVISEUR / lecture seule (v0.9.29) : accès en LECTURE (GET)
     // uniquement. Toute méthode d'écriture (POST/PUT/DELETE/PATCH) est refusée
     // sauf pour un administrateur. La protection est côté serveur (jamais l'UI).
@@ -1709,9 +1698,9 @@ const server = createServer(async (req, res) => {
     // recettes évaluateur (items/documents/verdicts/finish). La création (sans id)
     // reste permise et est attribuée à l'évaluateur.
     if (user.role === "evaluateur" && req.method !== "GET") {
-      const m = path.match(/^\/api\/evaluations\/([^/]+)/);
+      const m = path.match(/^\/api\/recettes\/([^/]+)/);
       if (m) {
-        const owned = await userOwnsEntity(user.username, "evaluations", decodeURIComponent(m[1]));
+        const owned = await userOwnsEntity(user.username, "recettes", decodeURIComponent(m[1]));
         if (!owned) return sendJson(res, 403, { error: "accès en écriture limité à vos propres recettes" });
       }
     }
@@ -2078,14 +2067,14 @@ const server = createServer(async (req, res) => {
         }));
       } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
     }
-    // GET /api/sprints/:id — détail complet (pièces/fonctionnalités/règles/tâches/recettes).
+    // GET /api/sprints/:id — détail complet (pièces/fonctionnalités/règles/tâches/cadrages).
     const sprintGetMatch = path.match(/^\/api\/sprints\/([^/]+)$/);
     if (sprintGetMatch && req.method === "GET") {
       try { return sendJson(res, 200, await pilot.getSprintDetail({ sprintId: decodeURIComponent(sprintGetMatch[1]) })); }
       catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
     }
     // DELETE /api/sprints/:id — SUPPRESSION d'un sprint. Refus DURS du registre
-    // (sprint par défaut `[SPRINT_DEFAULT]`, tâches/recettes `[SPRINT_LINKED]`)
+    // (sprint par défaut `[SPRINT_DEFAULT]`, tâches/cadrages `[SPRINT_LINKED]`)
     // → 409 avec message explicite affiché tel quel par le panneau.
     if (sprintGetMatch && req.method === "DELETE") {
       try { return sendJson(res, 200, await pilot.deleteSprint({ sprintId: decodeURIComponent(sprintGetMatch[1]) })); }
@@ -2151,7 +2140,7 @@ const server = createServer(async (req, res) => {
     }
     // POST /api/sprints/:id/session — LANCE (ou REPREND) la session IA dédiée de
     // l'agent-sprint rattachée au sprint (`sprints.session_id`). Miroir de
-    // `/api/recettes/:id/session`. Corps `{ force }` : force=true démarre une
+    // `/api/cadrages/:id/session`. Corps `{ force }` : force=true démarre une
     // nouvelle session. Ne touche pas au statut open/close du sprint.
     const sprintSessionMatch = path.match(/^\/api\/sprints\/([^/]+)\/session$/);
     if (sprintSessionMatch && req.method === "POST") {
@@ -2240,19 +2229,19 @@ const server = createServer(async (req, res) => {
       const b = await readBody(req);
       try {
         if (!b.projectId) return sendJson(res, 400, { error: "projectId requis" });
-        // GARDE ADMIN : une création demandée DANS UN CONTEXTE RECETTE/CADRAGE
-        // (`fromRecette` explicite ou `recetteId`) marque l'élément émergent
-        // d'origine `recette` — réservée à l'administrateur (ADR-001 : « création
+        // GARDE ADMIN : une création demandée DANS UN CONTEXTE CADRAGE/CADRAGE
+        // (`fromCadrage` explicite ou `cadrageId`) marque l'élément émergent
+        // d'origine `cadrage` — réservée à l'administrateur (ADR-001 : « création
         // administrateur si manquant, marquée émergente »). La création STANDARD
-        // (onglet Fonctionnalités & Règles, sans contexte recette) reste inchangée.
-        const fromRecette = b.fromRecette === true || !!b.recetteId;
-        if (fromRecette && !user.is_admin) {
-          return sendJson(res, 403, { error: "réservé aux administrateurs — création d'une fonctionnalité depuis une recette/cadrage" });
+        // (onglet Fonctionnalités & Règles, sans contexte cadrage) reste inchangée.
+        const fromCadrage = b.fromCadrage === true || !!b.cadrageId;
+        if (fromCadrage && !user.is_admin) {
+          return sendJson(res, 403, { error: "réservé aux administrateurs — création d'une fonctionnalité depuis un cadrage" });
         }
         return sendJson(res, 201, await pilot.createFeature({
           projectId: b.projectId, ref: b.ref, role: b.role, userStory: b.userStory,
-          sourcedPieceId: b.sourcedPieceId || undefined, recetteId: b.recetteId || undefined,
-          fromRecette: typeof b.fromRecette === "boolean" ? b.fromRecette : undefined,
+          sourcedPieceId: b.sourcedPieceId || undefined, cadrageId: b.cadrageId || undefined,
+          fromCadrage: typeof b.fromCadrage === "boolean" ? b.fromCadrage : undefined,
           createdBy: user.username,
         }));
       } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
@@ -2315,15 +2304,15 @@ const server = createServer(async (req, res) => {
       try {
         if (!b.projectId) return sendJson(res, 400, { error: "projectId requis" });
         // GARDE ADMIN (miroir de POST /api/features) : création en contexte
-        // recette/cadrage → émergente origine `recette`, réservée à l'admin.
-        const fromRecette = b.fromRecette === true || !!b.recetteId;
-        if (fromRecette && !user.is_admin) {
-          return sendJson(res, 403, { error: "réservé aux administrateurs — création d'une règle depuis une recette/cadrage" });
+        // cadrage/cadrage → émergente origine `cadrage`, réservée à l'admin.
+        const fromCadrage = b.fromCadrage === true || !!b.cadrageId;
+        if (fromCadrage && !user.is_admin) {
+          return sendJson(res, 403, { error: "réservé aux administrateurs — création d'une règle depuis un cadrage" });
         }
         return sendJson(res, 201, await pilot.createRule({
           projectId: b.projectId, ref: b.ref, content: b.content,
-          sourcedPieceId: b.sourcedPieceId || undefined, recetteId: b.recetteId || undefined,
-          fromRecette: typeof b.fromRecette === "boolean" ? b.fromRecette : undefined,
+          sourcedPieceId: b.sourcedPieceId || undefined, cadrageId: b.cadrageId || undefined,
+          fromCadrage: typeof b.fromCadrage === "boolean" ? b.fromCadrage : undefined,
           // Association EXPLICITE de rôles (T-20260922-064200-e0yw).
           roles: Array.isArray(b.roles) ? b.roles : undefined,
           roleGlobal: typeof b.roleGlobal === "boolean" ? b.roleGlobal : undefined,
@@ -2667,10 +2656,10 @@ const server = createServer(async (req, res) => {
     if (relaunchMatch && req.method === "POST") {
       return sendJson(res, 200, await pilot.relaunchTask({ taskId: relaunchMatch[1] }));
     }
-    const recetteMatch = path.match(/^\/api\/tasks\/([^/]+)\/recette$/);
-    if (recetteMatch && req.method === "POST") {
+    const cadrageMatch = path.match(/^\/api\/tasks\/([^/]+)\/cadrage$/);
+    if (cadrageMatch && req.method === "POST") {
       const b = await readBody(req);
-      return sendJson(res, 200, await pilot.resolveRecette({ taskId: recetteMatch[1], status: b.status, resolution: b.resolution, by: user.username }));
+      return sendJson(res, 200, await pilot.resolveCadrage({ taskId: cadrageMatch[1], status: b.status, resolution: b.resolution, by: user.username }));
     }
     const resolveMatch = path.match(/^\/api\/decisions\/([^/]+)\/resolve$/);
     if (resolveMatch && req.method === "POST") {
@@ -2793,16 +2782,16 @@ const server = createServer(async (req, res) => {
     }
     // Phase 4 — durcissement (décisions expirées, conflits de scope)
     if (path === "/api/metrics/hardening" && req.method === "GET") return sendJson(res, 200, await metrics.hardening(registry()));
-    // Phase D — recette (v0.8) : opérations de PROJET
-    if (path === "/api/metrics/recette" && req.method === "GET") return sendJson(res, 200, await metrics.recette(registry()));
-    if (path === "/api/recettes" && req.method === "GET") {
+    // Phase D — cadrage (v0.8) : opérations de PROJET
+    if (path === "/api/metrics/cadrage" && req.method === "GET") return sendJson(res, 200, await metrics.cadrage(registry()));
+    if (path === "/api/cadrages" && req.method === "GET") {
       const project = url.searchParams.get("project");
       const conds = [];
       const params = [];
       if (project) { params.push(project); conds.push(`r.project = $${params.length}`); }
       if (user.activeOrganizationId) { params.push(user.activeOrganizationId); conds.push(`(r.organization_id = $${params.length})`); }
-      // Périmètre des recettes : l'évaluateur ne voit que ses recettes ;
-      // admin/superviseur voient tout (recetteOwnerScope = null).
+      // Périmètre propriétaire (`recetteOwnerScope`) : un évaluateur ne voit que
+      // ses recettes ; admin/superviseur voient tout (scope = null).
       if (user.recetteOwnerScope) { params.push(user.recetteOwnerScope); conds.push(`r.created_by = $${params.length}`); }
       if (user.projectAccess !== null && user.projectAccess !== undefined) {
         if (!user.projectAccess.length) conds.push("1 = 0");
@@ -2810,11 +2799,11 @@ const server = createServer(async (req, res) => {
       }
       let rows = (await registry().query(
         `SELECT r.*,
-           (SELECT COUNT(*) FROM recette_tasks rt WHERE rt.recette_id = r.recette_id) AS tasks_count,
-           (SELECT COUNT(*) FROM recette_items i WHERE i.recette_id = r.recette_id) AS items_count,
-           (SELECT COUNT(*) FROM artifacts a WHERE a.content_id = r.recette_id AND a.doc_type IN ('recette_doc','recette_report')) AS documents_count,
-           (SELECT COUNT(*) FROM adr_vigilances v WHERE v.recette_id = r.recette_id AND v.status = 'open') AS adr_vigilances_count
-         FROM recettes r
+           (SELECT COUNT(*) FROM cadrage_tasks rt WHERE rt.cadrage_id = r.cadrage_id) AS tasks_count,
+           (SELECT COUNT(*) FROM cadrage_items i WHERE i.cadrage_id = r.cadrage_id) AS items_count,
+           (SELECT COUNT(*) FROM artifacts a WHERE a.content_id = r.cadrage_id AND a.doc_type IN ('cadrage_doc','cadrage_report')) AS documents_count,
+           (SELECT COUNT(*) FROM adr_vigilances v WHERE v.cadrage_id = r.cadrage_id AND v.status = 'open') AS adr_vigilances_count
+         FROM cadrages r
          ${conds.length ? "WHERE " + conds.join(" AND ") : ""}
          ORDER BY r.created_at DESC`,
         params,
@@ -2822,18 +2811,18 @@ const server = createServer(async (req, res) => {
       // Périmètre SPRINT (rôle `executeur`) : sprint actif par défaut, `?sprint=`
       // pour tracer un ancien sprint (lecture seule).
       const sprintScope = await executeurSprintScope(user, url, project);
-      rows = applySprintScope(rows, await sprintScopeIds(sprintScope, "recette_sprints", "recette_id"), (x) => x.recette_id);
+      rows = applySprintScope(rows, await sprintScopeIds(sprintScope, "cadrage_sprints", "cadrage_id"), (x) => x.cadrage_id);
       const reposMap = await reposByProjectIds([...new Set(rows.map((x) => x.project).filter(Boolean))]);
       for (const row of rows) row.repos = reposMap[row.project] || [];
-      return sendJson(res, 200, { recettes: rows });
+      return sendJson(res, 200, { cadrages: rows });
     }
     // Vigilances ADR (item 126) — HISTORIQUE FILTRABLE append-only des ADR
-    // manquantes / conflits remontés par les recettes (et les tests). Lecture
+    // manquantes / conflits remontés par les cadrages (et les tests). Lecture
     // seule (aucune route de suppression). Chaque point porte sa `reason` explicite.
     if (path === "/api/adr-vigilances" && req.method === "GET") {
       const r = await pilot.listAdrVigilances({
         projectId: url.searchParams.get("project") || undefined,
-        recetteId: url.searchParams.get("recetteId") || undefined,
+        cadrageId: url.searchParams.get("cadrageId") || undefined,
         type: url.searchParams.get("type") || undefined,
         status: url.searchParams.get("status") || undefined,
         from: url.searchParams.get("from") || undefined,
@@ -2855,17 +2844,17 @@ const server = createServer(async (req, res) => {
         resolvedBy: (user && user.username) || "human",
       }));
     }
-    // Candidats : tâches NON encore couvertes par une recette (recette_status != done, non présentes dans recette_tasks).
+    // Candidats : tâches NON encore couvertes par un cadrage (cadrage_status != done, non présentes dans cadrage_tasks).
     // Multi-projets : répéter le paramètre ?project=a&project=b (ou un seul).
-    if (path === "/api/recettes/candidates" && req.method === "GET") {
+    if (path === "/api/cadrages/candidates" && req.method === "GET") {
       const projects = url.searchParams.getAll("project").filter(Boolean);
       const where = [
-        "t.recette_status = 'pending'",
-        "NOT EXISTS (SELECT 1 FROM recette_tasks rt WHERE rt.task_id = t.id)",
+        "t.cadrage_status = 'pending'",
+        "NOT EXISTS (SELECT 1 FROM cadrage_tasks rt WHERE rt.task_id = t.id)",
       ];
       if (projects.length) where.push("t.project = ANY($1)");
       const rows = (await registry().query(
-        `SELECT t.id, t.project, t.title, t.request, t.recette_status, t.created_at,
+        `SELECT t.id, t.project, t.title, t.request, t.cadrage_status, t.created_at,
                 (SELECT x.status FROM executions x WHERE x.task_id = t.id ORDER BY attempt DESC LIMIT 1) AS status
          FROM tasks t
          WHERE ${where.join(" AND ")}
@@ -2874,144 +2863,144 @@ const server = createServer(async (req, res) => {
       )).rows;
       return sendJson(res, 200, { candidates: rows });
     }
-    if (path === "/api/recettes" && req.method === "POST") {
+    if (path === "/api/cadrages" && req.method === "POST") {
       const b = await readBody(req);
-      return sendJson(res, 200, await pilot.createRecette({ project: b.project, title: b.title, description: b.description, taskIds: b.taskIds, documents: b.documents, featureIds: b.featureIds, ruleIds: b.ruleIds, adrIds: b.adrIds, by: user.username, organizationId: b.organizationId || user.activeOrganizationId || user.organizationId }));
+      return sendJson(res, 200, await pilot.createCadrage({ project: b.project, title: b.title, description: b.description, taskIds: b.taskIds, documents: b.documents, featureIds: b.featureIds, ruleIds: b.ruleIds, adrIds: b.adrIds, by: user.username, organizationId: b.organizationId || user.activeOrganizationId || user.organizationId }));
     }
-    const recetteAction = path.match(/^\/api\/recettes\/([^/]+)\/(session|finish)$/);
-    if (recetteAction && req.method === "POST") {
-      if (recetteAction[2] === "session") {
+    const cadrageAction = path.match(/^\/api\/cadrages\/([^/]+)\/(session|finish)$/);
+    if (cadrageAction && req.method === "POST") {
+      if (cadrageAction[2] === "session") {
         let sb = {};
         try { sb = await readBody(req); } catch {}
-        return sendJson(res, 200, await pilot.launchRecetteSession({ recetteId: recetteAction[1], force: !!(sb && sb.force), adrIds: (sb && sb.adrIds) || undefined, featureIds: (sb && sb.featureIds) || undefined, ruleIds: (sb && sb.ruleIds) || undefined }));
+        return sendJson(res, 200, await pilot.launchCadrageSession({ cadrageId: cadrageAction[1], force: !!(sb && sb.force), adrIds: (sb && sb.adrIds) || undefined, featureIds: (sb && sb.featureIds) || undefined, ruleIds: (sb && sb.ruleIds) || undefined }));
       }
-      // ADR-001/002 : la recette de l'évaluateur n'est PAS convertible en tâches
-      // (le cadrage technique relève de l'exécuteur/admin). Refus explicite.
-      if (user.role === "evaluateur") return sendJson(res, 403, { error: "conversion d'une recette en tâches interdite au rôle évaluateur (ADR-001/002)" });
+      // ADR-001/002 : le cadrage technique n'est PAS du ressort de l'évaluateur
+      // (pas de conversion en tâches). Refus explicite.
+      if (user.role === "evaluateur") return sendJson(res, 403, { error: "conversion d'un cadrage en tâches interdite au rôle évaluateur (ADR-001/002)" });
       const b = await readBody(req);
-      return sendJson(res, 200, await pilot.finishRecette({ recetteId: recetteAction[1], items: b.items, by: user.username, launchMode: b.launchMode, createTasks: b.createTasks !== false }));
+      return sendJson(res, 200, await pilot.finishCadrage({ cadrageId: cadrageAction[1], items: b.items, by: user.username, launchMode: b.launchMode, createTasks: b.createTasks !== false }));
     }
-    const recetteTaskAdd = path.match(/^\/api\/recettes\/([^/]+)\/tasks$/);
-    if (recetteTaskAdd && req.method === "POST") {
+    const cadrageTaskAdd = path.match(/^\/api\/cadrages\/([^/]+)\/tasks$/);
+    if (cadrageTaskAdd && req.method === "POST") {
       // ADR-001/002 : rattacher/détacher des tâches = cadrage technique → interdit.
-      if (user.role === "evaluateur") return sendJson(res, 403, { error: "gestion des tâches d'une recette interdite au rôle évaluateur (ADR-001/002)" });
+      if (user.role === "evaluateur") return sendJson(res, 403, { error: "gestion des tâches d'un cadrage interdite au rôle évaluateur (ADR-001/002)" });
       const b = await readBody(req);
-      return sendJson(res, 200, await pilot.addRecetteTask({ recetteId: recetteTaskAdd[1], taskId: b.taskId }));
+      return sendJson(res, 200, await pilot.addCadrageTask({ cadrageId: cadrageTaskAdd[1], taskId: b.taskId }));
     }
-    const recetteTaskDel = path.match(/^\/api\/recettes\/([^/]+)\/tasks\/([^/]+)$/);
-    if (recetteTaskDel && req.method === "DELETE") {
-      if (user.role === "evaluateur") return sendJson(res, 403, { error: "gestion des tâches d'une recette interdite au rôle évaluateur (ADR-001/002)" });
-      return sendJson(res, 200, await pilot.removeRecetteTask({ recetteId: recetteTaskDel[1], taskId: decodeURIComponent(recetteTaskDel[2]) }));
+    const cadrageTaskDel = path.match(/^\/api\/cadrages\/([^/]+)\/tasks\/([^/]+)$/);
+    if (cadrageTaskDel && req.method === "DELETE") {
+      if (user.role === "evaluateur") return sendJson(res, 403, { error: "gestion des tâches d'un cadrage interdite au rôle évaluateur (ADR-001/002)" });
+      return sendJson(res, 200, await pilot.removeCadrageTask({ cadrageId: cadrageTaskDel[1], taskId: decodeURIComponent(cadrageTaskDel[2]) }));
     }
-    const recetteItemDel = path.match(/^\/api\/recettes\/([^/]+)\/items\/([0-9]+)$/);
-    if (recetteItemDel && req.method === "DELETE") {
-      return sendJson(res, 200, await pilot.removeRecetteItem({ recetteId: recetteItemDel[1], itemId: Number(recetteItemDel[2]) }));
+    const cadrageItemDel = path.match(/^\/api\/cadrages\/([^/]+)\/items\/([0-9]+)$/);
+    if (cadrageItemDel && req.method === "DELETE") {
+      return sendJson(res, 200, await pilot.removeCadrageItem({ cadrageId: cadrageItemDel[1], itemId: Number(cadrageItemDel[2]) }));
     }
-    const recetteItemEdit = path.match(/^\/api\/recettes\/([^/]+)\/items\/([0-9]+)$/);
-    if (recetteItemEdit && (req.method === "PATCH" || req.method === "POST")) {
+    const cadrageItemEdit = path.match(/^\/api\/cadrages\/([^/]+)\/items\/([0-9]+)$/);
+    if (cadrageItemEdit && (req.method === "PATCH" || req.method === "POST")) {
       const b = await readBody(req);
-      return sendJson(res, 200, await pilot.updateRecetteItem({ recetteId: recetteItemEdit[1], itemId: Number(recetteItemEdit[2]), fields: b.fields || b }));
+      return sendJson(res, 200, await pilot.updateCadrageItem({ cadrageId: cadrageItemEdit[1], itemId: Number(cadrageItemEdit[2]), fields: b.fields || b }));
     }
     // Reprise d'un ÉLÉMENT DE RECETTE ÉVALUATEUR par un CADRAGE technique (traçage
     // « repris par le cadrage X »). L'écriture est autorisée à l'exécuteur via
     // EXECUTEUR_WRITE_PATTERNS ; la GARDE « a_traiter » est portée par le registre.
-    const recetteEvalItems = path.match(/^\/api\/recettes\/([^/]+)\/evaluation-items$/);
-    if (recetteEvalItems && req.method === "POST") {
+    const cadrageEvalItems = path.match(/^\/api\/cadrages\/([^/]+)\/recette-items$/);
+    if (cadrageEvalItems && req.method === "POST") {
       const b = await readBody(req);
-      return sendJson(res, 200, await pilot.linkCadrageEvaluationItem({ recetteId: recetteEvalItems[1], itemId: b.itemId, by: user.username }));
+      return sendJson(res, 200, await pilot.linkCadrageRecetteItem({ cadrageId: cadrageEvalItems[1], itemId: b.itemId, by: user.username }));
     }
-    const recetteEvalItemDel = path.match(/^\/api\/recettes\/([^/]+)\/evaluation-items\/([0-9]+)$/);
-    if (recetteEvalItemDel && req.method === "DELETE") {
-      return sendJson(res, 200, await pilot.unlinkCadrageEvaluationItem({ recetteId: recetteEvalItemDel[1], itemId: Number(recetteEvalItemDel[2]) }));
+    const cadrageEvalItemDel = path.match(/^\/api\/cadrages\/([^/]+)\/recette-items\/([0-9]+)$/);
+    if (cadrageEvalItemDel && req.method === "DELETE") {
+      return sendJson(res, 200, await pilot.unlinkCadrageRecetteItem({ cadrageId: cadrageEvalItemDel[1], itemId: Number(cadrageEvalItemDel[2]) }));
     }
-    const recetteDocView = path.match(/^\/api\/recettes\/([^/]+)\/documents\/([0-9]+)\/view$/);
-    if (recetteDocView && req.method === "GET") {
-      const d = (await registry().query("SELECT * FROM artifacts WHERE id = $1 AND doc_type = ANY($2)", [Number(recetteDocView[2]), RECETTE_DOC_TYPES])).rows[0];
+    const cadrageDocView = path.match(/^\/api\/cadrages\/([^/]+)\/documents\/([0-9]+)\/view$/);
+    if (cadrageDocView && req.method === "GET") {
+      const d = (await registry().query("SELECT * FROM artifacts WHERE id = $1 AND doc_type = ANY($2)", [Number(cadrageDocView[2]), CADRAGE_DOC_TYPES])).rows[0];
       if (!d || !d.path || !existsSync(d.path)) return sendJson(res, 404, { error: "document introuvable" });
       const raw = readFileSync(d.path, "utf8");
       const html = /\.md$/i.test(d.path) ? marked.parse(raw) : null;
       return sendJson(res, 200, { title: d.title || d.path.split("/").pop(), html, raw: html ? null : raw });
     }
-    const recetteDocAction = path.match(/^\/api\/recettes\/([^/]+)\/documents$/);
-    if (recetteDocAction && req.method === "POST") {
+    const cadrageDocAction = path.match(/^\/api\/cadrages\/([^/]+)\/documents$/);
+    if (cadrageDocAction && req.method === "POST") {
       const b = await readBody(req);
-      return sendJson(res, 200, await pilot.addRecetteDocument({ recetteId: recetteDocAction[1], mode: b.mode, filename: b.filename, dataBase64: b.dataBase64, artifactId: b.artifactId, nature: b.nature, title: b.title }));
+      return sendJson(res, 200, await pilot.addCadrageDocument({ cadrageId: cadrageDocAction[1], mode: b.mode, filename: b.filename, dataBase64: b.dataBase64, artifactId: b.artifactId, nature: b.nature, title: b.title }));
     }
-    const recetteDocDel = path.match(/^\/api\/recettes\/([^/]+)\/documents\/([0-9]+)$/);
-    if (recetteDocDel && req.method === "DELETE") {
-      return sendJson(res, 200, await pilot.removeRecetteDocument({ documentId: Number(recetteDocDel[2]) }));
+    const cadrageDocDel = path.match(/^\/api\/cadrages\/([^/]+)\/documents\/([0-9]+)$/);
+    if (cadrageDocDel && req.method === "DELETE") {
+      return sendJson(res, 200, await pilot.removeCadrageDocument({ documentId: Number(cadrageDocDel[2]) }));
     }
-    const recetteDetail = path.match(/^\/api\/recettes\/([^/]+)$/);
-    if (recetteDetail && req.method === "GET") {
+    const cadrageDetail = path.match(/^\/api\/cadrages\/([^/]+)$/);
+    if (cadrageDetail && req.method === "GET") {
       const r = (await registry().query(
-        `SELECT r.*, (SELECT COUNT(*) FROM recette_tasks rt WHERE rt.recette_id = r.recette_id) AS tasks_count FROM recettes r WHERE r.recette_id = $1`,
-        [recetteDetail[1]],
+        `SELECT r.*, (SELECT COUNT(*) FROM cadrage_tasks rt WHERE rt.cadrage_id = r.cadrage_id) AS tasks_count FROM cadrages r WHERE r.cadrage_id = $1`,
+        [cadrageDetail[1]],
       )).rows[0];
-      if (!r) return sendJson(res, 404, { error: "recette inconnue" });
-      const items = mapRecetteItems((await registry().query(
-        "SELECT id, project, content, classification, discussion, scope, title, acceptance, exec_order, vigilance, test_intent, doc_intent, status, created_task_id, created_at FROM recette_items WHERE recette_id = $1 ORDER BY id ASC",
-        [r.recette_id],
+      if (!r) return sendJson(res, 404, { error: "cadrage inconnu" });
+      const items = mapCadrageItems((await registry().query(
+        "SELECT id, project, content, classification, discussion, scope, title, acceptance, exec_order, vigilance, test_intent, doc_intent, status, created_task_id, created_at FROM cadrage_items WHERE cadrage_id = $1 ORDER BY id ASC",
+        [r.cadrage_id],
       )).rows);
       // Éléments de recette évaluateur REPRIS par ce cadrage technique (traçage
       // « repris par le cadrage X ») — lecture SQL directe de la table de lien
-      // (`cadrage_evaluation_items`, créée par le plan MCP …-mcp-20260922-113243).
-      const evaluationItems = (await registry().query(
-        `SELECT i.id, i.evaluation_id, i.content, i.category, i.severity, i.discussion, i.status, i.decision, i.created_at,
-                e.title AS evaluation_title
-           FROM cadrage_evaluation_items cei
-           JOIN evaluation_items i ON i.id = cei.evaluation_item_id
-           JOIN evaluations e ON e.evaluation_id = i.evaluation_id
-          WHERE cei.recette_id = $1 ORDER BY i.id ASC`,
-        [r.recette_id],
-      )).rows.map((i) => ({ itemId: Number(i.id), evaluationId: i.evaluation_id, evaluationTitle: i.evaluation_title || null, category: i.category, severity: i.severity, content: i.content, status: i.status, decision: i.decision, createdAt: i.created_at }));
+      // (`cadrage_recette_items`, créée par le plan MCP …-mcp-20260922-113243).
+      const recetteItems = (await registry().query(
+        `SELECT i.id, i.recette_id, i.content, i.category, i.severity, i.discussion, i.status, i.decision, i.created_at,
+                e.title AS recette_title
+           FROM cadrage_recette_items cei
+           JOIN recette_items i ON i.id = cei.recette_item_id
+           JOIN recettes e ON e.recette_id = i.recette_id
+          WHERE cei.cadrage_id = $1 ORDER BY i.id ASC`,
+        [r.cadrage_id],
+      )).rows.map((i) => ({ itemId: Number(i.id), recetteId: i.recette_id, recetteTitle: i.recette_title || null, category: i.category, severity: i.severity, content: i.content, status: i.status, decision: i.decision, createdAt: i.created_at }));
       const tasks = (await registry().query(
-        `SELECT rt.task_id, t.project, t.title, t.request FROM recette_tasks rt LEFT JOIN tasks t ON t.id = rt.task_id
-         WHERE rt.recette_id = $1 ORDER BY rt.task_id`, [r.recette_id],
+        `SELECT rt.task_id, t.project, t.title, t.request FROM cadrage_tasks rt LEFT JOIN tasks t ON t.id = rt.task_id
+         WHERE rt.cadrage_id = $1 ORDER BY rt.task_id`, [r.cadrage_id],
       )).rows.map((x) => ({ taskId: x.task_id, project: x.project || '', title: x.title || x.task_id, request: x.request || '' }));
       const docs = (await registry().query(
         `SELECT d.id, d.artifact_id, d.title, d.nature, d.source, d.path, d.created_at,
                 a.title AS artifact_title, a.content_id AS artifact_task
          FROM artifacts d LEFT JOIN artifacts a ON a.artifact_id = (d.meta->>'artifactId')
-         WHERE d.content_id = $1 AND d.doc_type = ANY($2) ORDER BY d.id ASC`, [r.recette_id, RECETTE_DOC_TYPES],
+         WHERE d.content_id = $1 AND d.doc_type = ANY($2) ORDER BY d.id ASC`, [r.cadrage_id, CADRAGE_DOC_TYPES],
       )).rows;
       // FONCTIONNALITÉS / RÈGLES MÉTIER rattachées au cadrage (ADR-001 : un
       // cadrage doit être rattaché à ≥1 fonctionnalité et des règles métier).
       // Lecture SQL directe des tables de lien existantes ; l'émergence est
-      // exposée (origine `recette` pour les éléments créés depuis le cadrage).
+      // exposée (origine `cadrage` pour les éléments créés depuis le cadrage).
       const fonctionnalites = (await registry().query(
         `SELECT f.id, f.ref, f.role, f.user_story, f.emergent, f.emergent_origin
-           FROM recette_fonctionnalites rf
+           FROM cadrage_fonctionnalites rf
            JOIN fonctionnalites f ON f.id = rf.fonctionnalite_id
-          WHERE rf.recette_id = $1 ORDER BY f.ref ASC`, [r.recette_id],
+          WHERE rf.cadrage_id = $1 ORDER BY f.ref ASC`, [r.cadrage_id],
       )).rows.map((f) => ({ id: f.id, ref: f.ref, role: f.role ?? null, userStory: f.user_story, emergent: !!f.emergent, emergentOrigin: f.emergent_origin ?? null }));
       const regles = (await registry().query(
         `SELECT g.id, g.ref, g.content, g.emergent, g.emergent_origin
-           FROM recette_regles rr
+           FROM cadrage_regles rr
            JOIN regles_metier g ON g.id = rr.regle_id
-          WHERE rr.recette_id = $1 ORDER BY g.ref ASC`, [r.recette_id],
+          WHERE rr.cadrage_id = $1 ORDER BY g.ref ASC`, [r.cadrage_id],
       )).rows.map((g) => ({ id: g.id, ref: g.ref, content: g.content, emergent: !!g.emergent, emergentOrigin: g.emergent_origin ?? null }));
       // Points de vigilance ADR (item 126) — historique + points OUVERTs qui
       // BLOQUENT la terminaison (la modale de clôture les affiche avec la raison).
       let adrVigilances = [];
-      try { const v = await pilot.listAdrVigilances({ recetteId: r.recette_id }); adrVigilances = (v && v.vigilancess) || []; } catch {}
-      return sendJson(res, 200, { recette: { ...r, repos: await reposOfProject(r.project), tasks, items, evaluationItems, documents: docs, fonctionnalites, regles, adrVigilances, adrVigilancesOpen: adrVigilances.filter((x) => x.status === "open") } });
+      try { const v = await pilot.listAdrVigilances({ cadrageId: r.cadrage_id }); adrVigilances = (v && v.vigilancess) || []; } catch {}
+      return sendJson(res, 200, { cadrage: { ...r, repos: await reposOfProject(r.project), tasks, items, recetteItems, documents: docs, fonctionnalites, regles, adrVigilances, adrVigilancesOpen: adrVigilances.filter((x) => x.status === "open") } });
     }
-    // SUPPRESSION d'une RECETTE ENTIÈRE (cadrage technique) — ADMIN uniquement.
-    // Nettoyage en CASCADE de toute sa famille polymorphe côté registre. Alias
-    // `/api/cadrages/:id` couvert automatiquement par `aliasCadrageRoute` (l.106).
-    // L'exécuteur est déjà refusé (aucun motif `^/api/recettes/[^/]+$` dans
+    // SUPPRESSION d'un CADRAGE ENTIER (cadrage technique) — ADMIN uniquement.
+    // Nettoyage en CASCADE de toute sa famille polymorphe côté registre. Route
+    // canonique `/api/cadrages/:id` (ADR-004).
+    // L'exécuteur est déjà refusé (aucun motif `^/api/cadrages/[^/]+$` dans
     // EXECUTEUR_WRITE_PATTERNS) ; la garde admin couvre aussi le rôle `user`.
-    if (recetteDetail && req.method === "DELETE") {
+    if (cadrageDetail && req.method === "DELETE") {
       if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
-      return sendJson(res, 200, await pilot.deleteRecette({ recetteId: recetteDetail[1] }));
+      return sendJson(res, 200, await pilot.deleteCadrage({ cadrageId: cadrageDetail[1] }));
     }
     // =========================================================================
     // ÉVALUATIONS — « Recette » de l'ÉVALUATEUR PRODUIT (T-20260922-100650-sbc1).
-    // Objet de 1er niveau DISTINCT du Cadrage technique (`/api/recettes*`).
+    // Objet de 1er niveau DISTINCT du Cadrage technique (`/api/cadrages*`).
     // Routes ADDITIVES (aucune collision). Périmètre propriétaire via
     // `recetteOwnerScope` (l'évaluateur ne voit que SES recettes).
     // =========================================================================
-    if (path === "/api/evaluations" && req.method === "GET") {
+    if (path === "/api/recettes" && req.method === "GET") {
       const project = url.searchParams.get("project");
       const conds = [];
       const params = [];
@@ -3022,29 +3011,29 @@ const server = createServer(async (req, res) => {
         if (!user.projectAccess.length) conds.push("1 = 0");
         else { params.push(user.projectAccess); conds.push(`e.project = ANY($${params.length})`); }
       }
-      params.push(EVALUATION_DOC_TYPES);
+      params.push(RECETTE_DOC_TYPES);
       const rows = (await registry().query(
         `SELECT e.*,
-           (SELECT COUNT(*) FROM evaluation_items i WHERE i.evaluation_id = e.evaluation_id) AS items_count,
-           (SELECT COUNT(*) FROM evaluation_items i WHERE i.evaluation_id = e.evaluation_id AND i.decision = 'a_traiter') AS treatable_count,
-           (SELECT COUNT(*) FROM evaluation_fonctionnalites ef WHERE ef.evaluation_id = e.evaluation_id) AS features_count,
-           (SELECT COUNT(*) FROM evaluation_regles er WHERE er.evaluation_id = e.evaluation_id) AS rules_count,
-           (SELECT COUNT(*) FROM artifacts a WHERE a.content_id = e.evaluation_id AND a.doc_type = ANY($${params.length})) AS documents_count
-         FROM evaluations e
+           (SELECT COUNT(*) FROM recette_items i WHERE i.recette_id = e.recette_id) AS items_count,
+           (SELECT COUNT(*) FROM recette_items i WHERE i.recette_id = e.recette_id AND i.decision = 'a_traiter') AS treatable_count,
+           (SELECT COUNT(*) FROM recette_fonctionnalites ef WHERE ef.recette_id = e.recette_id) AS features_count,
+           (SELECT COUNT(*) FROM recette_regles er WHERE er.recette_id = e.recette_id) AS rules_count,
+           (SELECT COUNT(*) FROM artifacts a WHERE a.content_id = e.recette_id AND a.doc_type = ANY($${params.length})) AS documents_count
+         FROM recettes e
          ${conds.length ? "WHERE " + conds.join(" AND ") : ""}
          ORDER BY e.created_at DESC`,
         params,
       )).rows;
       const reposMap = await reposByProjectIds([...new Set(rows.map((x) => x.project).filter(Boolean))]);
       for (const row of rows) row.repos = reposMap[row.project] || [];
-      return sendJson(res, 200, { evaluations: rows });
+      return sendJson(res, 200, { recettes: rows });
     }
-    if (path === "/api/evaluations" && req.method === "POST") {
+    if (path === "/api/recettes" && req.method === "POST") {
       const b = await readBody(req);
-      return sendJson(res, 200, await pilot.createEvaluation({ project: b.project, title: b.title, description: b.description, featureIds: b.featureIds, ruleIds: b.ruleIds, documents: b.documents, by: user.username, organizationId: b.organizationId || user.activeOrganizationId || user.organizationId }));
+      return sendJson(res, 200, await pilot.createRecette({ project: b.project, title: b.title, description: b.description, featureIds: b.featureIds, ruleIds: b.ruleIds, documents: b.documents, by: user.username, organizationId: b.organizationId || user.activeOrganizationId || user.organizationId }));
     }
     // Pièce binaire d'une évaluation (document/photo/vidéo) — AVANT /:id.
-    if (path === "/api/evaluations/file" && req.method === "GET") {
+    if (path === "/api/recettes/file" && req.method === "GET") {
       const rel = url.searchParams.get("p") || "";
       const abs = normalize(join(EVALUATION_STORAGE_DIR, rel));
       if (!abs.startsWith(EVALUATION_STORAGE_DIR + "/") || !existsSync(abs)) return sendJson(res, 404, { error: "introuvable" });
@@ -3076,10 +3065,10 @@ const server = createServer(async (req, res) => {
       return;
     }
     // MAQUETTE d'évaluation — PAGE STATIQUE servie par le panneau (URL). Chemin :
-    // `/api/evaluations/:id/maquette/<slug>/<fichier>`. Garde anti-traversée
+    // `/api/recettes/:id/maquette/<slug>/<fichier>`. Garde anti-traversée
     // stricte (`normalize` + confinement) + MIME allowlist (html/css/js/json/svg/
     // png…). Aucune exécution serveur : les fichiers sont servis tels quels.
-    const evalMaquette = path.match(/^\/api\/evaluations\/([^/]+)\/maquette\/(.+)$/);
+    const evalMaquette = path.match(/^\/api\/recettes\/([^/]+)\/maquette\/(.+)$/);
     if (evalMaquette && req.method === "GET") {
       let rel = "";
       try { rel = decodeURIComponent(evalMaquette[2]); } catch { return sendJson(res, 400, { error: "chemin invalide" }); }
@@ -3099,48 +3088,48 @@ const server = createServer(async (req, res) => {
       res.writeHead(200, { "Content-Type": ct, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
       return createReadStream(abs).pipe(res);
     }
-    const evalItemAdd = path.match(/^\/api\/evaluations\/([^/]+)\/items$/);
+    const evalItemAdd = path.match(/^\/api\/recettes\/([^/]+)\/items$/);
     if (evalItemAdd && req.method === "POST") {
       const b = await readBody(req);
-      return sendJson(res, 200, await pilot.addEvaluationItem({ evaluationId: evalItemAdd[1], content: b.content, category: b.category, severity: b.severity, discussion: b.discussion }));
+      return sendJson(res, 200, await pilot.addRecetteItem({ recetteId: evalItemAdd[1], content: b.content, category: b.category, severity: b.severity, discussion: b.discussion }));
     }
     // LANCEMENT (ou REPRISE) de la SESSION de l'agent-recette ÉVALUATEUR pour une
-    // recette évaluateur (ADR-001/003). Anti-doublon via `evaluations.session_id`
-    // (tool MCP `evaluation_session_set`) ; `force` démarre une nouvelle session.
+    // recette évaluateur (ADR-001/003). Anti-doublon via `recettes.session_id`
+    // (tool MCP `recette_session_set`) ; `force` démarre une nouvelle session.
     // L'ACL évaluateur autorise cette route sur SES propres recettes (B009) et la
     // garde d'ownership (userOwnsEntity) reste appliquée plus haut.
-    const evalSession = path.match(/^\/api\/evaluations\/([^/]+)\/session$/);
+    const evalSession = path.match(/^\/api\/recettes\/([^/]+)\/session$/);
     if (evalSession && req.method === "POST") {
       let sb = {};
       try { sb = await readBody(req); } catch {}
-      return sendJson(res, 200, await pilot.launchEvaluationSession({ evaluationId: evalSession[1], force: !!(sb && sb.force), adrIds: (sb && sb.adrIds) || undefined, featureIds: (sb && sb.featureIds) || undefined, ruleIds: (sb && sb.ruleIds) || undefined }));
+      return sendJson(res, 200, await pilot.launchRecetteSession({ recetteId: evalSession[1], force: !!(sb && sb.force), adrIds: (sb && sb.adrIds) || undefined, featureIds: (sb && sb.featureIds) || undefined, ruleIds: (sb && sb.ruleIds) || undefined }));
     }
     // DÉCISION ADMIN d'un élément (« à traiter » / « non retenu »). ADMIN-ONLY :
     // l'évaluateur INFORME, l'admin décide (ADR-001/002). Garde EXPLICITE requise
-    // car le pattern d'écriture évaluateur `/api/evaluations/:id/items/...`
+    // car le pattern d'écriture évaluateur `/api/recettes/:id/items/...`
     // (EVALUATEUR_WRITE_PATTERNS) matcherait sinon cette route.
-    const evalItemDecision = path.match(/^\/api\/evaluations\/([^/]+)\/items\/([0-9]+)\/decision$/);
+    const evalItemDecision = path.match(/^\/api\/recettes\/([^/]+)\/items\/([0-9]+)\/decision$/);
     if (evalItemDecision && req.method === "POST") {
       if (user.role !== "admin") return sendJson(res, 403, { error: "décision réservée à l'administrateur (ADR-001/002)" });
       const b = await readBody(req);
-      return sendJson(res, 200, await pilot.setEvaluationItemDecision({ evaluationId: evalItemDecision[1], itemId: Number(evalItemDecision[2]), decision: b.decision, by: user.username }));
+      return sendJson(res, 200, await pilot.setRecetteItemDecision({ recetteId: evalItemDecision[1], itemId: Number(evalItemDecision[2]), decision: b.decision, by: user.username }));
     }
-    const evalItemEdit = path.match(/^\/api\/evaluations\/([^/]+)\/items\/([0-9]+)$/);
+    const evalItemEdit = path.match(/^\/api\/recettes\/([^/]+)\/items\/([0-9]+)$/);
     if (evalItemEdit && (req.method === "PATCH" || req.method === "POST")) {
       const b = await readBody(req);
-      return sendJson(res, 200, await pilot.updateEvaluationItem({ evaluationId: evalItemEdit[1], itemId: Number(evalItemEdit[2]), fields: b.fields || b }));
+      return sendJson(res, 200, await pilot.updateRecetteItem({ recetteId: evalItemEdit[1], itemId: Number(evalItemEdit[2]), fields: b.fields || b }));
     }
     if (evalItemEdit && req.method === "DELETE") {
-      return sendJson(res, 200, await pilot.removeEvaluationItem({ evaluationId: evalItemEdit[1], itemId: Number(evalItemEdit[2]) }));
+      return sendJson(res, 200, await pilot.removeRecetteItem({ recetteId: evalItemEdit[1], itemId: Number(evalItemEdit[2]) }));
     }
-    const evalVerdict = path.match(/^\/api\/evaluations\/([^/]+)\/verdicts$/);
+    const evalVerdict = path.match(/^\/api\/recettes\/([^/]+)\/verdicts$/);
     if (evalVerdict && req.method === "POST") {
       const b = await readBody(req);
-      return sendJson(res, 200, await pilot.setEvaluationVerdict({ evaluationId: evalVerdict[1], fonctionnaliteId: b.fonctionnaliteId || b.featureId, verdict: b.verdict, verdictComment: b.verdictComment }));
+      return sendJson(res, 200, await pilot.setRecetteVerdict({ recetteId: evalVerdict[1], fonctionnaliteId: b.fonctionnaliteId || b.featureId, verdict: b.verdict, verdictComment: b.verdictComment }));
     }
-    const evalDocView = path.match(/^\/api\/evaluations\/([^/]+)\/documents\/([0-9]+)\/view$/);
+    const evalDocView = path.match(/^\/api\/recettes\/([^/]+)\/documents\/([0-9]+)\/view$/);
     if (evalDocView && req.method === "GET") {
-      const d = (await registry().query("SELECT * FROM artifacts WHERE id = $1 AND doc_type = ANY($2)", [Number(evalDocView[2]), EVALUATION_DOC_TYPES])).rows[0];
+      const d = (await registry().query("SELECT * FROM artifacts WHERE id = $1 AND doc_type = ANY($2)", [Number(evalDocView[2]), RECETTE_DOC_TYPES])).rows[0];
       if (!d) return sendJson(res, 404, { error: "document introuvable" });
       // Pièce LIEN : on renvoie l'URL externe (pas de contenu local).
       if (d.nature === "lien" || /^https?:\/\//i.test(String(d.path || ""))) return sendJson(res, 200, { title: d.title || d.path, url: d.path, link: true });
@@ -3155,36 +3144,36 @@ const server = createServer(async (req, res) => {
     // La garde photo/vidéo ne vise QUE les pièces CLIENT de sprint : elle est
     // portée par POST /api/pieces (`pilot.assertPieceAllowed`, voir l.1941) et
     // NE DOIT JAMAIS être appliquée sur cette route.
-    const evalDocAction = path.match(/^\/api\/evaluations\/([^/]+)\/documents$/);
+    const evalDocAction = path.match(/^\/api\/recettes\/([^/]+)\/documents$/);
     if (evalDocAction && req.method === "POST") {
       const b = await readBody(req);
-      return sendJson(res, 200, await pilot.addEvaluationDocument({ evaluationId: evalDocAction[1], mode: b.mode, filename: b.filename, dataBase64: b.dataBase64, artifactId: b.artifactId, url: b.url, path: b.path, nature: b.nature, title: b.title, itemId: b.itemId }));
+      return sendJson(res, 200, await pilot.addRecetteDocument({ recetteId: evalDocAction[1], mode: b.mode, filename: b.filename, dataBase64: b.dataBase64, artifactId: b.artifactId, url: b.url, path: b.path, nature: b.nature, title: b.title, itemId: b.itemId }));
     }
-    const evalDocDel = path.match(/^\/api\/evaluations\/([^/]+)\/documents\/([0-9]+)$/);
+    const evalDocDel = path.match(/^\/api\/recettes\/([^/]+)\/documents\/([0-9]+)$/);
     if (evalDocDel && req.method === "DELETE") {
-      return sendJson(res, 200, await pilot.removeEvaluationDocument({ documentId: Number(evalDocDel[2]) }));
+      return sendJson(res, 200, await pilot.removeRecetteDocument({ documentId: Number(evalDocDel[2]) }));
     }
-    const evalFinish = path.match(/^\/api\/evaluations\/([^/]+)\/finish$/);
+    const evalFinish = path.match(/^\/api\/recettes\/([^/]+)\/finish$/);
     if (evalFinish && req.method === "POST") {
-      return sendJson(res, 200, await pilot.confirmEvaluation({ evaluationId: evalFinish[1], by: user.username }));
+      return sendJson(res, 200, await pilot.confirmRecette({ recetteId: evalFinish[1], by: user.username }));
     }
     // TESTS STANDARD (préprod) lancés depuis le panneau : ASYNCHRONE. Le POST
     // retourne immédiatement (202 {jobId}) ; un worker détaché relaie l'appel MCP
-    // `evaluation_perf_run` (parcours de pages + erreurs console/réseau + stress
+    // `recette_perf_run` (parcours de pages + erreurs console/réseau + stress
     // des routes d'API, plusieurs minutes) et écrit un marqueur de fin. Le front
     // suit l'état via GET .../perf-jobs/:jobId.
-    const evalPerfRun = path.match(/^\/api\/evaluations\/([^/]+)\/perf-run$/);
+    const evalPerfRun = path.match(/^\/api\/recettes\/([^/]+)\/perf-run$/);
     if (evalPerfRun && req.method === "POST") {
-      const evaluationId = decodeURIComponent(evalPerfRun[1]);
+      const recetteId = decodeURIComponent(evalPerfRun[1]);
       const b = await readBody(req).catch(() => ({}));
-      const e = (await registry().query("SELECT evaluation_id FROM evaluations WHERE evaluation_id = $1", [evaluationId])).rows[0];
+      const e = (await registry().query("SELECT recette_id FROM recettes WHERE recette_id = $1", [recetteId])).rows[0];
       if (!e) return sendJson(res, 404, { error: "recette inconnue" });
       if (!b || !b.url || !/^https?:\/\//i.test(String(b.url))) return sendJson(res, 400, { error: "url préprod requise (http/https)" });
       const PERF_JOBS = join(EVALUATION_PERF_DIR, "jobs");
       const jobId = `perf-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       try { mkdirSync(PERF_JOBS, { recursive: true }); } catch {}
       const payload = {
-        evaluationId,
+        recetteId,
         url: String(b.url),
         pages: Array.isArray(b.pages) && b.pages.length ? b.pages : undefined,
         routes: Array.isArray(b.routes) && b.routes.length ? b.routes : undefined,
@@ -3207,12 +3196,12 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 500, { error: "impossible de lancer le worker de performance : " + String((err && err.message) || err) });
       }
       return sendJson(res, 202, {
-        ok: true, async: true, jobId, evaluationId,
-        message: `Test de performance lancé en arrière-plan (job ${jobId}) — suivez l'état via /api/evaluations/${encodeURIComponent(evaluationId)}/perf-jobs/${jobId} ; il peut prendre plusieurs minutes.`,
+        ok: true, async: true, jobId, recetteId,
+        message: `Test de performance lancé en arrière-plan (job ${jobId}) — suivez l'état via /api/recettes/${encodeURIComponent(recetteId)}/perf-jobs/${jobId} ; il peut prendre plusieurs minutes.`,
       });
     }
     // Statut d'un job de performance asynchrone : en cours / terminé.
-    const evalPerfJob = path.match(/^\/api\/evaluations\/([^/]+)\/perf-jobs\/([^/]+)$/);
+    const evalPerfJob = path.match(/^\/api\/recettes\/([^/]+)\/perf-jobs\/([^/]+)$/);
     if (evalPerfJob && req.method === "GET") {
       const jobId = decodeURIComponent(evalPerfJob[2]);
       const resultFile = join(EVALUATION_PERF_DIR, "jobs", `${jobId}.result.json`);
@@ -3225,30 +3214,30 @@ const server = createServer(async (req, res) => {
     // Éléments de recette évaluateur « à traiter » (décision admin) — entrée de
     // contexte de l'exécuteur pour un cadrage technique. AVANT `/:id` (sinon
     // « treatable » serait capté comme un id d'évaluation).
-    if (path === "/api/evaluations/treatable" && req.method === "GET") {
+    if (path === "/api/recettes/treatable" && req.method === "GET") {
       const project = url.searchParams.get("project") || undefined;
-      return sendJson(res, 200, await pilot.listTreatableEvaluationItems({ project }));
+      return sendJson(res, 200, await pilot.listTreatableRecetteItems({ project }));
     }
-    const evalDetail = path.match(/^\/api\/evaluations\/([^/]+)$/);
+    const evalDetail = path.match(/^\/api\/recettes\/([^/]+)$/);
     if (evalDetail && req.method === "GET") {
-      const e = (await registry().query("SELECT * FROM evaluations WHERE evaluation_id = $1", [evalDetail[1]])).rows[0];
-      if (!e) return sendJson(res, 404, { error: "évaluation inconnue" });
+      const e = (await registry().query("SELECT * FROM recettes WHERE recette_id = $1", [evalDetail[1]])).rows[0];
+      if (!e) return sendJson(res, 404, { error: "recette inconnue" });
       let items = (await registry().query(
-        "SELECT id, content, category, severity, discussion, status, decision, decided_at, decided_by, created_at FROM evaluation_items WHERE evaluation_id = $1 ORDER BY id ASC",
-        [e.evaluation_id],
+        "SELECT id, content, category, severity, discussion, status, decision, decided_at, decided_by, created_at FROM recette_items WHERE recette_id = $1 ORDER BY id ASC",
+        [e.recette_id],
       )).rows.map((i) => ({ itemId: Number(i.id), content: i.content, category: i.category, severity: i.severity, discussion: i.discussion, status: i.status, decision: i.decision, decidedAt: i.decided_at || null, decidedBy: i.decided_by || null, createdAt: i.created_at }));
       // Traçage « repris par le cadrage X » (une requête pour tous les éléments).
       const reprisRows = items.length ? (await registry().query(
-        `SELECT cei.evaluation_item_id, cei.recette_id, cei.created_at, cei.taken_by, r.title
-           FROM cadrage_evaluation_items cei LEFT JOIN recettes r ON r.recette_id = cei.recette_id
-          WHERE cei.evaluation_item_id = ANY($1) ORDER BY cei.created_at ASC`,
+        `SELECT cei.recette_item_id, cei.cadrage_id, cei.created_at, cei.taken_by, r.title
+           FROM cadrage_recette_items cei LEFT JOIN cadrages r ON r.cadrage_id = cei.cadrage_id
+          WHERE cei.recette_item_id = ANY($1) ORDER BY cei.created_at ASC`,
         [items.map((i) => i.itemId)],
       )).rows : [];
       const reprisByItem = new Map();
       for (const x of reprisRows) {
-        const k = Number(x.evaluation_item_id);
+        const k = Number(x.recette_item_id);
         if (!reprisByItem.has(k)) reprisByItem.set(k, []);
-        reprisByItem.get(k).push({ cadrageId: x.recette_id, title: x.title || null, createdAt: x.created_at, takenBy: x.taken_by || null });
+        reprisByItem.get(k).push({ cadrageId: x.cadrage_id, title: x.title || null, createdAt: x.created_at, takenBy: x.taken_by || null });
       }
       for (const it of items) it.reprisPar = reprisByItem.get(it.itemId) || [];
       // Rôle-aware (ADR-001/002) : l'exécuteur n'accède QU'aux éléments « à traiter »
@@ -3257,18 +3246,18 @@ const server = createServer(async (req, res) => {
       const documents = (await registry().query(
         `SELECT d.id, d.artifact_id, d.title, d.nature, d.source, d.path, d.meta, d.created_at, (d.meta->>'itemId') AS item_id, a.title AS artifact_title
          FROM artifacts d LEFT JOIN artifacts a ON a.artifact_id = (d.meta->>'artifactId')
-         WHERE d.content_id = $1 AND d.doc_type = ANY($2) ORDER BY d.id ASC`, [e.evaluation_id, EVALUATION_DOC_TYPES],
+         WHERE d.content_id = $1 AND d.doc_type = ANY($2) ORDER BY d.id ASC`, [e.recette_id, RECETTE_DOC_TYPES],
       )).rows.map((d) => ({ documentId: Number(d.id), artifactId: d.artifact_id, title: d.title || d.artifact_title || (d.path ? d.path.split("/").pop() : null), nature: d.nature, source: d.source, path: d.path, meta: d.meta || null, itemId: d.item_id ? Number(d.item_id) : null, createdAt: d.created_at }));
       const fonctionnalites = (await registry().query(
         `SELECT f.id, f.ref, f.role, f.user_story, ef.verdict, ef.verdict_comment
-         FROM fonctionnalites f JOIN evaluation_fonctionnalites ef ON ef.fonctionnalite_id = f.id
-         WHERE ef.evaluation_id = $1 ORDER BY f.ref ASC`, [e.evaluation_id],
+         FROM fonctionnalites f JOIN recette_fonctionnalites ef ON ef.fonctionnalite_id = f.id
+         WHERE ef.recette_id = $1 ORDER BY f.ref ASC`, [e.recette_id],
       )).rows.map((f) => ({ id: f.id, ref: f.ref, role: f.role, userStory: f.user_story, verdict: f.verdict, verdictComment: f.verdict_comment }));
       const regles = (await registry().query(
-        `SELECT rm.id, rm.ref, rm.content FROM regles_metier rm JOIN evaluation_regles er ON er.regle_id = rm.id
-         WHERE er.evaluation_id = $1 ORDER BY rm.ref ASC`, [e.evaluation_id],
+        `SELECT rm.id, rm.ref, rm.content FROM regles_metier rm JOIN recette_regles er ON er.regle_id = rm.id
+         WHERE er.recette_id = $1 ORDER BY rm.ref ASC`, [e.recette_id],
       )).rows.map((r) => ({ id: r.id, ref: r.ref, content: r.content }));
-      return sendJson(res, 200, { evaluation: { ...e, repos: await reposOfProject(e.project), items, documents, fonctionnalites, regles } });
+      return sendJson(res, 200, { recette: { ...e, repos: await reposOfProject(e.project), items, documents, fonctionnalites, regles } });
     }
     // --- Batches d'orchestration (v0.9.0) : sessions / statut -----------------
     if (path === "/api/batches" && req.method === "GET") {

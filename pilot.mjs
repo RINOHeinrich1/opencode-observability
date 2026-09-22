@@ -1713,6 +1713,29 @@ export async function removeEvaluationDocument({ documentId }) {
   return taskOrchestrator("evaluation_doc_remove", { documentId });
 }
 
+// Lance un TEST DE PERFORMANCE préprod (durées réseau type Network + timings +
+// Core Web Vitals + stress BORNÉ) et rattache le rapport à la recette comme
+// pièce `performance`. Contrat MCP `evaluation_perf_run`. `repoDir` = checkout
+// applicatif contenant Playwright (pour les Core Web Vitals) ; `e2eTestId`
+// (optionnel) rattache la mesure à un test Playwright. Le stress est plafonné
+// côté MCP (concurrency ≤ 10, requests ≤ 200) pour ne pas dégrader la préprod.
+export async function runEvaluationPerf({ evaluationId, url, repoDir, baseUrl, concurrency, requests, itemId, e2eTestId, title, timeoutMs }) {
+  if (!evaluationId) throw new Error("evaluationId requis");
+  if (!url || !/^https?:\/\//i.test(String(url))) throw new Error("url préprod requise (http/https)");
+  return taskOrchestrator("evaluation_perf_run", {
+    evaluationId,
+    url: String(url),
+    repoDir: repoDir || undefined,
+    baseUrl: baseUrl || undefined,
+    concurrency: concurrency !== undefined && concurrency !== null ? Number(concurrency) : undefined,
+    requests: requests !== undefined && requests !== null ? Number(requests) : undefined,
+    itemId: itemId !== undefined && itemId !== null && itemId !== "" ? Number(itemId) : undefined,
+    e2eTestId: e2eTestId || undefined,
+    title: title || undefined,
+    timeoutMs: timeoutMs || undefined,
+  });
+}
+
 // Éléments (recommandation | problème).
 export async function addEvaluationItem({ evaluationId, content, category, severity, discussion }) {
   if (!evaluationId || !content) throw new Error("evaluationId et content requis");

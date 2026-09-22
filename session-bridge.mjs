@@ -405,6 +405,58 @@ export function buildRecettePrompt({ project, repos, title, taskIds, docs = [], 
 }
 
 /**
+ * Prompt d'ouverture d'une session d'ÉVALUATION PRODUIT (agent-recette
+ * évaluateur, ADR-002/003) — v0.1.0.
+ * L'évaluateur décrit le parcours évalué, rattache fonctionnalités (verdict) et
+ * règles métier, enregistre des recommandations/problèmes et joint des pièces.
+ * Il peut en outre : GÉNÉRER UNE MAQUETTE HTML/CSS/JS (données mock) servie par
+ * le panneau comme PAGE STATIQUE (URL rattachable à un élément), LANCER UN TEST
+ * DE PERFORMANCE préprod (réseau + Core Web Vitals + stress borné) et LANCER
+ * LES TESTS E2E disponibles. La recette évaluateur N'EST JAMAIS convertie en
+ * tâches : les éléments « à traiter » sont repris par un cadrage technique.
+ */
+export function buildEvaluationPrompt({ evaluationId, project, repos, title, description, docs = [], adrContext = "", featureIds = [], ruleIds = [] }) {
+  const proj = (project && String(project).trim()) || "";
+  const repoBlock = (repos && repos.length)
+    ? `  Repos transverses du projet (portée réelle — ADR 11) : ${repos.map((x) => x.repoId || x.id || x).join(", ")}`
+    : "";
+  const adrBlock = (adrContext && String(adrContext).trim())
+    ? ["", String(adrContext).trim(), ""]
+    : [];
+  const docBlock = (docs && docs.length)
+    ? [
+        "",
+        "Documents de référence des projets couverts (à LIRE avant la vérification) :",
+        ...docs.map((d, i) => `  ${i + 1}. [${d.kind}] ${d.title || d.docId || ""} — chemin : \`${d.path}\``),
+        "",
+      ]
+    : [];
+  return [
+    `Ouvre la recette d'ÉVALUATION PRODUIT **« ${title || proj} »** — projet : \`${proj}\`${repoBlock ? `\n${repoBlock}` : ""} (v0.1.0).`,
+    evaluationId ? `Recette : \`${evaluationId}\`.` : "",
+    "",
+    description ? `Parcours évalué : ${description}` : "Parcours évalué : à préciser avec l'utilisateur.",
+    "",
+    "Cette recette est un objet de 1er NIVEAU, DISTINCT du cadrage technique : elle N'EST JAMAIS convertie en tâches (les éléments « à traiter » sont repris par un cadrage technique, décision ADMIN).",
+    ...adrBlock,
+    ...docBlock,
+    "Mission :",
+    "- Récupère le contexte : `evaluation_get(<evaluationId>)` (titre, projet, fonctionnalités + verdicts, règles, éléments, pièces), `feature_list`/`rule_list` du projet, `e2e_list` pour les tests E2E disponibles.",
+    "- Accompagne l'utilisateur dans l'évaluation du parcours : réponds à ses questions, aide-le à confronter le réalisé au besoin.",
+    "- Enregistre chaque constat via `evaluation_item_add` (catégorie `recommandation`/`probleme`, sévérité, contenu, discussion). La DÉCISION « à traiter » reste ADMIN (`evaluation_item_decision`), tu ne décides pas.",
+    "- Rattache les fonctionnalités (`evaluation_feature_link`) et règles métier (`evaluation_rule_link`) évaluées, puis pose les verdicts (`evaluation_verdict_set` : conforme | non_conforme | a_ameliorer).",
+    "- Dépose les pièces via `evaluation_doc_add` (lien | document | photo | vidéo) — `itemId` pour rattacher une pièce à un ÉLÉMENT précis.",
+    "",
+    "Outils MAQUETTE & PERFORMANCE (ADR-003) :",
+    "- `evaluation_maquette_add` : GÉNÈRE une MAQUETTE HTML/CSS/JS avec données mock pour la fonctionnalité évaluée. Fournis `files` = liste de { path, content } (ex. index.html, style.css, app.js) et `entry` (défaut index.html). L'outil écrit les fichiers et renvoie une **URL** servie par le panneau comme PAGE STATIQUE (`/api/evaluations/<evaluationId>/maquette/<slug>/index.html`) : cette URL est rattachable à un élément (`itemId`) comme pièce `maquette`.",
+    "- `evaluation_perf_run` : lance un TEST DE PERFORMANCE sur la cible PRÉPROD (`url` http/https) : durées de requêtes réseau (type onglet Network), timings (TTFB/load), Core Web Vitals (LCP/CLS) et STRESS TEST (accès parallèles). Fournis `repoDir` (checkout applicatif contenant Playwright, ex. `/root/mada-talk-preprod`) pour les Core Web Vitals. Le stress est BORNÉ (concurrency ≤ 10, requests ≤ 200) : reste prudent pour ne pas dégrader la préprod. Le rapport est rattaché à la recette comme pièce `performance` (rattachable à un élément via `itemId`, ou à un test Playwright via `e2eTestId`).",
+    "- Tests E2E : liste-les avec `e2e_list` et lance-les avec `e2e_run` (`e2eTestId`, `origin='recette'`) — tu peux les rattacher à la recette et associer une mesure de performance via `e2eTestId`.",
+    "",
+    "Cadre : session dédiée à l'évaluation produit ; l'utilisateur clôturera la recette (« Terminer la recette »). Aucune création de tâche, aucune modification d'une recette qui n'est pas la tienne.",
+  ].filter((x) => x !== "").join("\n");
+}
+
+/**
  * Prompt d'ouverture d'une session de SPRINT (agent-sprint) — v0.1.0.
  * Le sprint est un objet de PROJET (titre + durée + pièces client). La session
  * est rattachée au sprint (sprints.session_id). Mission + cadre, jamais méthode.

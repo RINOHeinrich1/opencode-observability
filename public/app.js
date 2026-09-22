@@ -2801,6 +2801,59 @@ async function renderRecettes() {
 // ===========================================================================
 function evaluationsApiBase() { return '/api/evaluations'; }
 
+// Icône d'une pièce d'évaluation selon sa nature (dont `maquette`/`performance`).
+function evalNatureIcon(nature) {
+  return nature === 'lien' ? '🔗' : nature === 'photo' ? '🖼' : nature === 'video' ? '🎬'
+    : nature === 'maquette' ? '🧩' : nature === 'performance' ? '⚡' : '📄';
+}
+
+// `meta` d'une pièce (JSONB renvoyé tel quel par l'API).
+function evalDocMeta(doc) {
+  return doc && doc.meta && typeof doc.meta === 'object' ? doc.meta : {};
+}
+
+// Détails d'une pièce d'évaluation : bouton « Ouvrir la maquette » (URL servie
+// par le panneau) ou synthèse des métriques de performance. Vide sinon.
+function evalDocDetailsHtml(doc) {
+  const meta = evalDocMeta(doc);
+  if (doc.nature === 'maquette' && meta.url) {
+    return `<a class="ghost" href="${esc(meta.url)}" target="_blank" rel="noopener" title="Ouvrir la maquette (page statique servie par le panneau)">Ouvrir la maquette</a>`;
+  }
+  if (doc.nature === 'performance') {
+    if (meta.summary) return `<span class="muted-sm" title="Résumé du test de performance">${esc(meta.summary)}</span>`;
+    const m = meta.metrics || {};
+    const bits = [];
+    if (m.timings && m.timings.ttfbMs != null) bits.push(`TTFB ${Math.round(m.timings.ttfbMs)}ms`);
+    if (m.vitals && m.vitals.lcpMs != null) bits.push(`LCP ${m.vitals.lcpMs}ms`);
+    if (m.vitals && m.vitals.cls != null) bits.push(`CLS ${m.vitals.cls}`);
+    if (m.stress) bits.push(`stress ${m.stress.requests}@${m.stress.concurrency} → ${m.stress.rps} req/s, p95 ${m.stress.latencyMs.p95}ms, ${m.stress.errorRate}% err`);
+    if (bits.length) return `<span class="muted-sm">${esc(bits.join(' · '))}</span>`;
+  }
+  return '';
+}
+
+// Suit l'état d'un job de PERFORMANCE asynchrone jusqu'à DONE/ERROR, puis
+// recharge la recette (le rapport est alors rattaché comme pièce `performance`).
+async function pollEvaluationPerfJob(evaluationId, jobId, outEl, msgEl, tries = 0) {
+  try {
+    const r = await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/perf-jobs/${encodeURIComponent(jobId)}`);
+    if (r.status === 'RUNNING') {
+      if (tries > 200) { if (outEl) outEl.textContent = 'Toujours en cours (suivi interrompu).'; return; }
+      setTimeout(() => pollEvaluationPerfJob(evaluationId, jobId, outEl, msgEl, tries + 1), 3000);
+      return;
+    }
+    if (r.status === 'DONE') {
+      if (msgEl) { msgEl.textContent = 'Test de performance terminé — rapport rattaché à la recette.'; msgEl.className = 'msg'; }
+      if (outEl) outEl.textContent = (r.result && r.result.report && r.result.report.summary) || 'Terminé.';
+      setTimeout(() => evaluationDetailModal(evaluationId), 1200);
+    } else {
+      if (msgEl) { msgEl.textContent = 'Échec du test : ' + (r.error || (r.result && r.result.error) || 'inconnu'); msgEl.className = 'msg error'; }
+    }
+  } catch (e) {
+    if (outEl) outEl.textContent = 'Suivi interrompu : ' + (e.message || e);
+  }
+}
+
 // Badge de statut d'une évaluation (3 statuts : pending | in_progress | done).
 function evaluationStatusBadge(st) {
   const map = {
@@ -3089,7 +3142,7 @@ async function evaluationDetailModal(evaluationId) {
         ${items.map((it) => {
           const repris = (it.reprisPar || []).map((x) => `<span class="badge awaiting" title="Repris par le cadrage ${esc(x.cadrageId)}${x.takenBy ? ` (${esc(x.takenBy)})` : ''}">repris par ${esc(x.title || x.cadrageId)}</span>`).join(' ');
           const pieces = docsByItem.get(Number(it.itemId)) || [];
-          const pieceLine = pieces.length ? `<div class="muted-sm eval-item-pieces">${pieces.map((doc) => `<span>${doc.nature === 'lien' ? '🔗' : doc.nature === 'photo' ? '🖼' : doc.nature === 'video' ? '🎬' : '📄'} ${esc(doc.title || (doc.path || '').split('/').pop())}</span>`).join(' · ')}</div>` : '';
+          const pieceLine = pieces.length ? `<div class="muted-sm eval-item-pieces">${pieces.map((doc) => `<span>${evalNatureIcon(doc.nature)} ${esc(doc.title || (doc.path || '').split('/').pop())}</span>`).join(' · ')}</div>` : '';
           const decideBtns = IS_ADMIN ? `<button class="ghost" data-eval-item-decide="${it.itemId}" data-decision="a_traiter" title="Marquer « à traiter » (visible par l'exécuteur)">À traiter</button><button class="ghost" data-eval-item-decide="${it.itemId}" data-decision="non_retenu" title="Marquer « non retenu »">Non retenu</button>` : '';
           return `<div class="recette-item eval-item">
           ${evalCategoryBadge(it.category)} ${evalSeverityBadge(it.severity)} ${evalDecisionBadge(it.decision)}
@@ -3121,11 +3174,26 @@ async function evaluationDetailModal(evaluationId) {
       <h3>Pièces</h3>
       <div class="recette-list">
         ${(ev.documents || []).map((doc) => `<div class="recette-item">
-          <code class="muted-sm">${doc.nature === 'lien' ? '🔗' : doc.nature === 'photo' ? '🖼' : doc.nature === 'video' ? '🎬' : '📄'}</code>
+          <code class="muted-sm">${evalNatureIcon(doc.nature)}</code>
           <span><strong>${esc(doc.title || (doc.path || '').split('/').pop())}</strong></span>
           ${doc.nature ? `<span class="muted-sm">${esc(doc.nature)}</span>` : ''}
+          ${evalDocDetailsHtml(doc)}
         </div>`).join('') || '<p class="muted-sm">Aucune pièce rattachée.</p>'}
       </div>
+      ${canWrite ? `
+      <h3>Performance (préprod)</h3>
+      <p class="muted-sm">Mesure des durées de requêtes réseau (type Network), timings (TTFB/load), Core Web Vitals (LCP/CLS) et stress test borné (accès parallèles). Les tests E2E se lancent depuis la page <strong>Tests E2E</strong>.</p>
+      <form id="eval-perf-form" class="pilot-form">
+        <input id="epf-url" placeholder="https://preprod.exemple.fr (URL cible)" required>
+        <input id="epf-repo" placeholder="checkout applicatif avec Playwright (ex. /root/mada-talk-preprod) — optionnel">
+        <div class="perf-options">
+          <label class="muted-sm">Concurrence <input id="epf-conc" type="number" min="1" max="10" value="5"></label>
+          <label class="muted-sm">Requêtes <input id="epf-req" type="number" min="1" max="200" value="50"></label>
+        </div>
+        <div class="modal-actions"><button type="submit" class="launch-btn">Lancer le test de performance</button></div>
+      </form>
+      <div id="epf-msg" class="msg"></div>
+      <div id="epf-result" class="muted-sm"></div>` : ''}
       <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
@@ -3154,6 +3222,31 @@ async function evaluationDetailModal(evaluationId) {
       await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/verdicts`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fonctionnaliteId: sel.dataset.evalVerdict, verdict: sel.value || null }) });
     } catch (e) { alert('Échec du verdict : ' + (e.message || e)); }
   }));
+  // TEST DE PERFORMANCE (préprod) : POST asynchrone → suivi du job jusqu'au
+  // rapport rattaché à la recette (pièce `performance`).
+  const perfForm = document.getElementById('eval-perf-form');
+  if (perfForm) perfForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById('epf-msg');
+    const out = document.getElementById('epf-result');
+    msg.textContent = ''; msg.className = 'msg';
+    const targetUrl = document.getElementById('epf-url').value.trim();
+    if (!targetUrl) { msg.textContent = 'URL préprod requise'; msg.className = 'msg error'; return; }
+    try {
+      const r = await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/perf-run`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: targetUrl,
+          repoDir: document.getElementById('epf-repo').value.trim() || undefined,
+          concurrency: Number(document.getElementById('epf-conc').value) || undefined,
+          requests: Number(document.getElementById('epf-req').value) || undefined,
+        }),
+      });
+      msg.textContent = `Test lancé (job ${r.jobId})…`;
+      out.textContent = 'En cours — navigation + stress. Cela peut prendre plusieurs minutes.';
+      pollEvaluationPerfJob(evaluationId, r.jobId, out, msg);
+    } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
+  });
 }
 
 // Modale AJOUT / ÉDITION d'un élément (recommandation | problème).
@@ -3226,9 +3319,10 @@ async function evaluationItemPieceModal(evaluationId, itemId) {
       <p class="muted">${evalCategoryBadge(item.category)} ${evalSeverityBadge(item.severity)} ${esc(item.content || '')}</p>
       <div class="recette-list">
         ${pieces.map((doc) => `<div class="recette-item">
-          <code class="muted-sm">${doc.nature === 'lien' ? '🔗' : doc.nature === 'photo' ? '🖼' : doc.nature === 'video' ? '🎬' : '📄'}</code>
+          <code class="muted-sm">${evalNatureIcon(doc.nature)}</code>
           <span><strong>${esc(doc.title || (doc.path || '').split('/').pop())}</strong></span>
           ${doc.nature ? `<span class="muted-sm">${esc(doc.nature)}</span>` : ''}
+          ${evalDocDetailsHtml(doc)}
           <button class="danger" data-eval-item-doc-del="${esc(doc.documentId || doc.id)}">Retirer</button>
         </div>`).join('') || '<p class="muted-sm">Aucune pièce rattachée à cet élément.</p>'}
       </div>
@@ -3305,9 +3399,10 @@ async function evaluationPiecesModal(evaluationId) {
       <p class="muted">${esc(ev.title || evaluationId)}</p>
       <div class="recette-list">
         ${(ev.documents || []).map((doc) => `<div class="recette-item">
-          <code class="muted-sm">${doc.nature === 'lien' ? '🔗' : doc.nature === 'photo' ? '🖼' : doc.nature === 'video' ? '🎬' : '📄'}</code>
+          <code class="muted-sm">${evalNatureIcon(doc.nature)}</code>
           <span><strong>${esc(doc.title || (doc.path || '').split('/').pop())}</strong></span>
           ${doc.nature ? `<span class="muted-sm">${esc(doc.nature)}</span>` : ''}
+          ${evalDocDetailsHtml(doc)}
           ${editable ? `<button class="danger" data-eval-doc-del="${esc(doc.documentId || doc.id)}">Retirer</button>` : ''}
         </div>`).join('') || '<p class="muted-sm">Aucune pièce rattachée.</p>'}
       </div>

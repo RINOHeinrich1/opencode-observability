@@ -23,7 +23,7 @@ const CALL_TIMEOUT_MS = 30000;
 // légitimement durer plusieurs minutes (timeout runner 15 min). On lui donne
 // un timeout dédié bien supérieur au défaut de 30 s.
 const LONG_CALL_TIMEOUT_MS = 20 * 60 * 1000;
-const LONG_CALL_TOOLS = new Set(["e2e_run", "e2e_sync_repo"]);
+const LONG_CALL_TOOLS = new Set(["e2e_run", "e2e_sync_repo", "evaluation_perf_run"]);
 
 // Les outils du socle renvoient un contenu texte (souvent JSON sérialisé) ;
 // les erreurs sont signalées par `isError` ou un préfixe "ERREUR : ".

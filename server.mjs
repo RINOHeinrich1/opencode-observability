@@ -43,6 +43,10 @@ const EVALUATEUR_WRITE_PATTERNS = [
   /^\/api\/pieces$/,
   /^\/api\/evaluations$/,
   /^\/api\/evaluations\/[^/]+\/(items|documents|verdicts|finish)(\/.*)?$/,
+  // Lancement d'un TEST DE PERFORMANCE préprod depuis sa recette (maquette +
+  // perf — ADR-003). La LECTURE de la maquette est déjà couverte par le préfixe
+  // `/api/evaluations` de l'allowlist ; seul le déclenchement est ajouté ici.
+  /^\/api\/evaluations\/[^/]+\/perf-run$/,
   /^\/api\/e2e-tests\/[^/]+\/run$/,
   /^\/api\/adr-vigilances\/[^/]+\/resolve$/,
 ];
@@ -103,6 +107,16 @@ mkdirSync(join(E2E_STORAGE_DIR, "runs"), { recursive: true });
 // Pièces binaires des ÉVALUATIONS (recette évaluateur) — famille isolée.
 const EVALUATION_STORAGE_DIR = join(__dirname, "storage", "evaluation-docs");
 mkdirSync(EVALUATION_STORAGE_DIR, { recursive: true });
+// MAQUETTES d'évaluation (HTML/CSS/JS, données mock) — pages STATIQUES servies
+// par le panneau via `GET /api/evaluations/:id/maquette/*`. Le tool MCP
+// `evaluation_maquette_add` écrit dans CE répertoire (même chemin des deux
+// côtés). Garde anti-traversée stricte au service.
+const EVALUATION_MAQUETTE_DIR = process.env.EVALUATION_MAQUETTE_DIR || join(__dirname, "storage", "evaluation-maquettes");
+mkdirSync(EVALUATION_MAQUETTE_DIR, { recursive: true });
+// RAPPORTS de PERFORMANCE + jobs de lancement asynchrone (`perf-jobs`). Le
+// runner `perf-runner.mjs` écrit `report.json`/`report.md` ici.
+const EVALUATION_PERF_DIR = process.env.EVALUATION_PERF_DIR || join(__dirname, "storage", "evaluation-perf");
+mkdirSync(join(EVALUATION_PERF_DIR, "jobs"), { recursive: true });
 const PUBLIC_DIR = join(__dirname, "public");
 const PORT = Number(process.env.PORT || 4000);
 const HOST = process.env.HOST || "127.0.0.1";
@@ -2984,6 +2998,30 @@ const server = createServer(async (req, res) => {
       }
       return;
     }
+    // MAQUETTE d'évaluation — PAGE STATIQUE servie par le panneau (URL). Chemin :
+    // `/api/evaluations/:id/maquette/<slug>/<fichier>`. Garde anti-traversée
+    // stricte (`normalize` + confinement) + MIME allowlist (html/css/js/json/svg/
+    // png…). Aucune exécution serveur : les fichiers sont servis tels quels.
+    const evalMaquette = path.match(/^\/api\/evaluations\/([^/]+)\/maquette\/(.+)$/);
+    if (evalMaquette && req.method === "GET") {
+      let rel = "";
+      try { rel = decodeURIComponent(evalMaquette[2]); } catch { return sendJson(res, 400, { error: "chemin invalide" }); }
+      const abs = normalize(join(EVALUATION_MAQUETTE_DIR, decodeURIComponent(evalMaquette[1]), rel));
+      if (!abs.startsWith(EVALUATION_MAQUETTE_DIR + "/") || !existsSync(abs) || !statSync(abs).isFile()) return sendJson(res, 404, { error: "maquette introuvable" });
+      const ext = extname(abs).toLowerCase();
+      const MAQUETTE_MIME = {
+        ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8",
+        ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
+        ".mjs": "text/javascript; charset=utf-8", ".json": "application/json; charset=utf-8",
+        ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".gif": "image/gif", ".webp": "image/webp", ".ico": "image/x-icon",
+        ".woff": "font/woff", ".woff2": "font/woff2", ".map": "application/json; charset=utf-8",
+      };
+      const ct = MAQUETTE_MIME[ext];
+      if (!ct) return sendJson(res, 415, { error: `type de fichier non servi (maquette) : ${ext || "(sans extension)"}` });
+      res.writeHead(200, { "Content-Type": ct, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
+      return createReadStream(abs).pipe(res);
+    }
     const evalItemAdd = path.match(/^\/api\/evaluations\/([^/]+)\/items$/);
     if (evalItemAdd && req.method === "POST") {
       const b = await readBody(req);
@@ -3042,6 +3080,57 @@ const server = createServer(async (req, res) => {
     if (evalFinish && req.method === "POST") {
       return sendJson(res, 200, await pilot.confirmEvaluation({ evaluationId: evalFinish[1], by: user.username }));
     }
+    // TEST DE PERFORMANCE (préprod) lancé depuis le panneau : ASYNCHRONE. Le POST
+    // retourne immédiatement (202 {jobId}) ; un worker détaché relaie l'appel MCP
+    // `evaluation_perf_run` (navigation + stress, plusieurs minutes) et écrit un
+    // marqueur de fin. Le front suit l'état via GET .../perf-jobs/:jobId.
+    const evalPerfRun = path.match(/^\/api\/evaluations\/([^/]+)\/perf-run$/);
+    if (evalPerfRun && req.method === "POST") {
+      const evaluationId = decodeURIComponent(evalPerfRun[1]);
+      const b = await readBody(req).catch(() => ({}));
+      const e = (await registry().query("SELECT evaluation_id FROM evaluations WHERE evaluation_id = $1", [evaluationId])).rows[0];
+      if (!e) return sendJson(res, 404, { error: "recette inconnue" });
+      if (!b || !b.url || !/^https?:\/\//i.test(String(b.url))) return sendJson(res, 400, { error: "url préprod requise (http/https)" });
+      const PERF_JOBS = join(EVALUATION_PERF_DIR, "jobs");
+      const jobId = `perf-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      try { mkdirSync(PERF_JOBS, { recursive: true }); } catch {}
+      const payload = {
+        evaluationId,
+        url: String(b.url),
+        repoDir: b.repoDir ? String(b.repoDir) : undefined,
+        baseUrl: b.baseUrl ? String(b.baseUrl) : undefined,
+        concurrency: b.concurrency,
+        requests: b.requests,
+        itemId: b.itemId,
+        e2eTestId: b.e2eTestId || undefined,
+        title: b.title || undefined,
+      };
+      const payloadFile = join(PERF_JOBS, `${jobId}.json`);
+      const resultFile = join(PERF_JOBS, `${jobId}.result.json`);
+      try { writeFileSync(payloadFile, JSON.stringify(payload, null, 2)); } catch (err) { return sendJson(res, 500, { error: "impossible d'écrire le job : " + err.message }); }
+      const worker = join(__dirname, "perf-run-worker.mjs");
+      try {
+        const child = spawn("node", [worker, payloadFile, resultFile], { stdio: "ignore", detached: true });
+        child.unref();
+      } catch (err) {
+        return sendJson(res, 500, { error: "impossible de lancer le worker de performance : " + String((err && err.message) || err) });
+      }
+      return sendJson(res, 202, {
+        ok: true, async: true, jobId, evaluationId,
+        message: `Test de performance lancé en arrière-plan (job ${jobId}) — suivez l'état via /api/evaluations/${encodeURIComponent(evaluationId)}/perf-jobs/${jobId} ; il peut prendre plusieurs minutes.`,
+      });
+    }
+    // Statut d'un job de performance asynchrone : en cours / terminé.
+    const evalPerfJob = path.match(/^\/api\/evaluations\/([^/]+)\/perf-jobs\/([^/]+)$/);
+    if (evalPerfJob && req.method === "GET") {
+      const jobId = decodeURIComponent(evalPerfJob[2]);
+      const resultFile = join(EVALUATION_PERF_DIR, "jobs", `${jobId}.result.json`);
+      if (!existsSync(resultFile)) return sendJson(res, 200, { jobId, status: "RUNNING" });
+      try {
+        const r = JSON.parse(readFileSync(resultFile, "utf8"));
+        return sendJson(res, 200, { jobId, status: r.ok ? "DONE" : "ERROR", ...r });
+      } catch (err) { return sendJson(res, 200, { jobId, status: "ERROR", error: "resultat illisible : " + err.message }); }
+    }
     // Éléments de recette évaluateur « à traiter » (décision admin) — entrée de
     // contexte de l'exécuteur pour un cadrage technique. AVANT `/:id` (sinon
     // « treatable » serait capté comme un id d'évaluation).
@@ -3075,10 +3164,10 @@ const server = createServer(async (req, res) => {
       // — filtrage SERVEUR (défense en profondeur ; l'UI n'est qu'un confort).
       if (user.role === "executeur") items = items.filter((it) => it.decision === "a_traiter");
       const documents = (await registry().query(
-        `SELECT d.id, d.artifact_id, d.title, d.nature, d.source, d.path, d.created_at, (d.meta->>'itemId') AS item_id, a.title AS artifact_title
+        `SELECT d.id, d.artifact_id, d.title, d.nature, d.source, d.path, d.meta, d.created_at, (d.meta->>'itemId') AS item_id, a.title AS artifact_title
          FROM artifacts d LEFT JOIN artifacts a ON a.artifact_id = (d.meta->>'artifactId')
          WHERE d.content_id = $1 AND d.doc_type = ANY($2) ORDER BY d.id ASC`, [e.evaluation_id, EVALUATION_DOC_TYPES],
-      )).rows.map((d) => ({ documentId: Number(d.id), artifactId: d.artifact_id, title: d.title || d.artifact_title || (d.path ? d.path.split("/").pop() : null), nature: d.nature, source: d.source, path: d.path, itemId: d.item_id ? Number(d.item_id) : null, createdAt: d.created_at }));
+      )).rows.map((d) => ({ documentId: Number(d.id), artifactId: d.artifact_id, title: d.title || d.artifact_title || (d.path ? d.path.split("/").pop() : null), nature: d.nature, source: d.source, path: d.path, meta: d.meta || null, itemId: d.item_id ? Number(d.item_id) : null, createdAt: d.created_at }));
       const fonctionnalites = (await registry().query(
         `SELECT f.id, f.ref, f.role, f.user_story, ef.verdict, ef.verdict_comment
          FROM fonctionnalites f JOIN evaluation_fonctionnalites ef ON ef.fonctionnalite_id = f.id

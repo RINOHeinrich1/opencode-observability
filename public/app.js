@@ -2804,6 +2804,7 @@ function recetteCard(r) {
       ${canSession ? `<button class="launch-btn" data-rec-session="${esc(r.recette_id)}" title="${r.session_id ? T.sessionResume : T.sessionHint}">${T.session}</button>` : ''}
       ${canFinish ? `<button class="approve" data-rec-finish="${esc(r.recette_id)}">${T.finish}</button>` : ''}
       ${r.status === 'done' ? `<button class="ghost" data-rec-items="${esc(r.recette_id)}">${T.detail}</button>` : ''}
+      ${IS_ADMIN ? `<button class="ghost danger-text" data-rec-del="${esc(r.recette_id)}" data-rec-title="${esc(r.title || r.recette_id)}" title="Supprimer ${T.theEntity} (admin) — irréversible">Supprimer</button>` : ''}
     </div>
   </article>`;
 }
@@ -2890,6 +2891,7 @@ async function renderRecettes() {
   document.querySelectorAll('#pane-recettes [data-rec-items]').forEach((b) => b.addEventListener('click', () => recetteDetailItemsModal(b.dataset.recItems)));
   document.querySelectorAll('#pane-recettes [data-rec-docs]').forEach((b) => b.addEventListener('click', () => recetteDocsModal(b.dataset.recDocs)));
   document.querySelectorAll('#pane-recettes [data-rec-detail]').forEach((b) => b.addEventListener('click', () => recetteDetailModal(b.dataset.recDetail)));
+  document.querySelectorAll('#pane-recettes [data-rec-del]').forEach((b) => b.addEventListener('click', () => deleteRecetteFlow(b.dataset.recDel, b.dataset.recTitle, refreshActive)));
   document.querySelectorAll('#pane-recettes [data-batch-session]').forEach((b) => b.addEventListener('click', () => openBatchSession(b.dataset.batchSession, b)));
   document.querySelectorAll('#pane-recettes [data-batch-detail]').forEach((b) => b.addEventListener('click', () => batchDetailModal(b.dataset.batchDetail)));
 }
@@ -6730,6 +6732,23 @@ async function deleteRuleFlow(ruleId, onDone) {
   if (!confirm('Supprimer cette règle métier ? Ses liens (fonctionnalités, sprints) seront détachés.')) return;
   try {
     await api(`/api/rules/${encodeURIComponent(ruleId)}`, { method: 'DELETE' });
+    if (typeof onDone === 'function') await onDone();
+  } catch (e) { alert('Suppression impossible : ' + ((e && e.message) || e)); }
+}
+
+// Suppression d'une RECETTE ENTIÈRE (cadrage technique) depuis le panneau —
+// ADMIN uniquement. DOUBLE confirmation (action IRRÉVERSIBLE) → DELETE
+// `/api/recettes/:id` (nettoyage en CASCADE côté registre : éléments, liens de
+// tâches, documents/artefacts, points de vigilance ADR liés, liens
+// sprint/fonctionnalité/règle/ADR/projet, signaux de cardinalité ouverts). Les
+// tâches et éléments d'évaluation rattachés RESTENT au registre.
+async function deleteRecetteFlow(recetteId, title, onDone) {
+  if (!recetteId) return;
+  const label = title || recetteId;
+  if (!confirm(`Supprimer DÉFINITIVEMENT ${label} ?\n\nToute sa famille sera nettoyée (éléments, liens de tâches, documents, points de vigilance ADR, liens sprint/fonctionnalité/règle/ADR). Les tâches et éléments d'évaluation rattachés restent au registre.`)) return;
+  if (!confirm(`Confirmer la suppression IRRÉVERSIBLE de ${recetteId} ?`)) return;
+  try {
+    await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}`, { method: 'DELETE' });
     if (typeof onDone === 'function') await onDone();
   } catch (e) { alert('Suppression impossible : ' + ((e && e.message) || e)); }
 }

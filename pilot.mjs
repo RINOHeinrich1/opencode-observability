@@ -1217,6 +1217,19 @@ export async function createRecette({ project, title, description, taskIds, docu
   return { ok: true, recette: r.recette };
 }
 
+// `deleteRecette` : SUPPRIME une recette ENTIÈRE (cadrage technique) + nettoyage
+// en CASCADE de sa famille polymorphe côté registre (items, liens tâches,
+// documents/artefacts attachés, points de vigilance ADR liés, liens
+// sprint/fonctionnalité/règle/ADR/projet, liens d'éléments d'évaluation, signaux
+// de cardinalité ouverts, batches détachés). Les tâches et éléments d'évaluation
+// rattachés RESTENT intacts (seuls les liens sont supprimés). Suppression
+// IRRÉVERSIBLE — réservée à un administrateur (garde portée par la route panneau).
+export async function deleteRecette(args = {}) {
+  const recetteId = args.recetteId || args.cadrageId;
+  if (!recetteId) throw new Error("recetteId requis");
+  return taskOrchestrator("cadrage_delete", { cadrageId: String(recetteId) });
+}
+
 // Lance (ou reprend) la session dédiée de l'agent de CADRAGE TECHNIQUE
 // (`agent-cadrage`) pour une recette (objet « cadrage technique », ex-« recette »).
 // `force = true` : ignore la session rattachée et en démarre une nouvelle.

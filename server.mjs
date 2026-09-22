@@ -2996,6 +2996,15 @@ const server = createServer(async (req, res) => {
       try { const v = await pilot.listAdrVigilances({ recetteId: r.recette_id }); adrVigilances = (v && v.vigilancess) || []; } catch {}
       return sendJson(res, 200, { recette: { ...r, repos: await reposOfProject(r.project), tasks, items, evaluationItems, documents: docs, fonctionnalites, regles, adrVigilances, adrVigilancesOpen: adrVigilances.filter((x) => x.status === "open") } });
     }
+    // SUPPRESSION d'une RECETTE ENTIÈRE (cadrage technique) — ADMIN uniquement.
+    // Nettoyage en CASCADE de toute sa famille polymorphe côté registre. Alias
+    // `/api/cadrages/:id` couvert automatiquement par `aliasCadrageRoute` (l.106).
+    // L'exécuteur est déjà refusé (aucun motif `^/api/recettes/[^/]+$` dans
+    // EXECUTEUR_WRITE_PATTERNS) ; la garde admin couvre aussi le rôle `user`.
+    if (recetteDetail && req.method === "DELETE") {
+      if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
+      return sendJson(res, 200, await pilot.deleteRecette({ recetteId: recetteDetail[1] }));
+    }
     // =========================================================================
     // ÉVALUATIONS — « Recette » de l'ÉVALUATEUR PRODUIT (T-20260922-100650-sbc1).
     // Objet de 1er niveau DISTINCT du Cadrage technique (`/api/recettes*`).

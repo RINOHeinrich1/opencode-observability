@@ -336,7 +336,7 @@ export function buildReworkPrompt({ taskId, remarks, by }) {
  * NB : la fonction `buildRecettePrompt` et les outils MCP `recette_*` gardent
  * leur nom (contrat `pilot.mjs`) — seule la terminologie du prompt change.
  */
-export function buildRecettePrompt({ project, repos, title, taskIds, docs = [], adrContext = "", featureContext = "", ruleContext = "" }) {
+export function buildRecettePrompt({ project, repos, title, taskIds, docs = [], adrContext = "", featureContext = "", ruleContext = "", evaluationItems = [] }) {
   const proj = (project && String(project).trim()) || "";
   const repoBlock = (repos && repos.length)
     ? `  Repos transverses du projet (portée réelle — ADR 11) : ${repos.map((x) => x.repoId || x.id || x).join(", ")}`
@@ -364,6 +364,24 @@ export function buildRecettePrompt({ project, repos, title, taskIds, docs = [], 
         "",
       ]
     : [];
+  // Bloc « Éléments de recette évaluateur repris en contexte » (workflow admin →
+  // exécuteur) : éléments marqués « à traiter » par l'admin et REPRIS dans ce
+  // cadrage. L'exécuteur produit les tâches techniques À PARTIR de ces éléments
+  // (plus de conversion automatique des recettes évaluateur en tâches).
+  const evalItemBlock = (evaluationItems && evaluationItems.length)
+    ? [
+        "",
+        "## Éléments de recette évaluateur repris en contexte",
+        "Ces éléments proviennent de recettes de l'ÉVALUATEUR produit, ont été marqués « à traiter » par l'admin et sont REPRIS dans ce cadrage technique. Traite-les comme ENTRÉE du cadrage (ce ne sont PAS des tâches) :",
+        ...evaluationItems.map((it, i) => {
+          const pieces = (it.pieces || it.documents || []).map((p) => p.title || p.path || p.documentId).filter(Boolean);
+          const piecesStr = pieces.length ? ` — pièces : ${pieces.join(", ")}` : "";
+          return `  ${i + 1}. [${it.category || "élément"}/${it.severity || "?"}] (item ${it.itemId}) ${String(it.content || "").trim()}${piecesStr}`;
+        }),
+        "Consigne : c'est CE cadrage qui définit les tâches techniques à produire (elles seront créées à la confirmation finale, via le panneau) — jamais une conversion automatique de la recette évaluateur.",
+        "",
+      ]
+    : [];
   return [
     `Ouvre le cadrage technique **« ${title || proj} »** — projet : \`${proj}\`${repoBlock ? `\n${repoBlock}` : ""} (v0.9.0).`,
     "",
@@ -374,6 +392,7 @@ export function buildRecettePrompt({ project, repos, title, taskIds, docs = [], 
     ...featureBlock,
     ...ruleBlock,
     ...docBlock,
+    ...evalItemBlock,
     "Mission :",
     "- Récupère le contexte : `recette_get(<recetteId>)` (titre, projet, repos transverses, tâches couvertes, éléments), et pour chaque tâche couverte `task_get` (plans, commits, artefacts, tâches liées), `artifact_list`, `events_list`.",
     "- Accompagne l'utilisateur dans la vérification du périmètre : réponds à ses questions, aide-le à comprendre ce qui a été réalisé.",

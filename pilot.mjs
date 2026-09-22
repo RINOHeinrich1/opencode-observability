@@ -1239,7 +1239,7 @@ export async function launchRecetteSession({ recetteId, force = false, adrIds, f
     let ruleCtx = { context: "" };
     try { featureCtx = await featureContext({ projectId: proj, featureIds: fIds }); } catch {}
     try { ruleCtx = await ruleContext({ projectId: proj, ruleIds: rIds }); } catch {}
-    const prompt = buildRecettePrompt({ project: proj, repos: rec.repos || [], title: rec.title, taskIds: rec.tasks || [], adrContext: adrCtx.context || "", featureContext: featureCtx.context || "", ruleContext: ruleCtx.context || "" });
+    const prompt = buildRecettePrompt({ project: proj, repos: rec.repos || [], title: rec.title, taskIds: rec.tasks || [], adrContext: adrCtx.context || "", featureContext: featureCtx.context || "", ruleContext: ruleCtx.context || "", evaluationItems: rec.evaluationItems || [] });
     const { sessionId } = await launchSession({ dir, agent: "agent-recette", prompt, title: `Recette ${rec.title || proj}` });
     if (!sessionId || !/^ses_/.test(sessionId)) {
       throw new Error("échec de lancement de la session de recette (agent-recette indisponible ?)");
@@ -1676,17 +1676,21 @@ export async function createEvaluation({ project, title, description, featureIds
 
 // Rattache une PIÈCE à une évaluation : lien (URL), document/photo/vidéo
 // (upload base64) ou artefact existant. Stockage binaire : storage/evaluation-docs.
-export async function addEvaluationDocument({ evaluationId, mode, filename, dataBase64, artifactId, nature, title, path, url }) {
+// `itemId` (optionnel) : rattache la pièce à un ÉLÉMENT précis de l'évaluation
+// (via `meta.itemId` côté registre) — sans `itemId`, la pièce reste au niveau de
+// l'évaluation. Contrat `evaluation_doc_add` (plan MCP …-mcp-20260922-113243).
+export async function addEvaluationDocument({ evaluationId, mode, filename, dataBase64, artifactId, nature, title, path, url, itemId }) {
   if (!evaluationId) throw new Error("evaluationId requis");
+  const item = itemId !== undefined && itemId !== null && itemId !== "" ? { itemId: Number(itemId) } : {};
   if (mode === "artifact") {
     if (!artifactId) throw new Error("artifactId requis en mode artefact");
-    return taskOrchestrator("evaluation_doc_add", { evaluationId, source: "artifact", artifactId, nature: nature || undefined, title: title || undefined });
+    return taskOrchestrator("evaluation_doc_add", { evaluationId, source: "artifact", artifactId, nature: nature || undefined, title: title || undefined, ...item });
   }
   // Mode LIEN : URL externe (aucun stockage binaire).
   if (mode === "link" || (!dataBase64 && (url || /^https?:\/\//i.test(String(path || ""))))) {
     const link = url || path;
     if (!link) throw new Error("url requise en mode lien");
-    return taskOrchestrator("evaluation_doc_add", { evaluationId, source: "import", path: String(link), nature: nature || "lien", title: title || String(link) });
+    return taskOrchestrator("evaluation_doc_add", { evaluationId, source: "import", path: String(link), nature: nature || "lien", title: title || String(link), ...item });
   }
   if (!dataBase64 || !filename) throw new Error("fichier requis (mode import)");
   const docDir = "/root/orchestrator-panel/storage/evaluation-docs";
@@ -1695,7 +1699,7 @@ export async function addEvaluationDocument({ evaluationId, mode, filename, data
   const safeName = String(filename).replace(/[^\w.\-]+/g, "_");
   const dest = `${docDir}/${evaluationId}-${Date.now()}-${safeName}`;
   fs.writeFileSync(dest, Buffer.from(String(dataBase64), "base64"));
-  return taskOrchestrator("evaluation_doc_add", { evaluationId, source: "import", path: dest, nature: nature || undefined, title: title || filename });
+  return taskOrchestrator("evaluation_doc_add", { evaluationId, source: "import", path: dest, nature: nature || undefined, title: title || filename, ...item });
 }
 
 export async function removeEvaluationDocument({ documentId }) {
@@ -1729,6 +1733,25 @@ export async function removeEvaluationItem({ evaluationId, itemId }) {
   return { ok: true };
 }
 
+// DÉCISION ADMIN d'un élément (« à traiter » / « non retenu ») — action TRACÉE,
+// DISTINCTE du statut de suivi (`updateEvaluationItem`). L'évaluateur INFORME, il
+// ne décide pas : la route appelante est ADMIN-ONLY (server.mjs). Contrat MCP
+// `evaluation_item_decision` (plan …-mcp-20260922-113243).
+export async function setEvaluationItemDecision({ evaluationId, itemId, decision, by }) {
+  if (!itemId) throw new Error("itemId requis");
+  if (!decision) throw new Error("decision requise (pending | a_traiter | non_retenu)");
+  const r = await taskOrchestrator("evaluation_item_decision", { itemId: Number(itemId), decision, by: by || undefined });
+  return { ok: true, item: r && r.item };
+}
+
+// ÉLÉMENTS ACCESSIBLES À L'EXÉCUTEUR : uniquement ceux marqués « à traiter » par
+// l'admin (`decision='a_traiter'`). Entrée de contexte d'un cadrage technique.
+// Contrat MCP `evaluation_items_treatable`.
+export async function listTreatableEvaluationItems({ project }) {
+  const r = await taskOrchestrator("evaluation_items_treatable", { project: project || undefined });
+  return { ok: true, count: (r && r.count) || 0, items: (r && r.items) || [] };
+}
+
 // Verdict d'une fonctionnalité rattachée à l'évaluation.
 export async function setEvaluationVerdict({ evaluationId, fonctionnaliteId, verdict, verdictComment }) {
   if (!evaluationId || !fonctionnaliteId) throw new Error("evaluationId et fonctionnaliteId requis");
@@ -1748,6 +1771,29 @@ export async function addRecetteTask({ recetteId, taskId }) {
   if (!recetteId || !taskId) throw new Error("recetteId et taskId requis");
   const r = await taskOrchestrator("recette_link_task", { recetteId, taskId });
   return { ok: true, recette: r && r.recette };
+}
+
+// --- Reprise d'un ÉLÉMENT DE RECETTE ÉVALUATEUR par un CADRAGE technique -----
+// Lien ADDITIF cadrage (`recettes`) ↔ élément (`evaluation_items`), traçage
+// « repris par le cadrage X ». GARDE côté registre : seul un élément
+// `decision='a_traiter'` est repris (ADR-001/002). Contrat MCP
+// `cadrage_evaluation_item_link` / `_unlink` / `_list`.
+export async function linkCadrageEvaluationItem({ recetteId, itemId, by }) {
+  if (!recetteId || itemId === undefined || itemId === null) throw new Error("recetteId et itemId requis");
+  const r = await taskOrchestrator("cadrage_evaluation_item_link", { cadrageId: recetteId, itemId: Number(itemId) });
+  return { ok: true, ...r };
+}
+
+export async function unlinkCadrageEvaluationItem({ recetteId, itemId }) {
+  if (!recetteId || itemId === undefined || itemId === null) throw new Error("recetteId et itemId requis");
+  const r = await taskOrchestrator("cadrage_evaluation_item_unlink", { cadrageId: recetteId, itemId: Number(itemId) });
+  return { ok: true, ...r };
+}
+
+export async function listCadrageEvaluationItems({ recetteId }) {
+  if (!recetteId) throw new Error("recetteId requis");
+  const r = await taskOrchestrator("cadrage_evaluation_item_list", { cadrageId: recetteId });
+  return { ok: true, count: (r && r.count) || 0, items: (r && r.items) || [] };
 }
 
 // Détache une tâche couverte d'une recette (la tâche reste intacte).

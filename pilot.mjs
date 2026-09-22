@@ -1634,6 +1634,115 @@ export async function removeRecetteDocument({ documentId }) {
   return taskOrchestrator("recette_doc_remove", { documentId });
 }
 
+// ===========================================================================
+// ÉVALUATIONS — « Recette » de l'ÉVALUATEUR PRODUIT (T-20260922-100650-sbc1).
+// Wrappers MCP `evaluation_*`. Objet de 1er niveau DISTINCT du Cadrage
+// technique (`recette_*`). AUCUNE conversion en tâches.
+// ===========================================================================
+
+// Crée une évaluation : parcours évalué (description) + 1..N fonctionnalités +
+// 1..N règles métier + pièces éventuelles. `by` = évaluateur propriétaire.
+export async function createEvaluation({ project, title, description, featureIds, ruleIds, by, organizationId, documents }) {
+  if (!project || !String(project).trim()) throw new Error("un projet (produit) requis pour créer une recette");
+  if (!title || !String(title).trim()) throw new Error("titre requis pour créer une recette");
+  const r = await taskOrchestrator("evaluation_start", {
+    project: String(project).trim(),
+    title: String(title).trim(),
+    description: description ? String(description).trim() : undefined,
+    featureIds: (featureIds || []).filter(Boolean),
+    ruleIds: (ruleIds || []).filter(Boolean),
+    createdBy: by || undefined,
+    organizationId: organizationId || undefined,
+  });
+  const evaluationId = r.evaluation.evaluationId;
+  for (const doc of documents || []) {
+    if (!doc) continue;
+    try {
+      await addEvaluationDocument({
+        evaluationId,
+        mode: doc.mode === "artifact" ? "artifact" : (doc.mode === "link" ? "link" : "import"),
+        filename: doc.filename,
+        dataBase64: doc.dataBase64,
+        artifactId: doc.artifactId,
+        url: doc.url,
+        path: doc.path,
+        nature: doc.nature,
+        title: doc.title,
+      });
+    } catch {}
+  }
+  return { ok: true, evaluation: r.evaluation };
+}
+
+// Rattache une PIÈCE à une évaluation : lien (URL), document/photo/vidéo
+// (upload base64) ou artefact existant. Stockage binaire : storage/evaluation-docs.
+export async function addEvaluationDocument({ evaluationId, mode, filename, dataBase64, artifactId, nature, title, path, url }) {
+  if (!evaluationId) throw new Error("evaluationId requis");
+  if (mode === "artifact") {
+    if (!artifactId) throw new Error("artifactId requis en mode artefact");
+    return taskOrchestrator("evaluation_doc_add", { evaluationId, source: "artifact", artifactId, nature: nature || undefined, title: title || undefined });
+  }
+  // Mode LIEN : URL externe (aucun stockage binaire).
+  if (mode === "link" || (!dataBase64 && (url || /^https?:\/\//i.test(String(path || ""))))) {
+    const link = url || path;
+    if (!link) throw new Error("url requise en mode lien");
+    return taskOrchestrator("evaluation_doc_add", { evaluationId, source: "import", path: String(link), nature: nature || "lien", title: title || String(link) });
+  }
+  if (!dataBase64 || !filename) throw new Error("fichier requis (mode import)");
+  const docDir = "/root/orchestrator-panel/storage/evaluation-docs";
+  const fs = await import("node:fs");
+  fs.mkdirSync(docDir, { recursive: true });
+  const safeName = String(filename).replace(/[^\w.\-]+/g, "_");
+  const dest = `${docDir}/${evaluationId}-${Date.now()}-${safeName}`;
+  fs.writeFileSync(dest, Buffer.from(String(dataBase64), "base64"));
+  return taskOrchestrator("evaluation_doc_add", { evaluationId, source: "import", path: dest, nature: nature || undefined, title: title || filename });
+}
+
+export async function removeEvaluationDocument({ documentId }) {
+  if (!documentId) throw new Error("documentId requis");
+  return taskOrchestrator("evaluation_doc_remove", { documentId });
+}
+
+// Éléments (recommandation | problème).
+export async function addEvaluationItem({ evaluationId, content, category, severity, discussion }) {
+  if (!evaluationId || !content) throw new Error("evaluationId et content requis");
+  return taskOrchestrator("evaluation_item_add", { evaluationId, content, category: category || undefined, severity: severity || undefined, discussion: discussion || undefined });
+}
+
+// Modifie un élément. Garde : évaluation encore ouverte (non `done`).
+export async function updateEvaluationItem({ evaluationId, itemId, fields = {} }) {
+  if (!evaluationId || !itemId) throw new Error("evaluationId et itemId requis");
+  const r = await taskOrchestrator("evaluation_get", { evaluationId });
+  const ev = r && r.evaluation;
+  if (!ev) throw new Error(`évaluation inconnue : ${evaluationId}`);
+  if (ev.status === "done") throw new Error("évaluation clôturée : élément non modifiable");
+  const allowed = ["content", "category", "severity", "discussion", "status"];
+  const payload = { itemId: Number(itemId) };
+  for (const k of allowed) if (fields[k] !== undefined) payload[k] = fields[k];
+  const res = await taskOrchestrator("evaluation_item_update", payload);
+  return { ok: true, item: res && res.item };
+}
+
+export async function removeEvaluationItem({ evaluationId, itemId }) {
+  if (!itemId) throw new Error("itemId requis");
+  await taskOrchestrator("evaluation_item_delete", { itemId: Number(itemId) });
+  return { ok: true };
+}
+
+// Verdict d'une fonctionnalité rattachée à l'évaluation.
+export async function setEvaluationVerdict({ evaluationId, fonctionnaliteId, verdict, verdictComment }) {
+  if (!evaluationId || !fonctionnaliteId) throw new Error("evaluationId et fonctionnaliteId requis");
+  const r = await taskOrchestrator("evaluation_verdict_set", { evaluationId, fonctionnaliteId, verdict: verdict || undefined, verdictComment: verdictComment || undefined });
+  return { ok: true, ...r };
+}
+
+// Clôt une évaluation (done) SANS conversion en tâches.
+export async function confirmEvaluation({ evaluationId, by }) {
+  if (!evaluationId) throw new Error("evaluationId requis");
+  const r = await taskOrchestrator("evaluation_confirm", { evaluationId, confirmedBy: by || "human" });
+  return { ok: true, evaluation: r.evaluation };
+}
+
 // Rattache une tâche couverte à une recette (garde : projet de la recette vérifié côté MCP).
 export async function addRecetteTask({ recetteId, taskId }) {
   if (!recetteId || !taskId) throw new Error("recetteId et taskId requis");

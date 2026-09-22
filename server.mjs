@@ -27,21 +27,22 @@ const EVALUATEUR_ALLOWED_API = [
   "/api/me", "/api/config", "/api/orgs", "/api/session/organization", "/api/render-md",
   "/api/projects", "/api/repos", "/api/pieces", "/api/features", "/api/rules", "/api/links",
   "/api/cardinality", "/api/sprints", "/api/docs", "/api/e2e-tests", "/api/e2e/jobs",
-  "/api/e2e/agent-sessions", "/api/e2e-vars", "/api/e2e/file", "/api/recettes",
+  "/api/e2e/agent-sessions", "/api/e2e-vars", "/api/e2e/file", "/api/evaluations",
   "/api/batches", "/api/adr-vigilances",
 ];
 // Interdits EXPLICITES (défense en profondeur) même si un préfixe de l'allowlist
 // les couvrirait : `/api/docs/file` sert le contenu des ADR (onglet ADR interdit).
-const EVALUATEUR_DENIED_API = ["/api/docs/file", "/api/e2e-secrets"];
-// Écritures autorisées (méthodes non-GET) : ses recettes (items/documents/session),
-// le lancement d'un test E2E, le dépôt de pièces, la levée d'une vigilance ADR et
-// le changement d'organisation active. Rien d'autre (finish/tasks, création E2E,
-// vars/secrets, features/rules/docs/sprints/projets/repos… = 403).
+const EVALUATEUR_DENIED_API = ["/api/docs/file", "/api/e2e-secrets", "/api/recettes", "/api/cadrages"];
+// Écritures autorisées (méthodes non-GET) : SES recettes évaluateur
+// (création/items/documents/verdicts/finish), le lancement d'un test E2E, le
+// dépôt de pièces, la levée d'une vigilance ADR et le changement d'organisation
+// active. Rien d'autre (cadrage technique, création E2E, vars/secrets,
+// features/rules/docs/sprints/projets/repos… = 403).
 const EVALUATEUR_WRITE_PATTERNS = [
   /^\/api\/session\/organization$/,
   /^\/api\/pieces$/,
-  /^\/api\/recettes$/,
-  /^\/api\/recettes\/[^/]+\/(items|documents|session)(\/.*)?$/,
+  /^\/api\/evaluations$/,
+  /^\/api\/evaluations\/[^/]+\/(items|documents|verdicts|finish)(\/.*)?$/,
   /^\/api\/e2e-tests\/[^/]+\/run$/,
   /^\/api\/adr-vigilances\/[^/]+\/resolve$/,
 ];
@@ -58,7 +59,7 @@ const EXECUTEUR_ALLOWED_API = [
   "/api/projects", "/api/repos", "/api/pieces",
   "/api/features", "/api/rules", "/api/links", "/api/cardinality", "/api/sprints",
   "/api/docs", "/api/e2e-tests", "/api/e2e/jobs", "/api/e2e/agent-sessions", "/api/e2e/file",
-  "/api/e2e-vars", "/api/recettes", "/api/cadrages", "/api/tasks", "/api/plans", "/api/events",
+  "/api/e2e-vars", "/api/recettes", "/api/cadrages", "/api/evaluations", "/api/tasks", "/api/plans", "/api/events",
   "/api/deployments", "/api/decisions", "/api/batches", "/api/adr-vigilances", "/api/artifacts",
 ];
 // Interdits EXPLICITES (défense en profondeur) : secrets E2E et gestion des
@@ -99,6 +100,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const E2E_STORAGE_DIR = join(__dirname, "storage", "e2e");
 mkdirSync(join(E2E_STORAGE_DIR, "inbox"), { recursive: true });
 mkdirSync(join(E2E_STORAGE_DIR, "runs"), { recursive: true });
+// Pièces binaires des ÉVALUATIONS (recette évaluateur) — famille isolée.
+const EVALUATION_STORAGE_DIR = join(__dirname, "storage", "evaluation-docs");
+mkdirSync(EVALUATION_STORAGE_DIR, { recursive: true });
 const PUBLIC_DIR = join(__dirname, "public");
 const PORT = Number(process.env.PORT || 4000);
 const HOST = process.env.HOST || "127.0.0.1";
@@ -310,6 +314,10 @@ async function userOwnsEntity(username, kind, id) {
     }
     if (kind === "recettes") {
       const r = (await db.query("SELECT created_by FROM recettes WHERE recette_id = $1", [id])).rows[0];
+      return !r || r.created_by === username;
+    }
+    if (kind === "evaluations") {
+      const r = (await db.query("SELECT created_by FROM evaluations WHERE evaluation_id = $1", [id])).rows[0];
       return !r || r.created_by === username;
     }
     if (kind === "e2e-tests") {
@@ -605,9 +613,12 @@ async function registryDeployments(url) {
 
 // Taxonomie `doc_type` (source de vérité : public/docs/nomenclature-doc-type.md).
 const DOC_TYPES = ["adr", "specs", "gherkin", "project_doc", "adr_file", "plan", "task_synthese",
-  "task_report", "audit_report", "recette_report", "recette_doc", "e2e_report", "e2e_video", "piece", "autre"];
+  "task_report", "audit_report", "recette_report", "recette_doc", "evaluation_doc", "e2e_report", "e2e_video", "piece", "autre"];
 const TASK_DOC_TYPES = ["plan", "task_synthese", "task_report", "audit_report", "autre"];
 const RECETTE_DOC_TYPES = ["recette_doc", "recette_report"];
+// Pièces jointes d'une ÉVALUATION (« Recette » évaluateur) — famille ISOLÉE des
+// pièces client (autorise lien/document/photo/vidéo, ADR-001).
+const EVALUATION_DOC_TYPES = ["evaluation_doc"];
 const DOCS_DOC_TYPES = ["adr", "specs", "gherkin", "project_doc"];
 const ARTIFACT_KINDS = ["plan", "audit", "report", "autre"];
 
@@ -1653,12 +1664,12 @@ const server = createServer(async (req, res) => {
       }
     }
     // Garde rôle `evaluateur` (ADR-002) : l'écriture est limitée à SES PROPRES
-    // recettes (items/documents/session). La création (sans id) reste permise et
-    // est attribuée à l'évaluateur.
+    // recettes évaluateur (items/documents/verdicts/finish). La création (sans id)
+    // reste permise et est attribuée à l'évaluateur.
     if (user.role === "evaluateur" && req.method !== "GET") {
-      const m = path.match(/^\/api\/recettes\/([^/]+)/);
+      const m = path.match(/^\/api\/evaluations\/([^/]+)/);
       if (m) {
-        const owned = await userOwnsEntity(user.username, "recettes", decodeURIComponent(m[1]));
+        const owned = await userOwnsEntity(user.username, "evaluations", decodeURIComponent(m[1]));
         if (!owned) return sendJson(res, 403, { error: "accès en écriture limité à vos propres recettes" });
       }
     }
@@ -2878,6 +2889,139 @@ const server = createServer(async (req, res) => {
       let adrVigilances = [];
       try { const v = await pilot.listAdrVigilances({ recetteId: r.recette_id }); adrVigilances = (v && v.vigilancess) || []; } catch {}
       return sendJson(res, 200, { recette: { ...r, repos: await reposOfProject(r.project), tasks, items, documents: docs, adrVigilances, adrVigilancesOpen: adrVigilances.filter((x) => x.status === "open") } });
+    }
+    // =========================================================================
+    // ÉVALUATIONS — « Recette » de l'ÉVALUATEUR PRODUIT (T-20260922-100650-sbc1).
+    // Objet de 1er niveau DISTINCT du Cadrage technique (`/api/recettes*`).
+    // Routes ADDITIVES (aucune collision). Périmètre propriétaire via
+    // `recetteOwnerScope` (l'évaluateur ne voit que SES recettes).
+    // =========================================================================
+    if (path === "/api/evaluations" && req.method === "GET") {
+      const project = url.searchParams.get("project");
+      const conds = [];
+      const params = [];
+      if (project) { params.push(project); conds.push(`e.project = $${params.length}`); }
+      if (user.activeOrganizationId) { params.push(user.activeOrganizationId); conds.push(`(e.organization_id = $${params.length})`); }
+      if (user.recetteOwnerScope) { params.push(user.recetteOwnerScope); conds.push(`e.created_by = $${params.length}`); }
+      if (user.projectAccess !== null && user.projectAccess !== undefined) {
+        if (!user.projectAccess.length) conds.push("1 = 0");
+        else { params.push(user.projectAccess); conds.push(`e.project = ANY($${params.length})`); }
+      }
+      params.push(EVALUATION_DOC_TYPES);
+      const rows = (await registry().query(
+        `SELECT e.*,
+           (SELECT COUNT(*) FROM evaluation_items i WHERE i.evaluation_id = e.evaluation_id) AS items_count,
+           (SELECT COUNT(*) FROM evaluation_fonctionnalites ef WHERE ef.evaluation_id = e.evaluation_id) AS features_count,
+           (SELECT COUNT(*) FROM evaluation_regles er WHERE er.evaluation_id = e.evaluation_id) AS rules_count,
+           (SELECT COUNT(*) FROM artifacts a WHERE a.content_id = e.evaluation_id AND a.doc_type = ANY($${params.length})) AS documents_count
+         FROM evaluations e
+         ${conds.length ? "WHERE " + conds.join(" AND ") : ""}
+         ORDER BY e.created_at DESC`,
+        params,
+      )).rows;
+      const reposMap = await reposByProjectIds([...new Set(rows.map((x) => x.project).filter(Boolean))]);
+      for (const row of rows) row.repos = reposMap[row.project] || [];
+      return sendJson(res, 200, { evaluations: rows });
+    }
+    if (path === "/api/evaluations" && req.method === "POST") {
+      const b = await readBody(req);
+      return sendJson(res, 200, await pilot.createEvaluation({ project: b.project, title: b.title, description: b.description, featureIds: b.featureIds, ruleIds: b.ruleIds, documents: b.documents, by: user.username, organizationId: b.organizationId || user.activeOrganizationId || user.organizationId }));
+    }
+    // Pièce binaire d'une évaluation (document/photo/vidéo) — AVANT /:id.
+    if (path === "/api/evaluations/file" && req.method === "GET") {
+      const rel = url.searchParams.get("p") || "";
+      const abs = normalize(join(EVALUATION_STORAGE_DIR, rel));
+      if (!abs.startsWith(EVALUATION_STORAGE_DIR + "/") || !existsSync(abs)) return sendJson(res, 404, { error: "introuvable" });
+      const ext = extname(abs).toLowerCase();
+      const type = /^\.(webm|mp4)$/.test(ext) ? (ext === ".mp4" ? "video/mp4" : "video/webm")
+        : (/^\.(png|jpe?g|gif|webp)$/.test(ext) ? `image/${ext === ".jpg" || ext === ".jpeg" ? "jpeg" : ext.slice(1)}`
+        : (/^\.pdf$/.test(ext) ? "application/pdf"
+        : (/^\.json$/.test(ext) ? "application/json; charset=utf-8" : "application/octet-stream")));
+      res.setHeader("Content-Type", type);
+      res.setHeader("Content-Disposition", `inline; filename="${basename(abs)}"`);
+      const st = statSync(abs);
+      const range = req.headers.range;
+      if (range) {
+        const m = /bytes=(\d*)-(\d*)/.exec(range);
+        const start = m && m[1] ? parseInt(m[1], 10) : 0;
+        const end = m && m[2] ? parseInt(m[2], 10) : st.size - 1;
+        res.statusCode = 206;
+        res.setHeader("Accept-Ranges", "bytes");
+        res.setHeader("Content-Range", `bytes ${start}-${end}/${st.size}`);
+        res.setHeader("Content-Length", end - start + 1);
+        createReadStream(abs, { start, end }).pipe(res);
+      } else {
+        res.statusCode = 200;
+        res.setHeader("Content-Length", st.size);
+        createReadStream(abs).pipe(res);
+      }
+      return;
+    }
+    const evalItemAdd = path.match(/^\/api\/evaluations\/([^/]+)\/items$/);
+    if (evalItemAdd && req.method === "POST") {
+      const b = await readBody(req);
+      return sendJson(res, 200, await pilot.addEvaluationItem({ evaluationId: evalItemAdd[1], content: b.content, category: b.category, severity: b.severity, discussion: b.discussion }));
+    }
+    const evalItemEdit = path.match(/^\/api\/evaluations\/([^/]+)\/items\/([0-9]+)$/);
+    if (evalItemEdit && (req.method === "PATCH" || req.method === "POST")) {
+      const b = await readBody(req);
+      return sendJson(res, 200, await pilot.updateEvaluationItem({ evaluationId: evalItemEdit[1], itemId: Number(evalItemEdit[2]), fields: b.fields || b }));
+    }
+    if (evalItemEdit && req.method === "DELETE") {
+      return sendJson(res, 200, await pilot.removeEvaluationItem({ evaluationId: evalItemEdit[1], itemId: Number(evalItemEdit[2]) }));
+    }
+    const evalVerdict = path.match(/^\/api\/evaluations\/([^/]+)\/verdicts$/);
+    if (evalVerdict && req.method === "POST") {
+      const b = await readBody(req);
+      return sendJson(res, 200, await pilot.setEvaluationVerdict({ evaluationId: evalVerdict[1], fonctionnaliteId: b.fonctionnaliteId || b.featureId, verdict: b.verdict, verdictComment: b.verdictComment }));
+    }
+    const evalDocView = path.match(/^\/api\/evaluations\/([^/]+)\/documents\/([0-9]+)\/view$/);
+    if (evalDocView && req.method === "GET") {
+      const d = (await registry().query("SELECT * FROM artifacts WHERE id = $1 AND doc_type = ANY($2)", [Number(evalDocView[2]), EVALUATION_DOC_TYPES])).rows[0];
+      if (!d) return sendJson(res, 404, { error: "document introuvable" });
+      // Pièce LIEN : on renvoie l'URL externe (pas de contenu local).
+      if (d.nature === "lien" || /^https?:\/\//i.test(String(d.path || ""))) return sendJson(res, 200, { title: d.title || d.path, url: d.path, link: true });
+      if (!d.path || !existsSync(d.path)) return sendJson(res, 404, { error: "document introuvable" });
+      const raw = readFileSync(d.path, "utf8");
+      const html = /\.md$/i.test(d.path) ? marked.parse(raw) : null;
+      return sendJson(res, 200, { title: d.title || basename(d.path), html, raw: html ? null : raw });
+    }
+    const evalDocAction = path.match(/^\/api\/evaluations\/([^/]+)\/documents$/);
+    if (evalDocAction && req.method === "POST") {
+      const b = await readBody(req);
+      return sendJson(res, 200, await pilot.addEvaluationDocument({ evaluationId: evalDocAction[1], mode: b.mode, filename: b.filename, dataBase64: b.dataBase64, artifactId: b.artifactId, url: b.url, path: b.path, nature: b.nature, title: b.title }));
+    }
+    const evalDocDel = path.match(/^\/api\/evaluations\/([^/]+)\/documents\/([0-9]+)$/);
+    if (evalDocDel && req.method === "DELETE") {
+      return sendJson(res, 200, await pilot.removeEvaluationDocument({ documentId: Number(evalDocDel[2]) }));
+    }
+    const evalFinish = path.match(/^\/api\/evaluations\/([^/]+)\/finish$/);
+    if (evalFinish && req.method === "POST") {
+      return sendJson(res, 200, await pilot.confirmEvaluation({ evaluationId: evalFinish[1], by: user.username }));
+    }
+    const evalDetail = path.match(/^\/api\/evaluations\/([^/]+)$/);
+    if (evalDetail && req.method === "GET") {
+      const e = (await registry().query("SELECT * FROM evaluations WHERE evaluation_id = $1", [evalDetail[1]])).rows[0];
+      if (!e) return sendJson(res, 404, { error: "évaluation inconnue" });
+      const items = (await registry().query(
+        "SELECT id, content, category, severity, discussion, status, created_at FROM evaluation_items WHERE evaluation_id = $1 ORDER BY id ASC",
+        [e.evaluation_id],
+      )).rows.map((i) => ({ itemId: Number(i.id), content: i.content, category: i.category, severity: i.severity, discussion: i.discussion, status: i.status, createdAt: i.created_at }));
+      const documents = (await registry().query(
+        `SELECT d.id, d.artifact_id, d.title, d.nature, d.source, d.path, d.created_at, a.title AS artifact_title
+         FROM artifacts d LEFT JOIN artifacts a ON a.artifact_id = (d.meta->>'artifactId')
+         WHERE d.content_id = $1 AND d.doc_type = ANY($2) ORDER BY d.id ASC`, [e.evaluation_id, EVALUATION_DOC_TYPES],
+      )).rows.map((d) => ({ documentId: Number(d.id), artifactId: d.artifact_id, title: d.title || d.artifact_title || (d.path ? d.path.split("/").pop() : null), nature: d.nature, source: d.source, path: d.path, createdAt: d.created_at }));
+      const fonctionnalites = (await registry().query(
+        `SELECT f.id, f.ref, f.role, f.user_story, ef.verdict, ef.verdict_comment
+         FROM fonctionnalites f JOIN evaluation_fonctionnalites ef ON ef.fonctionnalite_id = f.id
+         WHERE ef.evaluation_id = $1 ORDER BY f.ref ASC`, [e.evaluation_id],
+      )).rows.map((f) => ({ id: f.id, ref: f.ref, role: f.role, userStory: f.user_story, verdict: f.verdict, verdictComment: f.verdict_comment }));
+      const regles = (await registry().query(
+        `SELECT rm.id, rm.ref, rm.content FROM regles_metier rm JOIN evaluation_regles er ON er.regle_id = rm.id
+         WHERE er.evaluation_id = $1 ORDER BY rm.ref ASC`, [e.evaluation_id],
+      )).rows.map((r) => ({ id: r.id, ref: r.ref, content: r.content }));
+      return sendJson(res, 200, { evaluation: { ...e, repos: await reposOfProject(e.project), items, documents, fonctionnalites, regles } });
     }
     // --- Batches d'orchestration (v0.9.0) : sessions / statut -----------------
     if (path === "/api/batches" && req.method === "GET") {

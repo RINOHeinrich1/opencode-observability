@@ -24,7 +24,7 @@ const persistCadragesUsers = () => localStorage.setItem('panel_cadrage_users', J
 let e2eUserFilter = (() => { try { const v = JSON.parse(localStorage.getItem('panel_e2e_users') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })();
 const persistE2EUsers = () => localStorage.setItem('panel_e2e_users', JSON.stringify(e2eUserFilter));
 let tasksNeedCadrage = localStorage.getItem('panel_task_recette') === '1'; // pré-filtre « À cadrer » (cadrage_status != done)
-let tasksActifOnly = localStorage.getItem('panel_task_actif') === '1';      // pré-filtre « Actif » (statut != done)
+let tasksActifOnly = localStorage.getItem('panel_task_actif') === '1';      // pré-filtre « Actif » (hors TASK_INACTIVE_STATES : done, aborted, failed, blocked, crashed, rejected)
 let tasksDateFrom = localStorage.getItem('panel_task_date_from') || '';      // filtre date de création — borne basse (YYYY-MM-DD)
 let tasksDateTo = localStorage.getItem('panel_task_date_to') || '';          // filtre date de création — borne haute (YYYY-MM-DD)
 // Filtres CIBLES « sans lien » (id-set de la cardinalité) — pré-appliqués par un
@@ -641,6 +641,12 @@ async function renderOverview() {
 }
 
 // --- Tâches ----------------------------------------------------------------
+// États de tâche NON actifs (filtre « Actif ») : une tâche dans l'un de ces états
+// n'est plus « à traiter / en cours ». Blocklist volontaire plutôt qu'une liste
+// d'inclusion : tout état futur ajouté au registre sera considéré actif par
+// défaut, ce qui est le comportement sûr pour un filtre nommé « Actif ».
+// Partition de VALID_STATES (statemachine.mjs) : 23 = 17 actifs + 6 non actifs.
+const TASK_INACTIVE_STATES = ['done', 'aborted', 'failed', 'blocked', 'crashed', 'rejected'];
 async function renderTasks() {
   // Projet ouvert → le filtre projet est verrouillé sur ce projet.
   if (currentProject) tasksProjectFilter = currentProject;
@@ -684,7 +690,7 @@ async function renderTasks() {
       <label class="muted filter-check"><input type="checkbox" id="f-group-user" ${groupUserEnabled ? 'checked' : ''}> Grouper par utilisateur</label>
       <label class="muted filter-check" id="f-group-parallel-wrap" hidden><input type="checkbox" id="f-group-parallel" ${groupParallelEnabled ? 'checked' : ''}> Grouper par tâches parallèles</label>
       <label class="muted filter-check" title="Tâches dont le cadrage n'est pas faite"><input type="checkbox" id="f-filter-cadrage" ${tasksNeedCadrage ? 'checked' : ''}> À cadrer</label>
-      <label class="muted filter-check" title="Tâches dont le statut n'est pas « done »"><input type="checkbox" id="f-filter-actif" ${tasksActifOnly ? 'checked' : ''}> Actif</label>
+      <label class="muted filter-check" title="Tâches réellement actives (hors done, aborted, failed, blocked, crashed, rejected)"><input type="checkbox" id="f-filter-actif" ${tasksActifOnly ? 'checked' : ''}> Actif</label>
       <span class="date-filter" title="Filtrer par date de création">
         <span class="tagfilter-label">Créée du</span>
         <input type="date" id="f-date-from" value="${esc(tasksDateFrom)}">
@@ -774,7 +780,7 @@ async function renderTasks() {
       && (!st.length || st.includes(t.status || 'queued'))
       && (!uf.length || uf.includes(t.created_by || '—'))
       && (!needCadrage || (t.cadrage_status || 'pending') !== 'done')
-      && (!actifOnly || (t.status || 'queued') !== 'done')
+      && (!actifOnly || !TASK_INACTIVE_STATES.includes(t.status || 'queued'))
       && (!tasksMissingFilter || !missingIds || missingIds.has(t.id))
       && (!dateFrom || dayOf(t) >= dateFrom)
       && (!dateTo || dayOf(t) <= dateTo));

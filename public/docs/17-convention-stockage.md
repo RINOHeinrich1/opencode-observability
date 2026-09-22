@@ -89,8 +89,8 @@ Correspondance historique (migration ADR-004, conservée pour la traçabilité) 
 `<id>-<timestamp-ms>-<libellé-assaini>.<ext>` (ex.
 `CT-mtmoh3k0-wz17-1788510942713-revue-scenarios-e2e.md`). Le renommage des
 **fichiers** portant un ancien identifiant (et l'alignement des `artifacts.path`
-/ `meta.url` associés) relève du plan frère « renommer-stockage-ids »
-(`scripts/migrate-nomenclature-stockage.mjs`, `--align-paths`).
+/ `meta.url` associés) est réalisé par `scripts/rename-storage-ids.mjs`
+(voir §6bis, modes `--apply` / `--align-paths`).
 
 ## 5. Variables d'environnement
 
@@ -119,6 +119,29 @@ node scripts/rename-storage-roots.mjs --revert   # renomme en sens inverse
 
 Aucune suppression : uniquement des `fs.rename`. Le journal d'audit est écrit sous
 `storage/.rename-storage-roots/audit-<horodatage>.json` (hors versioning).
+
+## 6bis. Outil de migration — `scripts/rename-storage-ids.mjs`
+
+Renomme les **fichiers** de `storage/` dont le nom porte un ANCIEN identifiant
+(ancien `RECT-*` d'un cadrage devenu `CT-*` ; ancien `EVAL-*` d'une recette
+devenue `RECT-*`) et aligne `artifacts.path` / `meta.maquetteDir` / `meta.url`
+sur l'emplacement disque réel. **Idempotent, réversible, audité** (tables
+`storage_rename_migrations` + `storage_rename_map`), **`--dry-run` par défaut** :
+
+```bash
+node scripts/rename-storage-ids.mjs              # dry-run (défaut) : planifie, n'écrit rien
+node scripts/rename-storage-ids.mjs --orphans    # fichiers non référencés (jamais supprimés)
+node scripts/rename-storage-ids.mjs --check      # 0 lien mort ? (artifacts.path existants)
+node scripts/rename-storage-ids.mjs --align-paths          # dry-run de l'alignement des chemins
+node scripts/rename-storage-ids.mjs --apply [--align-paths]  # renomme + aligne — décision humaine
+node scripts/rename-storage-ids.mjs --revert [--apply]       # retour arrière
+```
+
+**Résolution sûre** : un token n'est renommé que s'il est résolu par
+`nomenclature_id_map` **ET** référencé par un artefact. Un token inconnu
+(`AMBIGU`) ou un fichier non référencé (`ORPHELIN`) est **signalé, jamais
+renommé aveuglément**. `storage/e2e/**` (ids `EXE-*`, hors ADR-004) est exclu.
+Aucune suppression : uniquement des `fs.rename`.
 
 ## 7. Fenêtre de maintenance
 

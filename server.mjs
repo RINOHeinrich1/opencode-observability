@@ -2283,6 +2283,10 @@ const server = createServer(async (req, res) => {
           implemented: typeof b.implemented === "boolean" ? b.implemented : undefined,
           implementedOrigin: b.implementedOrigin || undefined,
           implementedNote: b.implementedNote != null ? b.implementedNote : undefined,
+          // Statut de développement (T-20260922-100651-m6va) — axe 3.
+          devStatus: b.devStatus != null ? b.devStatus : undefined,
+          devStatusSource: b.devStatusSource || undefined,
+          devStatusNote: b.devStatusNote != null ? b.devStatusNote : undefined,
           by: user.username,
         }));
       } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
@@ -2356,6 +2360,9 @@ const server = createServer(async (req, res) => {
           implemented: typeof b.implemented === "boolean" ? b.implemented : undefined,
           implementedOrigin: b.implementedOrigin || undefined,
           implementedNote: b.implementedNote != null ? b.implementedNote : undefined,
+          // Statut de RESPECT (T-20260922-100651-m6va) — axe dédié, distinct.
+          respectStatus: b.respectStatus != null ? b.respectStatus : undefined,
+          respectStatusNote: b.respectStatusNote != null ? b.respectStatusNote : undefined,
           by: user.username,
         }));
       } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }

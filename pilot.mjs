@@ -841,6 +841,11 @@ export async function updateFeature(args = {}) {
     implemented: typeof args.implemented === "boolean" ? args.implemented : undefined,
     implementedOrigin: args.implementedOrigin || undefined,
     implementedNote: args.implementedNote != null ? args.implementedNote : undefined,
+    // STATUT DE DÉVELOPPEMENT (T-20260922-100651-m6va) — pass-through. `""` est
+    // transmis tel quel (déqualification) : `!= null` le distingue d'un absent.
+    devStatus: args.devStatus != null ? args.devStatus : undefined,
+    devStatusSource: args.devStatusSource || undefined,
+    devStatusNote: args.devStatusNote != null ? args.devStatusNote : undefined,
     by: args.by || undefined,
   });
 }
@@ -907,6 +912,9 @@ export async function updateRule(args = {}) {
     implemented: typeof args.implemented === "boolean" ? args.implemented : undefined,
     implementedOrigin: args.implementedOrigin || undefined,
     implementedNote: args.implementedNote != null ? args.implementedNote : undefined,
+    // STATUT DE RESPECT (T-20260922-100651-m6va) — pass-through (axe dédié).
+    respectStatus: args.respectStatus != null ? args.respectStatus : undefined,
+    respectStatusNote: args.respectStatusNote != null ? args.respectStatusNote : undefined,
     by: args.by || undefined,
   });
 }

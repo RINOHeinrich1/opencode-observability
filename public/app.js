@@ -132,7 +132,7 @@ const GLOBAL_TABS = [
 const PROJECT_TABS = [
   ['overview', "Vue d'ensemble"],
   ['tasks', 'Tâches'],
-  ['recettes', 'Recettes'],
+  ['recettes', 'Cadrage technique'],
   ['evaluations', 'Recette'],
   ['e2etests', 'Tests E2E'],
   ['decisions', 'Décisions'],
@@ -6645,9 +6645,9 @@ const CARDINALITY_CARDS = [
   { view: 'tache_sans_adr',              label: 'Tâches sans ADR',               tab: 'tasks',    filter: 'tache_sans_adr' },
   { view: 'tache_sans_fonctionnalite',   label: 'Tâches sans fonctionnalité',    tab: 'tasks',    filter: 'tache_sans_fonctionnalite' },
   { view: 'tache_sans_sprint',           label: 'Tâches sans sprint',            tab: 'tasks',    filter: 'tache_sans_sprint' },
-  { view: 'recette_sans_adr',            label: 'Recettes sans ADR',             tab: 'recettes', filter: 'recette_sans_adr' },
-  { view: 'recette_sans_fonctionnalite', label: 'Recettes sans fonctionnalité',  tab: 'recettes', filter: 'recette_sans_fonctionnalite' },
-  { view: 'recette_sans_sprint',         label: 'Recettes sans sprint',          tab: 'recettes', filter: 'recette_sans_sprint' },
+  { view: 'recette_sans_adr',            label: 'Cadrages sans ADR',             tab: 'recettes', filter: 'recette_sans_adr' },
+  { view: 'recette_sans_fonctionnalite', label: 'Cadrages sans fonctionnalité',  tab: 'recettes', filter: 'recette_sans_fonctionnalite' },
+  { view: 'recette_sans_sprint',         label: 'Cadrages sans sprint',          tab: 'recettes', filter: 'recette_sans_sprint' },
   { view: 'adr_sans_fonctionnalite',     label: 'ADR sans fonctionnalité',       tab: 'adr',      filter: 'adr_sans_fonctionnalite' },
   { view: 'sprint_sans_fonctionnalite',  label: 'Sprints sans fonctionnalité',   tab: 'sprints',  filter: 'sprint_sans_fonctionnalite' },
   { view: 'sprint_sans_regle',           label: 'Sprints sans règle métier',     tab: 'sprints',  filter: 'sprint_sans_regle' },
@@ -7822,7 +7822,7 @@ function recetteSectionHtml(recetteStatus, detail) {
   const rec = detail && detail.recette;
   if (!rec) {
     return `<div class="actions-section"><h3>${T.entity}</h3>
-      <p class="muted-sm">Cette tâche n'est couverte par ${IS_EXECUTEUR ? `aucun cadrage. Créez un cadrage (onglet <a href="#" onclick="goToTab('recettes'); return false;">Cadrage technique</a>)` : `aucune recette. Créez une recette (onglet <a href="#" onclick="goToTab('recettes'); return false;">Recettes</a>)`} pour couvrir plusieurs tâches d'un même périmètre (1 ${T.entityLower} = 1 projet).</p>
+      <p class="muted-sm">Cette tâche n'est couverte par ${IS_EXECUTEUR ? `aucun cadrage. Créez un cadrage (onglet <a href="#" onclick="goToTab('recettes'); return false;">Cadrage technique</a>)` : `aucune recette. Créez une recette (onglet <a href="#" onclick="goToTab('recettes'); return false;">Cadrage technique</a>)`} pour couvrir plusieurs tâches d'un même périmètre (1 ${T.entityLower} = 1 projet).</p>
     </div>`;
   }
   const st = rec.status;

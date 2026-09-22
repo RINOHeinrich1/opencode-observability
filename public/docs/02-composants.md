@@ -143,7 +143,8 @@ les agents, ne modifie jamais le code du projet lui-même.
 |---|---|---|
 | `atomic-plan` | Planification à granularité atomique (produit des `Plan-*.md`) | read-only (édition restreinte à plans/reports) |
 | `build-notify` | Exécution des plans + traçabilité (événements, artefacts, commits) | pleine (isolation Coder + worktree) |
-| `agent-cadrage` | Cadrage : accompagne la vérification, enregistre les éléments (classifiés), prépare la synthèse (v0.7.0) | read-only (inspection) |
+| `agent-cadrage` | **Cadrage technique** : accompagne la vérification, enregistre les **éléments de cadrage** (classifiés), prépare la synthèse (v0.7.0) | read-only (inspection) |
+| `agent-recette` | **Recette évaluateur produit** : évalue un parcours (UX/design/cohérence/perf), maquette, tests standard/E2E, éléments recommandation/problème (v0.9.42) | read-only (inspection) |
 | `hexagonal-architecture-auditor` | Audit architecture backend (hexagonale/DDD) | read-only |
 | `clean-arch-detector-react` | Audit architecture frontend (feature-based) | read-only |
 
@@ -154,6 +155,30 @@ Les auditeurs sont délégués selon la **cible** de la tâche (`audit_target`) 
 `backend` → hexagonal-architecture-auditor, `frontend` → clean-arch-detector-react,
 `both` → les deux. `build-notify` publie en fin de sous-tâche la trace de ses commits
 via `plan_commit_add` (sha + fichiers + diff).
+
+### 3bis. Définitions d'agents & nomenclature ADR-004 (`cadrage_*` / `recette_*`)
+
+Depuis **ADR-004**, les deux objets de premier niveau sont **distincts** et leurs
+**définitions d'agents** pointent chacune sur **ses** outils MCP canoniques (le
+prompt de l'agent ne référence **jamais** les outils de l'autre objet) :
+
+| Agent | Objet | Préfixe | Outils MCP canoniques | Routes panneau |
+|---|---|---|---|---|
+| `agent-cadrage` | **Cadrage technique** (exécuteur) | `CT-*` | `cadrage_*` — `cadrage_get`, `cadrage_item_add`/`_update`, `cadrage_feature_link`, `cadrage_adr_link`, `cadrage_link_task`, reprise `cadrage_recette_item_link`/`_unlink`/`_list` | `/api/cadrages*` |
+| `agent-recette` | **Recette** (évaluateur) | `RECT-*` | `recette_*` — `recette_get`, `recette_item_add`/`_update`/`_decision`, `recette_feature_link`, `recette_rule_link`, `recette_verdict_set`, `recette_doc_add`/`_remove`, `recette_maquette_add`, `recette_perf_run` | `/api/recettes*` |
+
+- L'alias historique **`evaluation_*`** (recette) reste accepté par le MCP pour la
+  transition, mais **n'est plus le nom principal** dans les définitions d'agents.
+- **`agent-cadrage`** ne référence **aucun** `recette_*` (qui désigne désormais la
+  recette de l'évaluateur) ; **`agent-recette`** ne produit que des `recette_item_*`
+  (le tool **interdit** à l'évaluateur est `cadrage_item_add`, qui crée des tâches
+  via le cadrage technique).
+- Champs/tables alignés dans `orchestrator.md` : `cadrage_status`, table `cadrages`,
+  `decision_request kind="cadrage"`, session `agent-cadrage`, `cadrageId` ; table
+  `cadrage_sprints` dans `agent-migration.md`.
+- **Hors renommage** (contrats conservés) : `task_recette`/`task_recette_reset`,
+  `task_sessions.kind='recette'`, origine E2E `origin='recette'`, `verdict_by='agent-recette'`.
+  Voir [`CHANGELOG.md`](CHANGELOG.md) (nomenclature ADR-004, v0.9.71).
 
 ## 4. Le registre de tâches (MCP task-orchestrator + PostgreSQL)
 

@@ -5,6 +5,31 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## 2026-09-22 · Alignement des définitions d'agents sur la nomenclature ADR-004 (v0.9.72)
+
+Les **définitions d'agents** (`opencode-agents`) sont alignées sur la nomenclature
+actée par **ADR-004** — voir
+[`../adr/ADR-004-nomenclature-cadrage-technique-recette.md`](../adr/ADR-004-nomenclature-cadrage-technique-recette.md)
+et l'entrée v0.9.71 ci-dessous. **Aucun changement de schéma** du registre
+(`SCHEMA_VERSION` inchangé) : correction des **prompts d'agents** uniquement.
+
+- **`agent-cadrage`** (cadrage technique) : outils canoniques **`cadrage_*`**
+  (`cadrage_get`, `cadrage_item_add`/`_update`, `cadrage_feature_link`,
+  `cadrage_adr_link`, `cadrage_link_task` — ex-`recette_tasks`), paramètres
+  **`cadrageId`**, prose « cadrage technique » ; `origin="recette"` (enum E2E)
+  conservé.
+- **`agent-recette`** (évaluateur produit) : outils canoniques **`recette_*`**
+  (`recette_get`, `recette_item_add`/`_update`/`_decision`, `recette_verdict_set`,
+  `recette_doc_add`/`_remove`, `recette_maquette_add`, `recette_perf_run`) ; l'alias
+  **`evaluation_*`** n'est plus mentionné que comme **compatibilité** ; interdiction
+  corrigée (`cadrage_item_add` interdit) ; route maquette
+  `/api/recettes/<recetteId>/maquette/…`.
+- **`orchestrator`** : `cadrage_status`, table `cadrages`, `decision_request
+  kind="cadrage"`, session `agent-cadrage`, `cadrageId`, « Terminer le cadrage ».
+- **`agent-migration`** : table `cadrage_sprints` (ex-`recette_sprints`).
+- **Vérification** : chaque outil cité **existe** dans `index.mjs` ; `skills` sans
+  référence obsolète. Détail : [`02-composants.md`](02-composants.md) §3bis.
+
 ## 2026-09-22 · Nomenclature « Cadrage technique » (`CT-*`) / « Recette » (`RECT-*`) — ADR-004 (v0.9.71)
 
 Alignement de la **nomenclature** et du **modèle de données** des deux objets de

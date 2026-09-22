@@ -3135,10 +3135,10 @@ async function evaluationCreateModal() {
       rules = (rd && rd.rules) || [];
     } catch {}
     const roles = [...new Set([...features.map((x) => x.role).filter(Boolean), ...rules.flatMap((x) => x.roles || [])])].sort();
-    featureBox.innerHTML = frSelectorHtml('feature', features, { prefix: 'em-feature-pick', roles, selected: [] });
-    bindFrSelector('em-feature-pick');
-    ruleBox.innerHTML = frSelectorHtml('rule', rules, { prefix: 'em-rule-pick', roles, selected: [] });
-    bindFrSelector('em-rule-pick');
+    featureBox.innerHTML = frSelectorHtml('feature', features, { prefix: 'em-feature-pick', roles, selected: [], projectId: proj, fromRecette: true });
+    bindFrSelector('em-feature-pick', { projectId: proj, projectRoles: roles });
+    ruleBox.innerHTML = frSelectorHtml('rule', rules, { prefix: 'em-rule-pick', roles, selected: [], projectId: proj, fromRecette: true });
+    bindFrSelector('em-rule-pick', { projectId: proj, projectRoles: roles });
   };
   projectSel.addEventListener('change', () => { renderReposHint(); loadFeaturesRules(); });
   renderReposHint();
@@ -3245,6 +3245,24 @@ async function evaluationDetailModal(evaluationId) {
     const td = await api(`/api/e2e-tests?project=${encodeURIComponent(ev.project || '')}`);
     projectTests = (td && td.tests) || [];
   } catch {}
+  // Rattachement / création d'une fonctionnalité ou règle manquante : ADMIN
+  // uniquement (ADR-001 — « création administrateur si manquant, marquée
+  // émergente »). On liste les éléments du projet non encore rattachés.
+  const canLink = IS_ADMIN && editable;
+  let projFeatures = [];
+  let projRules = [];
+  if (canLink) {
+    try {
+      const [fd, rd] = await Promise.all([
+        api(`/api/features?projectId=${encodeURIComponent(ev.project || '')}`),
+        api(`/api/rules?projectId=${encodeURIComponent(ev.project || '')}`),
+      ]);
+      projFeatures = (fd && fd.features) || [];
+      projRules = (rd && rd.rules) || [];
+    } catch {}
+  }
+  const attachableFeatures = projFeatures.filter((f) => !feats.some((x) => x.id === f.id));
+  const attachableRules = projRules.filter((r) => !rules.some((x) => x.id === r.id));
   // Pièces rattachées à un élément précis (`document.itemId`).
   const docsByItem = new Map();
   for (const doc of (ev.documents || [])) {
@@ -3289,10 +3307,18 @@ async function evaluationDetailModal(evaluationId) {
             : evalVerdictBadge(f.verdict)}
         </div>`).join('') || '<p class="muted-sm">Aucune fonctionnalité rattachée.</p>'}
       </div>
+      ${canLink ? `<div class="rec-tasks-add">
+        <select id="eval-attach-feature"><option value="">+ Rattacher une fonctionnalité existante…</option>${attachableFeatures.map((f) => `<option value="${esc(f.id)}">${esc(f.ref || f.id)} — ${esc((f.userStory || '').slice(0, 60))}</option>`).join('')}</select>
+        <button type="button" class="ghost" data-eval-create="feature" title="Créer une fonctionnalité manquante (marquée émergente, rattachée à la recette)">＋ Créer une fonctionnalité manquante</button>
+      </div>` : ''}
       <h3>Règles métier évaluées</h3>
       <div class="recette-list">
         ${rules.map((r) => `<div class="recette-item"><strong>${esc(r.ref || r.id)}</strong> <span class="muted-sm">${esc((r.content || '').slice(0, 120))}</span></div>`).join('') || '<p class="muted-sm">Aucune règle métier rattachée.</p>'}
       </div>
+      ${canLink ? `<div class="rec-tasks-add">
+        <select id="eval-attach-rule"><option value="">+ Rattacher une règle métier existante…</option>${attachableRules.map((r) => `<option value="${esc(r.id)}">${esc(r.ref || r.id)} — ${esc((r.content || '').slice(0, 60))}</option>`).join('')}</select>
+        <button type="button" class="ghost" data-eval-create="rule" title="Créer une règle métier manquante (marquée émergente, rattachée à la recette)">＋ Créer une règle métier manquante</button>
+      </div>` : ''}
       <h3>Pièces</h3>
       <div class="recette-list">
         ${(ev.documents || []).map((doc) => `<div class="recette-item">
@@ -3333,6 +3359,30 @@ async function evaluationDetailModal(evaluationId) {
       <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
+  // ADMIN : rattacher un élément EXISTANT (POST /api/links) ou en CRÉER un
+  // manquant (marqué émergent d'origine `recette`) puis le rattacher aussitôt.
+  if (canLink) {
+    const linkToEval = async (kind, targetId) => {
+      if (!targetId) { evaluationDetailModal(evaluationId); return; }
+      try {
+        await api('/api/links', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: kind === 'rule' ? 'evaluation_rule' : 'evaluation_feature', a: evaluationId, b: targetId }) });
+      } catch (e) { alert('Rattachement impossible : ' + (e.message || e)); }
+      evaluationDetailModal(evaluationId);
+    };
+    const attachF = document.getElementById('eval-attach-feature');
+    if (attachF) attachF.addEventListener('change', () => linkToEval('feature', attachF.value));
+    const attachR = document.getElementById('eval-attach-rule');
+    if (attachR) attachR.addEventListener('change', () => linkToEval('rule', attachR.value));
+    document.querySelectorAll('#modal-backdrop [data-eval-create]').forEach((b) => b.addEventListener('click', () => {
+      const kind = b.dataset.evalCreate === 'rule' ? 'rule' : 'feature';
+      const onSaved = async (created) => {
+        const ent = kind === 'rule' ? (created && created.rule) : (created && created.feature);
+        await linkToEval(kind, ent && ent.id);
+      };
+      if (kind === 'rule') ruleFormModal(null, [], onSaved, [], { projectId: ev.project, fromRecette: true });
+      else featureFormModal(null, [], onSaved, { projectId: ev.project, fromRecette: true });
+    }));
+  }
   // Tests E2E du projet (ADR-003) : exécuter / lire les preuves depuis la recette.
   document.querySelectorAll('#modal-backdrop [data-e2e-detail]').forEach((b) => b.addEventListener('click', () => e2eDetailModal(b.dataset.e2eDetail)));
   document.querySelectorAll('#modal-backdrop [data-e2e-run]').forEach((b) => b.addEventListener('click', () => e2eRunModal(b.dataset.e2eRun)));
@@ -3699,9 +3749,27 @@ async function recetteDetailModal(recetteId) {
   const tasks = rec.tasks || [];
   const items = rec.items || [];
   const project = rec.project || '';
+  // Fonctionnalités / règles métier rattachées au cadrage (ADR-001), exposées par
+  // GET /api/recettes/:id (B006). L'émergence est affichée (origine `recette`).
+  const recFeatures = rec.fonctionnalites || [];
+  const recRules = rec.regles || [];
   // Écritures du cadrage : masquées au superviseur (lecture seule stricte, ADR-002)
   // — le contenu de LECTURE reste affiché.
   const canEditRec = rec.status !== 'done' && !IS_SUPERVISOR;
+  // Rattachement / création d'un élément manquant : ADMIN uniquement (ADR-001).
+  const canLinkRec = IS_ADMIN && canEditRec;
+  let projFeaturesRec = [];
+  let projRulesRec = [];
+  if (canLinkRec) {
+    try {
+      const [fd, rd] = await Promise.all([
+        api(`/api/features?projectId=${encodeURIComponent(project)}`),
+        api(`/api/rules?projectId=${encodeURIComponent(project)}`),
+      ]);
+      projFeaturesRec = (fd && fd.features) || [];
+      projRulesRec = (rd && rd.rules) || [];
+    } catch {}
+  }
   showModal(`
     <div class="modal modal-wide">
       <h2>${esc(rec.title || recetteId)}</h2>
@@ -3716,9 +3784,49 @@ async function recetteDetailModal(recetteId) {
       }).join('')}</div>${canEditRec ? `<div class="rec-tasks-add"><select id="rec-task-add"><option value="">+ Ajouter une tâche couverte…</option></select></div>` : ''}</div></div>` : `<p class="muted-sm">Aucune tâche couverte (${T.entityLower} exploratoire).</p>`}
       ${items.length ? `<div class="actions-section"><h3>${T.elementsCap} (${items.length})</h3><div class="recette-list">${items.map((it) => `<div class="recette-item"><span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span>${it.project ? `<code class="chip-project">${esc(it.project)}</code>` : ''}${it.execOrder != null ? `<span class="badge order-badge" title="Ordre d'exécution">ordre ${esc(it.execOrder)}</span>` : ''}${testIntentBadge(it)}${docIntentBadge(it)}${it.vigilance ? `<span class="badge danger" title="${esc(it.vigilance)}">⚠ vigilance</span>` : ''}<span>${esc(it.title || it.content.slice(0, 80))}</span>${canEditRec && it.status !== 'task_created' ? `<button type="button" class="ghost rec-item-del" data-rec-item-del="${it.id}" title="Retirer cet élément (fusion/consolidation)">✕</button>` : ''}</div>`).join('')}</div></div>` : ''}
       ${(IS_EXECUTEUR || IS_ADMIN || IS_SUPERVISOR) ? `<div class="actions-section"><h3>Éléments de recette à traiter</h3><div class="recette-list">${(rec.evaluationItems || []).map((it) => `<div class="recette-item">${evalCategoryBadge(it.category)} ${evalSeverityBadge(it.severity)}<span>${esc(it.content)}</span><span class="muted-sm">repris par ce cadrage</span>${canEditRec ? `<button type="button" class="ghost rec-eval-item-del" data-rec-eval-item-del="${it.itemId}" title="Retirer la reprise (l'élément reste « à traiter »)">✕ retirer</button>` : ''}</div>`).join('') || '<p class="muted-sm">Aucun élément de recette évaluateur repris dans ce cadrage.</p>'}</div>${canEditRec ? `<div class="rec-tasks-add"><select id="rec-eval-item-add"><option value="">+ Reprendre un élément « à traiter »…</option></select></div>` : ''}</div>` : ''}
+      <div class="actions-section"><h3>Fonctionnalités &amp; règles métier rattachées</h3>
+        <div class="recette-list">
+          ${recFeatures.map((f) => `<div class="recette-item"><code class="chip">${esc(f.ref || f.id)}</code>${f.emergent ? ` <span class="chip" title="Créé depuis ${T.theEntity} — marqué émergent">émergent</span>` : ''}<span>${esc((f.userStory || '').slice(0, 90))}</span></div>`).join('') || '<p class="muted-sm">Aucune fonctionnalité rattachée.</p>'}
+        </div>
+        <div class="recette-list">
+          ${recRules.map((r) => `<div class="recette-item"><code class="chip">${esc(r.ref || r.id)}</code>${r.emergent ? ` <span class="chip" title="Créée depuis ${T.theEntity} — marquée émergente">émergent</span>` : ''}<span class="muted-sm">${esc((r.content || '').slice(0, 120))}</span></div>`).join('') || '<p class="muted-sm">Aucune règle métier rattachée.</p>'}
+        </div>
+        ${canLinkRec ? `<div class="rec-tasks-add">
+          <select id="rec-attach-feature"><option value="">+ Rattacher une fonctionnalité existante…</option>${projFeaturesRec.filter((f) => !recFeatures.some((x) => x.id === f.id)).map((f) => `<option value="${esc(f.id)}">${esc(f.ref || f.id)} — ${esc((f.userStory || '').slice(0, 60))}</option>`).join('')}</select>
+          <button type="button" class="ghost" data-rec-create="feature" title="Créer une fonctionnalité manquante (marquée émergente, rattachée à ce cadrage)">＋ Créer une fonctionnalité manquante</button>
+        </div>
+        <div class="rec-tasks-add">
+          <select id="rec-attach-rule"><option value="">+ Rattacher une règle métier existante…</option>${projRulesRec.filter((r) => !recRules.some((x) => x.id === r.id)).map((r) => `<option value="${esc(r.id)}">${esc(r.ref || r.id)} — ${esc((r.content || '').slice(0, 60))}</option>`).join('')}</select>
+          <button type="button" class="ghost" data-rec-create="rule" title="Créer une règle métier manquante (marquée émergente, rattachée à ce cadrage)">＋ Créer une règle métier manquante</button>
+        </div>` : ''}
+      </div>
       <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
+  // ADMIN : rattacher un élément EXISTANT (POST /api/links) ou en CRÉER un
+  // manquant (émergent origine `recette`) puis le rattacher aussitôt.
+  if (canLinkRec) {
+    const linkToRec = async (kind, targetId) => {
+      if (!targetId) { closeModal(); recetteDetailModal(recetteId); return; }
+      try {
+        await api('/api/links', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: kind === 'rule' ? 'recette_rule' : 'recette_feature', a: recetteId, b: targetId }) });
+      } catch (e) { alert('Rattachement impossible : ' + (e.message || e)); }
+      closeModal(); recetteDetailModal(recetteId);
+    };
+    const aF = document.getElementById('rec-attach-feature');
+    if (aF) aF.addEventListener('change', () => linkToRec('feature', aF.value));
+    const aR = document.getElementById('rec-attach-rule');
+    if (aR) aR.addEventListener('change', () => linkToRec('rule', aR.value));
+    document.querySelectorAll('#modal-backdrop [data-rec-create]').forEach((b) => b.addEventListener('click', () => {
+      const kind = b.dataset.recCreate === 'rule' ? 'rule' : 'feature';
+      const onSaved = async (created) => {
+        const ent = kind === 'rule' ? (created && created.rule) : (created && created.feature);
+        await linkToRec(kind, ent && ent.id);
+      };
+      if (kind === 'rule') ruleFormModal(null, [], onSaved, [], { projectId: project, fromRecette: true, recetteId });
+      else featureFormModal(null, [], onSaved, { projectId: project, fromRecette: true, recetteId });
+    }));
+  }
   if (canEditRec) {
     // Gestion des tâches couvertes : ajout (candidates du projet) + retrait.
     const coveredIds = new Set((tasks || []).map((t) => (t && (t.taskId || t.task_id)) || t));
@@ -3993,10 +4101,10 @@ async function recetteCreateModal() {
       ...features.map((x) => x.role).filter(Boolean),
       ...rules.flatMap((x) => x.roles || []),
     ])].sort();
-    featureBox.innerHTML = frSelectorHtml('feature', features, { prefix: 'rm-feature-pick', roles });
-    bindFrSelector('rm-feature-pick');
-    ruleBox.innerHTML = frSelectorHtml('rule', rules, { prefix: 'rm-rule-pick', roles });
-    bindFrSelector('rm-rule-pick');
+    featureBox.innerHTML = frSelectorHtml('feature', features, { prefix: 'rm-feature-pick', roles, projectId: proj, fromRecette: true });
+    bindFrSelector('rm-feature-pick', { projectId: proj, projectRoles: roles });
+    ruleBox.innerHTML = frSelectorHtml('rule', rules, { prefix: 'rm-rule-pick', roles, projectId: proj, fromRecette: true });
+    bindFrSelector('rm-rule-pick', { projectId: proj, projectRoles: roles });
   };
   const renderReposHint = () => {
     const proj = projects.find((p) => p.id === currentProject());
@@ -6101,13 +6209,17 @@ function linkModal(preset, entityId, refs, onSaved) {
   });
 }
 
-function featureFormModal(feature, pieces, onSaved) {
+function featureFormModal(feature, pieces, onSaved, opts = {}) {
   const isEdit = !!(feature && feature.id);
+  // Contexte de création : projet explicite + signal d'émergence `recette`
+  // (création depuis une recette évaluateur / un cadrage). `opts` est OPTIONNEL :
+  // la création standard (onglet Fonctionnalités & Règles) reste inchangée.
+  const proj = opts.projectId || currentProject;
   const pieceIds = (pieces || []).map((p) => p.pieceId);
   const curImpl = feature && feature.implemented ? (feature.implementedOrigin || 'ecosystem') : '';
   showModal(`<div class="modal">
     <h2>${isEdit ? 'Éditer la fonctionnalité' : 'Nouvelle fonctionnalité'}</h2>
-    <p class="muted-sm">Projet <code>${esc(currentProject)}</code> — référence <code>US-xxx</code>.</p>
+    <p class="muted-sm">Projet <code>${esc(proj)}</code> — référence <code>US-xxx</code>.</p>
     <form id="feat-form" class="pilot-form">
       <label class="modal-field">Référence <input id="feat-ref" value="${esc((feature && feature.ref) || '')}" placeholder="US-xxx" required></label>
       <label class="modal-field">Rôle / acteur <input id="feat-role" value="${esc((feature && feature.role) || '')}" placeholder="ex. client, opérateur"></label>
@@ -6146,23 +6258,32 @@ function featureFormModal(feature, pieces, onSaved) {
     else if (isEdit) { body.implemented = false; }
     body.implementedNote = implNote;
     try {
+      let result = null;
       if (isEdit) {
-        await api(`/api/features/${encodeURIComponent(feature.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        result = await api(`/api/features/${encodeURIComponent(feature.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       } else {
-        const created = await api('/api/features', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: currentProject, ...body }) });
+        // Création en contexte recette/cadrage : `fromRecette` (émergence origine
+        // `recette`) + `recetteId` transmis au registre (réservé admin côté serveur).
+        const createBody = { projectId: proj, ...body };
+        if (opts.fromRecette) createBody.fromRecette = true;
+        if (opts.recetteId) createBody.recetteId = opts.recetteId;
+        const created = await api('/api/features', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(createBody) });
+        result = created;
         const newId = created && created.feature && created.feature.id;
         if (impl && newId) {
           await api(`/api/features/${encodeURIComponent(newId)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ implemented: true, implementedOrigin: impl, implementedNote: implNote }) });
         }
       }
       closeModal();
-      if (typeof onSaved === 'function') await onSaved();
+      if (typeof onSaved === 'function') await onSaved(result);
     } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
   });
 }
 
-function ruleFormModal(rule, pieces, onSaved, projectRoles) {
+function ruleFormModal(rule, pieces, onSaved, projectRoles, opts = {}) {
   const isEdit = !!(rule && rule.id);
+  // Contexte de création (miroir de featureFormModal) : `opts` OPTIONNEL.
+  const proj = opts.projectId || currentProject;
   const pieceIds = (pieces || []).map((p) => p.pieceId);
   const curImpl = rule && rule.implemented ? (rule.implementedOrigin || 'ecosystem') : '';
   // Association EXPLICITE de rôles (T-20260922-064200-e0yw).
@@ -6171,7 +6292,7 @@ function ruleFormModal(rule, pieces, onSaved, projectRoles) {
   const roleVocab = Array.isArray(projectRoles) ? projectRoles : [];
   showModal(`<div class="modal">
     <h2>${isEdit ? 'Éditer la règle métier' : 'Nouvelle règle métier'}</h2>
-    <p class="muted-sm">Projet <code>${esc(currentProject)}</code> — référence <code>RM-xxxx</code>.</p>
+    <p class="muted-sm">Projet <code>${esc(proj)}</code> — référence <code>RM-xxxx</code>.</p>
     <form id="rule-form" class="pilot-form">
       <label class="modal-field">Référence <input id="rule-ref" value="${esc((rule && rule.ref) || '')}" placeholder="RM-xxxx" required></label>
       <label class="modal-field">Contenu <textarea id="rule-content" class="modal-textarea" rows="4" placeholder="Formulation de la règle métier" required>${esc((rule && rule.content) || '')}</textarea></label>
@@ -6232,17 +6353,23 @@ function ruleFormModal(rule, pieces, onSaved, projectRoles) {
     else if (isEdit) { body.implemented = false; }
     body.implementedNote = implNote;
     try {
+      let result = null;
       if (isEdit) {
-        await api(`/api/rules/${encodeURIComponent(rule.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        result = await api(`/api/rules/${encodeURIComponent(rule.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       } else {
-        const created = await api('/api/rules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: currentProject, ...body }) });
+        // Création en contexte recette/cadrage (miroir de featureFormModal).
+        const createBody = { projectId: proj, ...body };
+        if (opts.fromRecette) createBody.fromRecette = true;
+        if (opts.recetteId) createBody.recetteId = opts.recetteId;
+        const created = await api('/api/rules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(createBody) });
+        result = created;
         const newId = created && created.rule && created.rule.id;
         if (impl && newId) {
           await api(`/api/rules/${encodeURIComponent(newId)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ implemented: true, implementedOrigin: impl, implementedNote: implNote }) });
         }
       }
       closeModal();
-      if (typeof onSaved === 'function') await onSaved();
+      if (typeof onSaved === 'function') await onSaved(result);
     } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
   });
 }
@@ -7068,12 +7195,21 @@ function frSelectorHtml(kind, items, opts = {}) {
   }).join('');
   const label = isRule ? 'règle métier' : 'fonctionnalité';
   const unit = isRule ? 'règles' : 'fonctionnalités';
+  // Contexte de création : projet explicite (sinon projet courant) + signal
+  // d'émergence `recette` (création depuis une recette évaluateur / un cadrage).
+  const createProject = opts.projectId || currentProject || '';
+  // Bouton « ＋ Créer une … manquante » : ADMIN uniquement (ADR-001). Le clic est
+  // câblé par `bindFrSelector` (ouvre la modale de création puis coche l'élément).
+  const createBtn = IS_ADMIN
+    ? `<button type="button" class="ghost" data-fr-create="${isRule ? 'rule' : 'feature'}" title="Créer une ${label} manquante (marquée émergente, rattachée à la recette/cadrage)">＋ Créer une ${label} manquante</button>`
+    : '';
   return `
-    <div class="adr-pick" id="${esc(prefix)}" data-unit="${esc(unit)}">
+    <div class="adr-pick" id="${esc(prefix)}" data-unit="${esc(unit)}" data-project-id="${esc(createProject)}" data-from-recette="${opts.fromRecette ? '1' : '0'}" data-recette-id="${esc(opts.recetteId || '')}">
       <div class="adr-pick-filters">
         <input type="search" class="adr-pick-search" placeholder="Rechercher une ${label}…">
         <select class="adr-pick-role">${roleOpts}</select>
         <span class="muted-sm adr-pick-count">${list.length} ${unit}</span>
+        ${createBtn}
       </div>
       <div class="adr-pick-list">${rows || `<p class="muted-sm">Aucune ${label} pour ce projet — créez-en via l\'onglet « Fonctionnalités & Règles ».</p>`}</div>
     </div>`;
@@ -7086,14 +7222,18 @@ function selectedFrIds(kind, prefix) {
 }
 
 // Câble recherche + filtre rôle du sélecteur Fonctionnalités/Règles `prefix`.
-function bindFrSelector(prefix) {
+// `opts` (optionnel) : `{ pieces, projectRoles, onCreated(kind, newId, entity) }`.
+// Si le bouton admin « ＋ Créer une … manquante » est présent, son clic ouvre la
+// modale de création (contexte projet + émergence `recette`), puis la nouvelle
+// ligne est insérée COCHÉE dans la liste et `onCreated` est appelé (rattachement).
+function bindFrSelector(prefix, opts = {}) {
   const root = document.getElementById(prefix);
   if (!root) return;
   const search = root.querySelector('.adr-pick-search');
   const role = root.querySelector('.adr-pick-role');
   const count = root.querySelector('.adr-pick-count');
   const rows = [...root.querySelectorAll('.adr-pick-row')];
-  const total = rows.length;
+  let total = rows.length;
   const unit = root.dataset.unit || '';
   const apply = () => {
     const q = ((search && search.value) || '').trim().toLowerCase();
@@ -7113,6 +7253,45 @@ function bindFrSelector(prefix) {
     el.addEventListener('input', apply);
     el.addEventListener('change', apply);
   });
+  // Insertion d'une ligne (nouvel élément créé) COCHÉE, puis rafraîchissement.
+  const appendRow = (kind, it) => {
+    const list = root.querySelector('.adr-pick-list');
+    if (!list || !it || !it.id) return;
+    const isRule = kind === 'rule';
+    const ref = it.ref || it.id;
+    const meta = isRule ? (it.content || '') : (it.userStory || '');
+    const badge = isRule
+      ? (it.roleGlobal ? '<span class="badge">Global</span>' : '')
+      : (it.role ? `<span class="badge">${esc(it.role)}</span>` : '');
+    const row = document.createElement('label');
+    row.className = 'adr-pick-row';
+    row.dataset.search = [it.ref, meta].join(' ').toLowerCase();
+    row.dataset.role = isRule ? (it.roleGlobal ? '__global__' : (Array.isArray(it.roles) ? it.roles.join(' ') : '')) : (it.role || '');
+    row.innerHTML = `<input type="checkbox" class="adr-pick-cb" value="${esc(it.id)}" checked><span class="adr-pick-head"><strong>${esc(ref)}</strong> ${badge} <span class="chip" title="Élément créé depuis la recette/cadrage">émergent</span></span><span class="adr-pick-meta">${meta ? adrCellText(meta, 120) : '<span class="muted-sm">—</span>'}</span>`;
+    const placeholder = list.querySelector('p.muted-sm');
+    if (placeholder) placeholder.remove();
+    list.prepend(row);
+    rows.push(row);
+    total += 1;
+    apply();
+  };
+  const createBtn = root.querySelector('[data-fr-create]');
+  if (createBtn) {
+    createBtn.addEventListener('click', () => {
+      const kind = createBtn.dataset.frCreate === 'rule' ? 'rule' : 'feature';
+      const projectId = root.dataset.projectId || currentProject;
+      const fromRecette = root.dataset.fromRecette === '1';
+      const recetteId = root.dataset.recetteId || '';
+      const onSaved = async (created) => {
+        const entity = kind === 'rule' ? (created && created.rule) : (created && created.feature);
+        const newId = entity && entity.id;
+        if (entity) appendRow(kind, entity);
+        if (typeof opts.onCreated === 'function') await opts.onCreated(kind, newId, entity);
+      };
+      if (kind === 'rule') ruleFormModal(null, opts.pieces || [], onSaved, opts.projectRoles || [], { projectId, fromRecette, recetteId });
+      else featureFormModal(null, opts.pieces || [], onSaved, { projectId, fromRecette, recetteId });
+    });
+  }
   apply();
 }
 

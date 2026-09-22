@@ -1654,10 +1654,10 @@ const server = createServer(async (req, res) => {
       if (path.startsWith("/api/")) return sendJson(res, 403, { error: "lecture seule (rôle superviseur) — opération non autorisée" });
     }
     // Garde rôle `user` : l'écriture est limitée à SES PROPRES entités
-    // (tasks / recettes / e2e-tests). La création (sans id) reste permise et est
-    // attribuée à l'utilisateur.
+    // (tasks / recettes / evaluations / e2e-tests). La création (sans id) reste
+    // permise et est attribuée à l'utilisateur.
     if (user.role === "user" && req.method !== "GET") {
-      const m = path.match(/^\/api\/(tasks|recettes|e2e-tests)\/([^/]+)/);
+      const m = path.match(/^\/api\/(tasks|recettes|evaluations|e2e-tests)\/([^/]+)/);
       if (m) {
         const owned = await userOwnsEntity(user.username, m[1], decodeURIComponent(m[2]));
         if (!owned) return sendJson(res, 403, { error: "accès en écriture limité à vos propres données" });

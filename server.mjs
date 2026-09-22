@@ -46,6 +46,40 @@ const EVALUATEUR_WRITE_PATTERNS = [
   /^\/api\/adr-vigilances\/[^/]+\/resolve$/,
 ];
 
+// --- ACL rôle `executeur` (ADR-001/002) — allowlist FAIL-CLOSED -------------
+// L'exécuteur accède à Vue d'ensemble, Tâches, Cadrage technique (onglet
+// `recettes`), Tests E2E, Fonctionnalités & Règles, Décisions, ADR et
+// Workspaces (+ lecture Projets/Repos/Pièces/Sprints pour choisir un projet et
+// tracer un sprint). Toute route NON listée est refusée en 403 (protection
+// serveur, jamais l'UI). Les Déploiements sont atteints via le modal de tâche
+// (`/api/deployments`, `/api/plans`, `/api/events`) — pas d'onglet dédié.
+const EXECUTEUR_ALLOWED_API = [
+  "/api/me", "/api/config", "/api/orgs", "/api/session/organization", "/api/render-md",
+  "/api/projects", "/api/repos", "/api/pieces",
+  "/api/features", "/api/rules", "/api/links", "/api/cardinality", "/api/sprints",
+  "/api/docs", "/api/e2e-tests", "/api/e2e/jobs", "/api/e2e/agent-sessions", "/api/e2e/file",
+  "/api/e2e-vars", "/api/recettes", "/api/tasks", "/api/plans", "/api/events",
+  "/api/deployments", "/api/decisions", "/api/batches", "/api/adr-vigilances", "/api/artifacts",
+];
+// Interdits EXPLICITES (défense en profondeur) : secrets E2E et gestion des
+// utilisateurs restent hors périmètre exécuteur.
+const EXECUTEUR_DENIED_API = ["/api/e2e-secrets", "/api/users"];
+// Écritures autorisées (méthodes non-GET) : cadrages techniques (création,
+// session, éléments, documents, terminaison → tâches), dépôt de pièces,
+// lancement d'un test E2E, levée d'une vigilance ADR, création/édition de
+// tâches et changement d'organisation active. Rien d'autre (sprints, features,
+// rules, docs, vars/secrets, projets/repos, users… = 403).
+const EXECUTEUR_WRITE_PATTERNS = [
+  /^\/api\/session\/organization$/,
+  /^\/api\/pieces$/,
+  /^\/api\/recettes$/,
+  /^\/api\/recettes\/[^/]+\/(items|documents|session|finish|tasks)(\/.*)?$/,
+  /^\/api\/e2e-tests\/[^/]+\/run$/,
+  /^\/api\/adr-vigilances\/[^/]+\/resolve$/,
+  /^\/api\/tasks$/,
+  /^\/api\/tasks\/[^/]+\/(edit|archive|restore)$/,
+];
+
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const E2E_STORAGE_DIR = join(__dirname, "storage", "e2e");
@@ -272,29 +306,87 @@ async function userOwnsEntity(username, kind, id) {
   return true;
 }
 
-// Garde ACL rôle `evaluateur` (FAIL-CLOSED) : renvoie `true` (et écrit un 403) si
-// la requête sort du périmètre autorisé, `false` sinon. Ne concerne QUE le rôle
-// `evaluateur` — les autres rôles sont inchangés. Lecture = allowlist de préfixes ;
-// écriture = patterns explicites ; toute autre route API est refusée.
-function enforceEvaluateurAcl(user, path, method, res) {
-  if (!user || user.role !== "evaluateur") return false;
+// Table d'ACL par rôle restreint (source UNIQUE serveur, ADR-002). Les rôles
+// absents (admin/supervisor/user) ne sont pas restreints par page.
+const ROLE_ACL = {
+  evaluateur: { label: "évaluateur", allowed: EVALUATEUR_ALLOWED_API, denied: EVALUATEUR_DENIED_API, writes: EVALUATEUR_WRITE_PATTERNS },
+  executeur: { label: "exécuteur", allowed: EXECUTEUR_ALLOWED_API, denied: EXECUTEUR_DENIED_API, writes: EXECUTEUR_WRITE_PATTERNS },
+};
+
+// Garde ACL rôle-aware (FAIL-CLOSED) : renvoie `true` (et écrit un 403) si la
+// requête sort du périmètre autorisé du rôle, `false` sinon. Ne concerne QUE les
+// rôles restreints (`evaluateur`, `executeur`) — les autres sont inchangés.
+// Lecture = allowlist de préfixes ; écriture = patterns explicites ; toute autre
+// route API est refusée.
+function enforceRoleAcl(user, path, method, res) {
+  if (!user) return false;
+  const acl = ROLE_ACL[user.role];
+  if (!acl) return false;
   if (!path.startsWith("/api/")) return false;
-  if (EVALUATEUR_DENIED_API.some((p) => path === p || path.startsWith(p + "/"))) {
-    sendJson(res, 403, { error: "accès refusé — hors périmètre évaluateur" });
+  if (acl.denied.some((p) => path === p || path.startsWith(p + "/"))) {
+    sendJson(res, 403, { error: `accès refusé — hors périmètre ${acl.label}` });
     return true;
   }
   const isRead = method === "GET" || method === "HEAD";
   const allowed = isRead
-    ? EVALUATEUR_ALLOWED_API.some((p) => path === p || path.startsWith(p + "/"))
-    : EVALUATEUR_WRITE_PATTERNS.some((re) => re.test(path));
+    ? acl.allowed.some((p) => path === p || path.startsWith(p + "/"))
+    : acl.writes.some((re) => re.test(path));
   if (!allowed) {
-    sendJson(res, 403, { error: "accès refusé — hors périmètre évaluateur" });
+    sendJson(res, 403, { error: `accès refusé — hors périmètre ${acl.label}` });
     return true;
   }
   return false;
 }
 
-async function registryTasks(url, forcedOrg, ownerScope, projectAccess) {
+// --- Périmètre SPRINT du rôle `executeur` (ADR-001/002) --------------------
+// Un projet = UN sprint actif (nominal : `is_default = 0`, `status = 'open'`).
+// Le SPRINT PAR DÉFAUT (`is_default = 1`) est l'ancre de traçage des anciens
+// sprints (MCP `ensureDefaultSprint`) : il n'est PAS le sprint de travail.
+// - défaut : l'exécuteur voit les éléments du sprint actif + ceux NON rattachés
+//   à un sprint (anti sur-restriction tant que l'historique n'est pas rattaché) ;
+//   les éléments rattachés à un AUTRE sprint (ancien / clôturé) sont exclus.
+// - `?sprint=<id>` : traçage LECTURE SEULE d'un sprint précis (exact).
+async function activeSprintId(projectId) {
+  if (!projectId) return null;
+  try {
+    const r = await registry().query(
+      "SELECT id FROM sprints WHERE project = $1 AND status = 'open' AND is_default = 0 ORDER BY created_at DESC, id DESC LIMIT 1",
+      [projectId],
+    );
+    return r.rows[0] ? r.rows[0].id : null;
+  } catch { return null; }
+}
+
+// Résout le périmètre sprint : `null` si le rôle n'est pas `executeur` (aucune
+// restriction) ; sinon `{ sprintId, explicit }` (sprint actif, ou `?sprint=`).
+async function executeurSprintScope(user, url, projectId) {
+  if (!user || user.role !== "executeur") return null;
+  const explicit = url.searchParams.get("sprint");
+  if (explicit) return { sprintId: explicit, explicit: true };
+  return { sprintId: await activeSprintId(projectId), explicit: false };
+}
+
+// Filtre d'ids selon le périmètre sprint. `table`/`idCol` sont des constantes
+// internes (jamais des entrées utilisateur). Renvoie :
+//   { mode: "exact", ids }   → ne garder QUE ces ids (`?sprint=`) ;
+//   { mode: "exclude", ids } → EXCLURE ces ids (rattachés à un autre sprint) ;
+//   null                     → aucune restriction.
+async function sprintScopeIds(scope, table, idCol) {
+  if (!scope || !scope.sprintId) return null;
+  try {
+    const r = scope.explicit
+      ? await registry().query(`SELECT ${idCol} AS id FROM ${table} WHERE sprint_id = $1`, [scope.sprintId])
+      : await registry().query(`SELECT ${idCol} AS id FROM ${table} WHERE sprint_id <> $1`, [scope.sprintId]);
+    return { mode: scope.explicit ? "exact" : "exclude", ids: new Set(r.rows.map((x) => x.id)) };
+  } catch { return null; }
+}
+
+function applySprintScope(rows, sc, keyOf) {
+  if (!sc) return rows;
+  return sc.mode === "exact" ? rows.filter((r) => sc.ids.has(keyOf(r))) : rows.filter((r) => !sc.ids.has(keyOf(r)));
+}
+
+async function registryTasks(url, forcedOrg, ownerScope, projectAccess, sprintScope = null) {
   const db = registry();
   const archived = await archivedTaskIds();
   const project = url.searchParams.get("project");
@@ -321,6 +413,9 @@ async function registryTasks(url, forcedOrg, ownerScope, projectAccess) {
       && (!org || (r.organization_id || "onirtech") === org)
       && (!ownerScope || r.created_by === ownerScope)
       && accessOk(r.project));
+    // Périmètre SPRINT (rôle `executeur`) : sprint actif par défaut, `?sprint=`
+    // pour tracer un ancien sprint en lecture seule.
+    rows = applySprintScope(rows, await sprintScopeIds(sprintScope, "task_sprints", "task_id"), (r) => r.id);
     // Agrégat E2E par tâche : nombre de tests liés + dernier statut par test.
     if (rows.length) {
       const ids = rows.map((r) => r.id);
@@ -757,7 +852,7 @@ async function handleLogin(req, res) {
     return sendJson(res, 401, { error: "identifiants invalides" });
   }
   const s = await createSession(u.id);
-  let role = u.role && ["admin", "supervisor", "evaluateur", "user"].includes(u.role) ? u.role : "user";
+  let role = u.role && ["admin", "supervisor", "evaluateur", "executeur", "user"].includes(u.role) ? u.role : "user";
   if (u.is_admin) role = "admin";
   res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Set-Cookie": cookieHeader(s.token) });
   res.end(JSON.stringify({ ok: true, user: { id: u.id, username: u.username, is_admin: role === "admin", role } }));
@@ -777,7 +872,7 @@ async function handleUsers(req, res, user) {
     const { username, password, role, organizationId, projectIds } = await readBody(req);
     if (!username || !password) return sendJson(res, 400, { error: "username et password requis" });
     try {
-      // role : admin | supervisor | evaluateur | user (défaut user ; isAdmin rétrocompat).
+      // role : admin | supervisor | evaluateur | executeur | user (défaut user ; isAdmin rétrocompat).
       const u = await createUser(String(username), String(password), false, role || "user", organizationId);
       // Accès par projet (aucun par défaut).
       if (Array.isArray(projectIds) && projectIds.length) { try { await setUserProjects(u.id, projectIds); } catch {} }
@@ -845,7 +940,7 @@ async function handleUserAction(req, res, user, path) {
   }
   if (req.method === "POST" && parts[3] === "role") {
     const { role } = await readBody(req);
-    if (!["admin", "supervisor", "evaluateur", "user"].includes(role)) return sendJson(res, 400, { error: "role invalide (admin|supervisor|evaluateur|user)" });
+    if (!["admin", "supervisor", "evaluateur", "executeur", "user"].includes(role)) return sendJson(res, 400, { error: "role invalide (admin|supervisor|evaluateur|executeur|user)" });
     if (id === user.id) return sendJson(res, 400, { error: "impossible de changer son propre rôle" });
     const u = await updateUserRole(id, role);
     if (!u) return sendJson(res, 404, { error: "utilisateur inconnu" });
@@ -1518,8 +1613,9 @@ const server = createServer(async (req, res) => {
       return redirect(res, "/login");
     }
 
-    // ACL rôle `evaluateur` (ADR-002) : refus 403 FAIL-CLOSED AVANT toute route.
-    if (enforceEvaluateurAcl(user, path, req.method, res)) return;
+    // ACL rôles restreints (ADR-002) : refus 403 FAIL-CLOSED AVANT toute route
+    // (`evaluateur`, `executeur` — dispatcher unique `enforceRoleAcl`).
+    if (enforceRoleAcl(user, path, req.method, res)) return;
 
     // Rôle SUPERVISEUR / lecture seule (v0.9.29) : accès en LECTURE (GET)
     // uniquement. Toute méthode d'écriture (POST/PUT/DELETE/PATCH) est refusée
@@ -2059,7 +2155,12 @@ const server = createServer(async (req, res) => {
           search: url.searchParams.get("search") || undefined,
           limit: url.searchParams.get("limit") ? Number(url.searchParams.get("limit")) : undefined,
         });
-        return sendJson(res, 200, { features: (r && r.features) || [], count: (r && r.count) || 0 });
+        // Périmètre SPRINT (rôle `executeur`) : sprint actif par défaut (les
+        // éléments rattachés à un autre sprint sont exclus), `?sprint=` = traçage.
+        let features = (r && r.features) || [];
+        const scope = await executeurSprintScope(user, url, url.searchParams.get("projectId"));
+        features = applySprintScope(features, await sprintScopeIds(scope, "sprint_fonctionnalites", "fonctionnalite_id"), (f) => f.id);
+        return sendJson(res, 200, { features, count: features.length });
       } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
     }
     // POST /api/features — création (l'agent propose, l'humain valide/ajuste).
@@ -2115,7 +2216,11 @@ const server = createServer(async (req, res) => {
           search: url.searchParams.get("search") || undefined,
           limit: url.searchParams.get("limit") ? Number(url.searchParams.get("limit")) : undefined,
         });
-        return sendJson(res, 200, { rules: (r && r.rules) || [], count: (r && r.count) || 0 });
+        // Périmètre SPRINT (rôle `executeur`) — cf. GET /api/features.
+        let rules = (r && r.rules) || [];
+        const scope = await executeurSprintScope(user, url, url.searchParams.get("projectId"));
+        rules = applySprintScope(rules, await sprintScopeIds(scope, "sprint_regles", "regle_id"), (x) => x.id);
+        return sendJson(res, 200, { rules, count: rules.length });
       } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
     }
     // POST /api/rules — création d'une règle métier.
@@ -2495,7 +2600,10 @@ const server = createServer(async (req, res) => {
     const artView = path.match(/^\/api\/tasks\/([^/]+)\/artifacts\/([^/]+)\/view$/);
     if (artView) return viewArtifact(res, artView[1], artView[2]);
     if (path === "/api/archives") return sendJson(res, 200, await registryArchives());
-    if (path === "/api/tasks") return sendJson(res, 200, await registryTasks(url, user.activeOrganizationId, user.ownerScope, user.projectAccess));
+    if (path === "/api/tasks") {
+      const sprintScope = await executeurSprintScope(user, url, url.searchParams.get("project"));
+      return sendJson(res, 200, await registryTasks(url, user.activeOrganizationId, user.ownerScope, user.projectAccess, sprintScope));
+    }
     if (path.startsWith("/api/tasks/")) {
       const taskId = path.split("/")[3];
       if (!taskId) return sendJson(res, 400, { error: "taskId manquant" });
@@ -2604,7 +2712,7 @@ const server = createServer(async (req, res) => {
         if (!user.projectAccess.length) conds.push("1 = 0");
         else { params.push(user.projectAccess); conds.push(`r.project = ANY($${params.length})`); }
       }
-      const rows = (await registry().query(
+      let rows = (await registry().query(
         `SELECT r.*,
            (SELECT COUNT(*) FROM recette_tasks rt WHERE rt.recette_id = r.recette_id) AS tasks_count,
            (SELECT COUNT(*) FROM recette_items i WHERE i.recette_id = r.recette_id) AS items_count,
@@ -2615,6 +2723,10 @@ const server = createServer(async (req, res) => {
          ORDER BY r.created_at DESC`,
         params,
       )).rows;
+      // Périmètre SPRINT (rôle `executeur`) : sprint actif par défaut, `?sprint=`
+      // pour tracer un ancien sprint (lecture seule).
+      const sprintScope = await executeurSprintScope(user, url, project);
+      rows = applySprintScope(rows, await sprintScopeIds(sprintScope, "recette_sprints", "recette_id"), (x) => x.recette_id);
       const reposMap = await reposByProjectIds([...new Set(rows.map((x) => x.project).filter(Boolean))]);
       for (const row of rows) row.repos = reposMap[row.project] || [];
       return sendJson(res, 200, { recettes: rows });

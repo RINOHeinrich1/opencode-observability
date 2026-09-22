@@ -131,16 +131,18 @@ export async function listUsers() {
   return res.rows.map((r) => ({ ...r, role: normalizeRole(r), organizationId: r.organization_id ?? null, notifyEmail: r.notify_email ?? null }));
 }
 
-// Rôles valides du panneau (ADR-002) : 'admin' > 'supervisor' > 'evaluateur' > 'user'.
-const ROLES = ["admin", "supervisor", "evaluateur", "user"];
+// Rôles valides du panneau (ADR-002) : 'admin' > 'supervisor' > 'evaluateur' > 'executeur' > 'user'.
+const ROLES = ["admin", "supervisor", "evaluateur", "executeur", "user"];
 
-// Rôle effectif : 'admin' > 'supervisor' > 'evaluateur' > 'user' (is_admin rétrocompat supercede).
+// Rôle effectif : 'admin' > 'supervisor' > 'evaluateur' > 'executeur' > 'user'
+// (is_admin rétrocompat supercede).
 function normalizeRole(r) {
   if (r.is_admin) return "admin";
   return ROLES.includes(r.role) ? r.role : "user";
 }
 
-// Crée un utilisateur avec un rôle explicite ('admin' | 'supervisor' | 'evaluateur' | 'user').
+// Crée un utilisateur avec un rôle explicite
+// ('admin' | 'supervisor' | 'evaluateur' | 'executeur' | 'user').
 export async function createUser(username, password, isAdmin, role, organizationId) {
   const targetRole = isAdmin ? "admin" : (ROLES.includes(role) ? role : "user");
   const { salt, hash } = hashPassword(password);

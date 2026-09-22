@@ -2,6 +2,7 @@
 let ME = null;
 let IS_ADMIN = false;    // vrai si l'utilisateur courant est admin (écritures)
 let IS_EVALUATEUR = false; // vrai si rôle « évaluateur » (ADR-002 : périmètre restreint)
+let IS_EXECUTEUR = false;  // vrai si rôle « exécuteur » (ADR-001/002 : périmètre restreint)
 let REFRESH_S = 10;      // intervalle (s), surchargé par /api/config (min 10)
 let refreshTimer = null;
 let activeTab = 'overview';
@@ -12,6 +13,7 @@ let groupRecetteEnabled = localStorage.getItem('panel_group_recette') === '1'; /
 let groupParallelEnabled = localStorage.getItem('panel_group_parallel') === '1'; // grouper par ordre/parallèle
 let groupUserEnabled = localStorage.getItem('panel_group_user') === '1'; // grouper par utilisateur (créateur)
 let tasksProjectFilter = localStorage.getItem('panel_task_project') || ''; // filtre projet de l'onglet Tâches (persistant re-rendu)
+let tasksSprintFilter = localStorage.getItem('panel_task_sprint') || ''; // filtre sprint Tâches (exécuteur : '' = sprint actif ; sinon traçage lecture seule)
 let tasksStatusFilter = (() => { try { const v = JSON.parse(localStorage.getItem('panel_task_status') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })(); // statuts affichés (multi-valeurs, persistant re-rendu)
 const persistTasksStatus = () => localStorage.setItem('panel_task_status', JSON.stringify(tasksStatusFilter));
 let tasksUserFilter = (() => { try { const v = JSON.parse(localStorage.getItem('panel_task_users') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })(); // créateurs sélectionnés (multi-valeurs)
@@ -104,6 +106,9 @@ function switchTab(tab) {
   // Rôle évaluateur : repli sur la page autorisée si l'onglet est hors périmètre
   // (deep-link / état résiduel) — défense UI, la garde serveur reste la référence.
   if (IS_EVALUATEUR && !EVALUATEUR_ALLOWED_TABS.includes(tab)) tab = 'features';
+  // Rôle exécuteur : repli sur Vue d'ensemble si l'onglet est hors périmètre
+  // (deep-link / état résiduel) — défense UI, la garde serveur reste la référence.
+  else if (IS_EXECUTEUR && !EXECUTEUR_ALLOWED_TABS.includes(tab)) tab = 'overview';
   ensurePane(tab);
   document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('.pane').forEach((p) => p.classList.toggle('active', p.id === 'pane-' + tab));
@@ -147,13 +152,45 @@ const EVALUATEUR_PROJECT_TABS = [
 ];
 const EVALUATEUR_ALLOWED_TABS = ['projects', 'features', 'e2etests', 'recettes'];
 
+// Rôle EXÉCUTEUR (ADR-001/002) : Vue d'ensemble, Tâches, Cadrage technique
+// (onglet `recettes`), Tests E2E, Fonctionnalités & Règles, Décisions, ADR et
+// Workspaces (+ Projets pour choisir un projet). Les Déploiements restent
+// accessibles via le modal de détail de tâche (`data-goto="deployments"`).
+const EXECUTEUR_GLOBAL_TABS = [
+  ['projects', 'Projets'],
+  ['workspaces', 'Workspaces'],
+];
+const EXECUTEUR_PROJECT_TABS = [
+  ['overview', "Vue d'ensemble"],
+  ['tasks', 'Tâches'],
+  ['recettes', 'Cadrage technique'],
+  ['e2etests', 'Tests E2E'],
+  ['features', 'Fonctionnalités & Règles'],
+  ['decisions', 'Décisions'],
+  ['adr', 'ADR'],
+];
+const EXECUTEUR_ALLOWED_TABS = ['projects', 'overview', 'tasks', 'recettes', 'e2etests', 'features', 'decisions', 'adr', 'workspaces'];
+
+// Sprint ACTIF (nominal) d'un projet : `status='open'` et NON `isDefault` (le
+// sprint par défaut est l'ancre de traçage des anciens sprints). Renvoie '' si
+// aucun sprint nominal n'est ouvert : aucune restriction de sprint à appliquer.
+// Miroir client de `activeSprintId` (server.mjs) pour pré-régler les filtres.
+function activeSprintFor(sprints) {
+  const open = (sprints || []).filter((s) => s.status === 'open' && !s.isDefault);
+  if (!open.length) return '';
+  open.sort((a, b) => String(b.createdAt || b.id).localeCompare(String(a.createdAt || a.id)));
+  return open[0].id;
+}
+
 // Construit la barre d'onglets selon l'état (projet ouvert ou non).
 function renderNav() {
   const nav = document.getElementById('tabs');
   if (!nav) return;
   const tabs = IS_EVALUATEUR
     ? (currentProject ? EVALUATEUR_PROJECT_TABS : EVALUATEUR_GLOBAL_TABS)
-    : (currentProject ? PROJECT_TABS : GLOBAL_TABS);
+    : IS_EXECUTEUR
+      ? (currentProject ? EXECUTEUR_PROJECT_TABS : EXECUTEUR_GLOBAL_TABS)
+      : (currentProject ? PROJECT_TABS : GLOBAL_TABS);
   const activeIsDefault = (ORGANIZATIONS.find((o) => o.id === currentOrg) || {}).isDefault === true;
   const buttons = tabs
     .filter(([t]) => t !== 'users' || IS_ADMIN)
@@ -546,7 +583,18 @@ async function renderOverview() {
 async function renderTasks() {
   // Projet ouvert → le filtre projet est verrouillé sur ce projet.
   if (currentProject) tasksProjectFilter = currentProject;
-  const [data, plansData] = await Promise.all([api('/api/tasks'), api('/api/plans')]);
+  // Exécuteur : le serveur restreint à son sprint actif → lui transmettre le
+  // projet (résolution du sprint actif) et, s'il trace, `?sprint=<id>`.
+  const tasksQs = new URLSearchParams();
+  if (currentProject) tasksQs.set('project', currentProject);
+  if (IS_EXECUTEUR && tasksSprintFilter) tasksQs.set('sprint', tasksSprintFilter);
+  const tasksUrl = '/api/tasks' + (tasksQs.toString() ? `?${tasksQs.toString()}` : '');
+  const [data, plansData] = await Promise.all([api(tasksUrl), api('/api/plans')]);
+  // Exécuteur : liste des sprints du projet pour le filtre de traçage.
+  let sprintList = [];
+  if (IS_EXECUTEUR && currentProject) {
+    try { sprintList = ((await api(`/api/sprints?projectId=${encodeURIComponent(currentProject)}`)).sprints || []); } catch { sprintList = []; }
+  }
   const tasks = data.tasks || [];
   const plans = plansData.plans || [];
   const plansByTask = {};
@@ -590,6 +638,10 @@ async function renderTasks() {
         <option value="tache_sans_sprint">Sans sprint</option>
         <option value="emergents">Émergentes</option>
       </select>
+      ${IS_EXECUTEUR && currentProject ? `<select id="f-sprint" title="Sprint — l'exécuteur travaille dans le sprint actif ; sélectionner un autre sprint = traçage (lecture seule)">
+        <option value="">Sprint actif</option>
+        ${sprintList.map((s) => `<option value="${esc(s.id)}" ${tasksSprintFilter === s.id ? 'selected' : ''}>${esc(s.title || s.id)}${s.status !== 'open' ? ' (clôturé)' : ''}</option>`).join('')}
+      </select>` : ''}
       <button id="new-task-btn" class="launch-btn">+ Nouvelle tâche</button>
     </div>
     <table><thead><tr><th></th><th>ID</th><th>Projet</th><th>Type</th><th>Priorité</th><th>Statut</th><th>Recette</th><th>E2E</th><th>Demande</th><th>Session</th><th>Créée par</th><th>Actions</th></tr></thead>
@@ -811,6 +863,14 @@ async function renderTasks() {
     tasksProjectFilter = fProjEl.value;
     localStorage.setItem('panel_task_project', tasksProjectFilter);
     apply();
+  });
+  // Filtre SPRINT (exécuteur) : change le périmètre CÔTÉ SERVEUR → re-fetch.
+  const fSprintEl = document.getElementById('f-sprint');
+  if (fSprintEl) fSprintEl.addEventListener('change', () => {
+    tasksSprintFilter = fSprintEl.value;
+    if (tasksSprintFilter) localStorage.setItem('panel_task_sprint', tasksSprintFilter);
+    else localStorage.removeItem('panel_task_sprint');
+    refreshActive();
   });
   // Filtre cible « sans lien » : valeur pré-appliquée (clic carte) + persistance.
   const fMissingEl = document.getElementById('f-missing');
@@ -1060,11 +1120,11 @@ async function renderUsers() {
   const users = data.users || [];
   let projects = [];
   try { projects = ((await api('/api/projects')).projects || []); } catch {}
-  const ROLE_LABELS = { admin: 'admin', supervisor: 'superviseur', evaluateur: 'évaluateur', user: 'utilisateur' };
-  const roleOpts = (sel) => `<select class="role-sel" data-user="${esc(sel.id)}">${['admin', 'supervisor', 'evaluateur', 'user'].map((rl) => `<option value="${rl}" ${sel.role === rl ? 'selected' : ''}>${ROLE_LABELS[rl]}</option>`).join('')}</select>`;
+  const ROLE_LABELS = { admin: 'admin', supervisor: 'superviseur', evaluateur: 'évaluateur', executeur: 'exécuteur', user: 'utilisateur' };
+  const roleOpts = (sel) => `<select class="role-sel" data-user="${esc(sel.id)}">${['admin', 'supervisor', 'evaluateur', 'executeur', 'user'].map((rl) => `<option value="${rl}" ${sel.role === rl ? 'selected' : ''}>${ROLE_LABELS[rl]}</option>`).join('')}</select>`;
   document.getElementById('pane-users').innerHTML = `
     <h2>Utilisateurs <span class="muted-sm">— organisation ${esc(currentOrg)}</span></h2>
-    <p class="muted-sm">Rôles : <strong>admin</strong> (écriture, tous les projets de l'organisation) · <strong>superviseur</strong> (lecture seule, tous les projets) · <strong>évaluateur</strong> (pages Fonctionnalités & Règles, Tests E2E, Recettes ; écrit sur <em>ses propres recettes</em>, lance les tests E2E et dépose des pièces) · <strong>utilisateur</strong> (peut créer/agir, ne voit que <em>ses propres créations</em>). L'accès aux <strong>projets</strong> est explicite (aucun par défaut ; l'admin a tous les projets).</p>
+    <p class="muted-sm">Rôles : <strong>admin</strong> (écriture, tous les projets de l'organisation) · <strong>superviseur</strong> (lecture seule, tous les projets) · <strong>évaluateur</strong> (pages Fonctionnalités & Règles, Tests E2E, Recettes ; écrit sur <em>ses propres recettes</em>, lance les tests E2E et dépose des pièces) · <strong>exécuteur</strong> (Vue d'ensemble, Tâches, Cadrage technique, Tests E2E, Fonctionnalités & Règles, Décisions, ADR, Workspaces ; travaille dans le <em>sprint actif</em> du projet et crée/lance les cadrages techniques) · <strong>utilisateur</strong> (peut créer/agir, ne voit que <em>ses propres créations</em>). L'accès aux <strong>projets</strong> est explicite (aucun par défaut ; l'admin a tous les projets).</p>
     <div class="eco-restart-bar"><button class="launch-btn" id="add-user-btn">Ajouter un utilisateur</button><span id="users-msg" class="muted-sm"></span></div>
     <table><thead><tr><th>Utilisateur</th><th>Rôle</th><th>Organisations</th><th>Projets</th><th>opencode</th><th>Email notif.</th><th>Créé le</th><th></th></tr></thead>
     <tbody>${users.map((u) => `<tr><td>${esc(u.username)}</td><td>${roleOpts(u)}</td><td><button class="ghost tiny" data-user-orgs="${u.id}" data-user-name="${esc(u.username)}">Gérer</button></td><td><button class="ghost tiny" data-user-projects="${u.id}" data-user-name="${esc(u.username)}">Gérer</button></td><td><button class="ghost tiny" data-user-oc="${u.id}" data-user-name="${esc(u.username)}">Accès</button></td><td><button class="ghost tiny" data-user-email="${u.id}" data-user-name="${esc(u.username)}" data-user-email-val="${esc(u.notifyEmail || '')}" title="Configurer l'email de notification">${u.notifyEmail ? esc(u.notifyEmail) : '—'}</button></td><td class="code">${esc((u.created_at || '').replace('T', ' ').slice(0, 19))}</td>    <td><div class="icon-actions"><button class="ghost tiny" data-oc-restart="${esc(u.username)}" title="Redémarrer l'instance opencode@${esc(u.username)}.service">Redémarrer</button><button class="danger" data-del="${u.id}">Supprimer</button></div></td></tr>`).join('')}</tbody></table>`;
@@ -1104,6 +1164,7 @@ async function userCreateModal() {
         <label>Rôle
           <select id="uc-role">
             <option value="user">utilisateur</option>
+            <option value="executeur">exécuteur</option>
             <option value="evaluateur">évaluateur</option>
             <option value="supervisor">superviseur</option>
             <option value="admin">admin</option>
@@ -5552,6 +5613,10 @@ function renderFrFeaturePanel(features, refs, pieces, linkIndex, sprints) {
   const panel = document.getElementById('fr-subpanel');
   if (!panel) return;
   const f = frFeatureFilters;
+  // Exécuteur : pré-régler le filtre sprint sur le sprint ACTIF (traçage des
+  // anciens sprints possible via le sélecteur). Sans sprint nominal ouvert,
+  // `activeSprintFor` renvoie '' → aucun pré-réglage (anti sur-restriction).
+  if (IS_EXECUTEUR && !f.sprint) f.sprint = activeSprintFor(sprints);
   const roles = [...new Set((features || []).map((x) => x.role).filter(Boolean))].sort();
   const sprintOpts = (sprints || []).map((s) => `<option value="${esc(s.id)}" ${f.sprint === s.id ? 'selected' : ''}>${esc(s.title || s.id)}</option>`).join('');
   const filtered = frFilterFeatures(features, f, linkIndex);
@@ -5631,6 +5696,8 @@ function renderFrRulePanel(rules, refs, pieces, linkIndex, sprints, projectRoles
   const panel = document.getElementById('fr-subpanel');
   if (!panel) return;
   const f = frRuleFilters;
+  // Exécuteur : pré-régler le filtre sprint sur le sprint ACTIF (cf. features).
+  if (IS_EXECUTEUR && !f.sprint) f.sprint = activeSprintFor(sprints);
   // Vocabulaire = RÔLES DISTINCTS DU PROJET (union fonctionnalités + règles), fourni
   // par l'appelant (0 appel réseau supplémentaire) — cf. décision (b) du plan.
   const roles = (projectRoles || []).slice().sort();
@@ -7484,7 +7551,8 @@ async function init() {
     ME = me.user;
     IS_ADMIN = !!(ME && ME.is_admin);
     IS_EVALUATEUR = !!(ME && ME.role === 'evaluateur');
-    document.getElementById('whoami').textContent = ME.username + (ME.is_admin ? ' (admin)' : (ME.role === 'supervisor' ? ' (superviseur)' : (ME.role === 'evaluateur' ? ' (évaluateur)' : (ME.role === 'user' ? ' (utilisateur)' : ''))));
+    IS_EXECUTEUR = !!(ME && ME.role === 'executeur');
+    document.getElementById('whoami').textContent = ME.username + (ME.is_admin ? ' (admin)' : (ME.role === 'supervisor' ? ' (superviseur)' : (ME.role === 'evaluateur' ? ' (évaluateur)' : (ME.role === 'executeur' ? ' (exécuteur)' : (ME.role === 'user' ? ' (utilisateur)' : '')))));
     // Bandeau : libellé COURT (évite le débordement d'en-tête).
     const roBanner = document.querySelector('.readonly-banner');
     if (roBanner) {
@@ -7498,6 +7566,10 @@ async function init() {
       } else if (ME.role === 'evaluateur') {
         roBanner.textContent = 'Évaluateur produit';
         roBanner.title = "Rôle évaluateur : accès limité aux pages Fonctionnalités & Règles, Tests E2E et Recettes ; vous ne voyez que vos propres recettes (écriture sur vos recettes, lancement de tests E2E, dépôt de pièces).";
+        roBanner.style.display = 'inline-block';
+      } else if (ME.role === 'executeur') {
+        roBanner.textContent = 'Exécuteur';
+        roBanner.title = "Rôle exécuteur : Vue d'ensemble, Tâches, Cadrage technique, Tests E2E, Fonctionnalités & Règles, Décisions, ADR, Workspaces. Vous travaillez dans le sprint ACTIF du projet ; le filtre sprint sert uniquement au traçage des anciens sprints (lecture seule).";
         roBanner.style.display = 'inline-block';
       }
     }

@@ -26,8 +26,8 @@ export async function currentUser(req) {
   if (new Date(s.expires_at).getTime() < Date.now()) return null;
   const u = await getUserById(s.user_id);
   if (!u) return null;
-  // Rôle effectif : admin (is_admin rétrocompat) > supervisor > evaluateur > user.
-  let role = u.role && ["admin", "supervisor", "evaluateur", "user"].includes(u.role) ? u.role : "user";
+  // Rôle effectif : admin (is_admin rétrocompat) > supervisor > evaluateur > executeur > user.
+  let role = u.role && ["admin", "supervisor", "evaluateur", "executeur", "user"].includes(u.role) ? u.role : "user";
   if (u.is_admin) role = "admin";
   // Appartenance N:N + organisation ACTIVE (stockée dans la session).
   let organizations = await listUserOrganizations(u.id);
@@ -45,6 +45,7 @@ export async function currentUser(req) {
     organizations, activeOrganizationId,
     isSupervisor: role === "supervisor", isUser: role === "user",
     isEvaluateur: role === "evaluateur",
+    isExecutor: role === "executeur",
     // Périmètre propriétaire : un rôle `user` ne voit QUE ses propres créations
     // (created_by = son username) dans l'organisation active. `supervisor`/`admin`
     // voient toutes les données de l'organisation (ownerScope = null).
@@ -70,11 +71,18 @@ export const canWrite = (user) => !!(user && !isReadOnly(user));
 
 // Pages autorisées par rôle (source UNIQUE UI + serveur, ADR-002). L'`evaluateur`
 // n'accède qu'à Fonctionnalités & Règles, Tests E2E et Recettes (+ Projets pour
-// choisir un projet). `admin`/`supervisor`/`user` conservent toutes les pages.
+// choisir un projet). L'`executeur` accède à Vue d'ensemble, Tâches, Cadrage
+// technique (onglet `recettes`), Tests E2E, Fonctionnalités & Règles, Décisions,
+// ADR et Workspaces (+ Projets pour choisir un projet) ; les onglets Sprints,
+// Artefacts, Vars & Secrets, Archives et Écosystème/Utilisateurs sont masqués.
+// Les Déploiements restent accessibles via le modal de détail de tâche
+// (`data-goto="deployments"`) — pas d'onglet dédié. `admin`/`supervisor`/`user`
+// conservent toutes les pages.
 export const ROLE_PAGES = {
   admin: ["projects", "overview", "tasks", "recettes", "e2etests", "decisions", "artifacts", "adr", "sprints", "features", "e2esecrets", "archives", "ecosystem", "workspaces", "users"],
   supervisor: ["projects", "overview", "tasks", "recettes", "e2etests", "decisions", "artifacts", "adr", "sprints", "features", "e2esecrets", "archives", "ecosystem", "workspaces", "users"],
   evaluateur: ["projects", "features", "e2etests", "recettes"],
+  executeur: ["projects", "overview", "tasks", "recettes", "e2etests", "decisions", "adr", "features", "workspaces"],
   user: ["projects", "overview", "tasks", "recettes", "e2etests", "decisions", "artifacts", "adr", "sprints", "features", "e2esecrets", "archives", "ecosystem", "workspaces", "users"],
 };
 export function allowedPages(role) {

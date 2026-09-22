@@ -217,6 +217,21 @@ function cadragesApiBase() {
   return '/api/cadrages';
 }
 
+// Fieldset « Projet » EN LECTURE SEULE pour les modales de création (cadrage
+// technique / recette évaluateur). Le projet de création est TOUJOURS le projet
+// actuellement ouvert (`currentProject`, ADR-001/ADR-004 — 1 objet = 1 projet) :
+// aucun combo de secours n'est proposé. Sans projet ouvert, un message explicite
+// est rendu (la garde de création est posée par `applyNoProjectGuard`).
+function projectReadonlyFieldsetHtml(projects) {
+  const legend = '<legend>Projet <span class="muted-sm">(projet ouvert — non modifiable)</span></legend>';
+  if (!currentProject) {
+    return `<fieldset class="pilot-fieldset">${legend}<p class="muted-sm">Aucun projet ouvert — ouvrez un projet avant de créer.</p></fieldset>`;
+  }
+  const p = (projects || []).find((x) => x.id === currentProject);
+  const name = (p && (p.name || p.id)) || currentProject;
+  return `<fieldset class="pilot-fieldset">${legend}<div class="proj-readonly"><strong>${esc(name)}</strong> <code class="chip-project" title="Projet (produit) de création">${esc(currentProject)}</code></div></fieldset>`;
+}
+
 // Sprint ACTIF (nominal) d'un projet : `status='open'` et NON `isDefault` (le
 // sprint par défaut est l'ancre de traçage des anciens sprints). Renvoie '' si
 // aucun sprint nominal n'est ouvert : aucune restriction de sprint à appliquer.
@@ -3073,27 +3088,23 @@ async function renderRecettes() {
 async function recetteCreateModal() {
   let projects = [];
   try { projects = ((await api('/api/projects')).projects || []); } catch {}
-  const projOptions = projects.map((p) => `<option value="${esc(p.id)}" ${p.id === currentProject ? 'selected' : ''}>${esc(p.name || p.id)}</option>`).join('') || '<option value="">— aucun projet enregistré —</option>';
   let allArtifacts = [];
   try { allArtifacts = ((await api('/api/artifacts')).artifacts || []); } catch {}
   showModal(`
     <div class="modal modal-wide">
       <h2>Nouvelle recette (évaluateur)</h2>
       <form id="eval-modal-form" class="pilot-form">
-        <fieldset class="pilot-fieldset">
-          <legend>Projet <span class="muted-sm">(1 recette = 1 projet produit)</span></legend>
-          <select id="em-project">${projOptions}</select>
-          <div id="em-repos-hint" class="muted-sm" style="margin-top:6px"></div>
-        </fieldset>
+        ${projectReadonlyFieldsetHtml(projects)}
+        <div id="em-repos-hint" class="muted-sm" style="margin-top:6px"></div>
         <input id="em-title" placeholder="titre court (ex: Recette du parcours d'inscription)" required>
         <textarea id="em-description" class="modal-textarea" placeholder="parcours évalué — ce que l'évaluateur a observé et vérifié (expérience utilisateur, design, performance)" required></textarea>
         <fieldset class="pilot-fieldset">
           <legend>Fonctionnalités évaluées <span class="muted-sm">(1..N — le verdict se pose ensuite sur chaque fonctionnalité)</span></legend>
-          <div id="em-feature-pick"><p class="muted-sm">Choisissez un projet pour afficher ses fonctionnalités.</p></div>
+          <div id="em-feature-pick"><p class="muted-sm">Aucun projet ouvert — fonctionnalités indisponibles.</p></div>
         </fieldset>
         <fieldset class="pilot-fieldset">
           <legend>Règles métier évaluées <span class="muted-sm">(1..N)</span></legend>
-          <div id="em-rule-pick"><p class="muted-sm">Choisissez un projet pour afficher ses règles métier.</p></div>
+          <div id="em-rule-pick"><p class="muted-sm">Aucun projet ouvert — règles métier indisponibles.</p></div>
         </fieldset>
         <div class="links-editor">
           <div class="links-head"><label class="modal-field" style="margin:0">Pièces <span class="muted-sm">(lien, document, photo, vidéo)</span></label>
@@ -3108,20 +3119,19 @@ async function recetteCreateModal() {
       <div id="eval-modal-msg" class="msg"></div>
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
-  const projectSel = document.getElementById('em-project');
   const reposHint = document.getElementById('em-repos-hint');
   const featureBox = document.getElementById('em-feature-pick');
   const ruleBox = document.getElementById('em-rule-pick');
   const renderReposHint = () => {
-    const proj = projects.find((p) => p.id === projectSel.value);
+    const proj = projects.find((p) => p.id === currentProject);
     const repos = (proj && proj.repos) || [];
     reposHint.innerHTML = repos.length
       ? `Repos transverses du projet (portée réelle) : ${repos.map((r) => `<code class="chip-repo">${esc(r.repoId || r)}</code>`).join(' ')}`
       : 'Aucun repo rattaché à ce projet.';
   };
   const loadFeaturesRules = async () => {
-    const proj = projectSel.value;
-    if (!proj) { featureBox.innerHTML = '<p class="muted-sm">Choisissez un projet.</p>'; ruleBox.innerHTML = '<p class="muted-sm">Choisissez un projet.</p>'; return; }
+    const proj = currentProject;
+    if (!proj) { featureBox.innerHTML = '<p class="muted-sm">Aucun projet ouvert.</p>'; ruleBox.innerHTML = '<p class="muted-sm">Aucun projet ouvert.</p>'; return; }
     featureBox.innerHTML = '<p class="muted-sm">Chargement…</p>';
     ruleBox.innerHTML = '<p class="muted-sm">Chargement…</p>';
     let features = []; let rules = [];
@@ -3139,7 +3149,8 @@ async function recetteCreateModal() {
     ruleBox.innerHTML = frSelectorHtml('rule', rules, { prefix: 'em-rule-pick', roles, selected: [], projectId: proj, fromRecette: true });
     bindFrSelector('em-rule-pick', { projectId: proj, projectRoles: roles });
   };
-  projectSel.addEventListener('change', () => { renderReposHint(); loadFeaturesRules(); });
+  // Chargement AUTOMATIQUE des listes dépendantes du projet ouvert (plus de
+  // combo projet : aucun « change » à attendre).
   renderReposHint();
   loadFeaturesRules();
 
@@ -3183,12 +3194,16 @@ async function recetteCreateModal() {
   };
   document.getElementById('em-add-piece').addEventListener('click', addPieceRow);
 
+  // Sans projet ouvert : création DÉSACTIVÉE + message explicite (aucun combo de
+  // secours — le projet de création est le projet ouvert).
+  applyNoProjectGuard('eval-modal-form', 'eval-modal-msg');
+
   document.getElementById('eval-modal-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const msg = document.getElementById('eval-modal-msg');
     try {
-      const proj = projectSel.value;
-      if (!proj) throw new Error('Choisissez un projet.');
+      const proj = currentProject;
+      if (!proj) throw new Error('Aucun projet ouvert.');
       const documents = [];
       for (const row of piecesList.querySelectorAll('.link-row')) {
         const mode = row.querySelector('.ep-mode').value;
@@ -3990,37 +4005,33 @@ async function cadrageCreateModal() {
   const T = cadrageTerms();
   let projects = [];
   try { projects = ((await api('/api/projects')).projects || []); } catch {}
-  const projOptions = projects.map((p) => `<option value="${esc(p.id)}">${esc(p.name || p.id)}</option>`).join('') || '<option value="">— aucun projet enregistré —</option>';
   showModal(`
     <div class="modal modal-wide">
       <h2>${T.newEntity}</h2>
       <form id="recette-modal-form" class="pilot-form">
-        <fieldset class="pilot-fieldset">
-          <legend>Projet <span class="muted-sm">(1 ${T.entityLower} = 1 projet produit — ses repos transverses sont la portée réelle, ADR 11)</span></legend>
-          <select id="rm-project">${projOptions}</select>
-          <div id="rm-repos-hint" class="muted-sm" style="margin-top:6px"></div>
-          <button type="button" class="ghost" id="rm-load-cands">Charger les tâches disponibles</button>
-        </fieldset>
+        ${projectReadonlyFieldsetHtml(projects)}
+        <div id="rm-repos-hint" class="muted-sm" style="margin-top:6px"></div>
+        <button type="button" class="ghost" id="rm-load-cands">Charger les tâches disponibles</button>
         <fieldset id="rm-adr-fieldset" class="pilot-fieldset">
           <legend>ADR rattachées ${T.docTo} — contexte de l'agent <span class="muted-sm">(sélection multi-lignes ; rattachées ${T.docTo} + bloc « ADR de référence » injecté). Toutes cochées par défaut.</span></legend>
-          <div id="rm-adr-pick"><p class="muted-sm">Choisissez un projet pour afficher ses ADR.</p></div>
+          <div id="rm-adr-pick"><p class="muted-sm">Aucun projet ouvert — ADR indisponibles.</p></div>
         </fieldset>
         <fieldset id="rm-feature-fieldset" class="pilot-fieldset">
           <legend>Fonctionnalités rattachées ${T.docTo} — contexte de l'agent <span class="muted-sm">(sélection multi-lignes ; bloc « Fonctionnalités de référence » injecté). Toutes cochées par défaut.</span></legend>
-          <div id="rm-feature-pick"><p class="muted-sm">Choisissez un projet pour afficher ses fonctionnalités.</p></div>
+          <div id="rm-feature-pick"><p class="muted-sm">Aucun projet ouvert — fonctionnalités indisponibles.</p></div>
         </fieldset>
         <fieldset id="rm-rule-fieldset" class="pilot-fieldset">
           <legend>Règles métier rattachées ${T.docTo} — contexte de l'agent <span class="muted-sm">(sélection multi-lignes ; bloc « Règles métier de référence » injecté). Toutes cochées par défaut.</span></legend>
-          <div id="rm-rule-pick"><p class="muted-sm">Choisissez un projet pour afficher ses règles métier.</p></div>
+          <div id="rm-rule-pick"><p class="muted-sm">Aucun projet ouvert — règles métier indisponibles.</p></div>
         </fieldset>
         ${(IS_ADMIN || IS_EXECUTEUR) ? `<fieldset id="rm-eval-item-fieldset" class="pilot-fieldset">
           <legend>Éléments de recette évaluateur à traiter <span class="muted-sm">(sélection multi-lignes ; les éléments cochés sont repris par le cadrage créé — traçage « repris par ce cadrage »).</span></legend>
-          <div id="rm-eval-item-pick"><p class="muted-sm">Choisissez un projet pour afficher les éléments « à traiter ».</p></div>
+          <div id="rm-eval-item-pick"><p class="muted-sm">Aucun projet ouvert — éléments « à traiter » indisponibles.</p></div>
         </fieldset>` : ''}
         <input id="rm-title" placeholder="titre court (ex: Cadrage technique du module chatbot)" required>
         <textarea id="rm-description" class="modal-textarea" placeholder="description longue (détail du périmètre vérifié) — optionnel"></textarea>
         <label class="modal-field">Tâches couvertes <span class="muted-sm">(0..N — tâches non encore recettées du projet)</span></label>
-        <div id="rm-candidates" class="recette-candidates"><p class="muted-sm">Choisissez un projet puis « Charger les tâches disponibles ».</p></div>
+        <div id="rm-candidates" class="recette-candidates"><p class="muted-sm">Cliquez sur « Charger les tâches disponibles » pour lister les tâches couvertes du projet ouvert.</p></div>
         <div class="links-editor">
           <div class="links-head"><label class="modal-field" style="margin:0">Documents <span class="muted-sm">(importés ou liés, avec nature)</span></label>
           <button type="button" class="ghost" id="rm-add-doc">+ Ajouter</button></div>
@@ -4035,14 +4046,12 @@ async function cadrageCreateModal() {
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
   const candBox = document.getElementById('rm-candidates');
-  const projectSel = document.getElementById('rm-project');
   const reposHint = document.getElementById('rm-repos-hint');
-  const currentProject = () => projectSel.value;
   const kept = new Set(); // tâches déjà cochées, conservées entre rechargements
   const loadCandidates = async () => {
-    const proj = currentProject();
+    const proj = currentProject;
     candBox.innerHTML = '<p class="muted-sm">Chargement…</p>';
-    if (!proj) { candBox.innerHTML = '<p class="muted-sm">Choisissez un projet.</p>'; return; }
+    if (!proj) { candBox.innerHTML = '<p class="muted-sm">Aucun projet ouvert.</p>'; return; }
     try {
       const d = await api(`${cadragesApiBase()}/candidates?project=${encodeURIComponent(proj)}`);
       const c = d.candidates || [];
@@ -4065,8 +4074,8 @@ async function cadrageCreateModal() {
   const adrBox = document.getElementById('rm-adr-pick');
   const reposForProject = (pid) => { const p = projects.find((x) => x.id === pid); return (p && p.repos) || []; };
   const loadAdrs = async () => {
-    const proj = currentProject();
-    if (!proj) { adrBox.innerHTML = '<p class="muted-sm">Choisissez un projet pour afficher ses ADR.</p>'; return; }
+    const proj = currentProject;
+    if (!proj) { adrBox.innerHTML = '<p class="muted-sm">Aucun projet ouvert.</p>'; return; }
     adrBox.innerHTML = '<p class="muted-sm">Chargement des ADR…</p>';
     const seen = new Map();
     try {
@@ -4082,10 +4091,10 @@ async function cadrageCreateModal() {
   const featureBox = document.getElementById('rm-feature-pick');
   const ruleBox = document.getElementById('rm-rule-pick');
   const loadFeaturesRules = async () => {
-    const proj = currentProject();
+    const proj = currentProject;
     if (!proj) {
-      featureBox.innerHTML = '<p class="muted-sm">Choisissez un projet pour afficher ses fonctionnalités.</p>';
-      ruleBox.innerHTML = '<p class="muted-sm">Choisissez un projet pour afficher ses règles métier.</p>';
+      featureBox.innerHTML = '<p class="muted-sm">Aucun projet ouvert.</p>';
+      ruleBox.innerHTML = '<p class="muted-sm">Aucun projet ouvert.</p>';
       return;
     }
     featureBox.innerHTML = '<p class="muted-sm">Chargement des fonctionnalités…</p>';
@@ -4116,8 +4125,8 @@ async function cadrageCreateModal() {
   const evalItemBox = document.getElementById('rm-eval-item-pick');
   const loadEvalItems = async () => {
     if (!evalItemBox) return;
-    const proj = currentProject();
-    if (!proj) { evalItemBox.innerHTML = '<p class="muted-sm">Choisissez un projet pour afficher les éléments « à traiter ».</p>'; return; }
+    const proj = currentProject;
+    if (!proj) { evalItemBox.innerHTML = '<p class="muted-sm">Aucun projet ouvert.</p>'; return; }
     evalItemBox.innerHTML = '<p class="muted-sm">Chargement des éléments « à traiter »…</p>';
     let items = [];
     try {
@@ -4131,20 +4140,19 @@ async function cadrageCreateModal() {
     bindEvalItemSelector('rm-eval-item-pick');
   };
   const renderReposHint = () => {
-    const proj = projects.find((p) => p.id === currentProject());
+    const proj = projects.find((p) => p.id === currentProject);
     const repos = (proj && proj.repos) || [];
     reposHint.innerHTML = repos.length
       ? `Repos transverses du projet (portée réelle) : ${repos.map((r) => `<code class="chip-repo">${esc(r.repoId || r)}</code>`).join(' ')}`
       : 'Aucun repo rattaché à ce projet.';
   };
-  projectSel.addEventListener('change', () => {
-    candBox.innerHTML = '<p class="muted-sm">Choisissez un projet puis « Charger les tâches disponibles ».</p>';
-    renderReposHint();
-    loadAdrs();
-    loadFeaturesRules();
-    loadEvalItems();
-  });
+  // Chargement AUTOMATIQUE des listes dépendantes du projet ouvert (plus de
+  // combo projet : aucun « change » à attendre). Les éléments de recette
+  // évaluateur « à traiter » sont chargés en même temps (admin/exécuteur).
   renderReposHint();
+  loadAdrs();
+  loadFeaturesRules();
+  loadEvalItems();
 
   // Éditeur de documents (import / artefact + nature).
   let allArtifacts = [];
@@ -4181,12 +4189,16 @@ async function cadrageCreateModal() {
   };
   document.getElementById('rm-add-doc').addEventListener('click', addDocRow);
 
+  // Sans projet ouvert : création DÉSACTIVÉE + message explicite (aucun combo de
+  // secours — le projet de création est le projet ouvert).
+  applyNoProjectGuard('recette-modal-form', 'recette-modal-msg');
+
   document.getElementById('recette-modal-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const msg = document.getElementById('recette-modal-msg');
     try {
-      const proj = currentProject();
-      if (!proj) throw new Error('Choisissez un projet.');
+      const proj = currentProject;
+      if (!proj) throw new Error('Aucun projet ouvert.');
       const taskIds = [...candBox.querySelectorAll('.rm-cand:checked')].map((x) => x.value);
       const documents = [];
       for (const row of docsList.querySelectorAll('.link-row')) {
@@ -4678,6 +4690,24 @@ function closeModal() {
   const bd = document.getElementById('modal-backdrop');
   bd.hidden = true;
   bd.innerHTML = '';
+}
+
+// Garde commune « aucun projet ouvert » des modales de création (cadrage
+// technique / recette évaluateur) : sans projet ouvert, la création est
+// DÉSACTIVÉE (bouton submit désactivé) et un message explicite est affiché —
+// jamais de combo de secours. Retourne l'état (true = un projet est ouvert).
+function applyNoProjectGuard(formId, msgId) {
+  const hasProject = !!currentProject;
+  const form = document.getElementById(formId);
+  if (form) {
+    const submitBtn = form.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = !hasProject;
+  }
+  if (!hasProject) {
+    const msg = document.getElementById(msgId);
+    if (msg) { msg.textContent = 'Aucun projet ouvert — ouvrez un projet avant de créer.'; msg.className = 'msg error'; }
+  }
+  return hasProject;
 }
 
 async function openArchiveConfirm(taskId) {

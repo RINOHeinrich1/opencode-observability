@@ -4808,6 +4808,7 @@ async function renderSprints() {
       ${s.status === 'open'
         ? `<button type="button" class="ghost tiny danger-text" data-sp-close="${esc(s.id)}">CLÔTURER</button>`
         : `<button type="button" class="ghost tiny" data-sp-reopen="${esc(s.id)}">REPRENDRE</button>`}
+      ${s.isDefault ? '' : `<button type="button" class="ghost tiny danger-text" data-sp-del="${esc(s.id)}" title="Supprimer le sprint">Supprimer</button>`}
     </td>
   </tr>`).join('');
   pane.innerHTML = `
@@ -4856,6 +4857,16 @@ async function renderSprints() {
       await api(`/api/sprints/${encodeURIComponent(b.dataset.spReopen)}/reopen`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
       await renderSprints();
     } catch (e) { alert('Reprise impossible : ' + (e.message || e)); }
+  }));
+  // Suppression d'un sprint (bouton masqué pour le sprint par défaut) :
+  // confirmation → DELETE ; le registre refuse (409) le sprint par défaut ou
+  // portant tâches/recettes → message explicite affiché tel quel.
+  pane.querySelectorAll('[data-sp-del]').forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm('Supprimer ce sprint ? Ses liens (fonctionnalités, règles, pièces) seront détachés ; les entités restent au projet.')) return;
+    try {
+      await api(`/api/sprints/${encodeURIComponent(b.dataset.spDel)}`, { method: 'DELETE' });
+      await renderSprints();
+    } catch (e) { alert('Suppression impossible : ' + ((e && e.message) || e)); }
   }));
 }
 
@@ -5335,6 +5346,40 @@ function frFilterRules(rules, filter, linkIndex) {
   });
 }
 
+// Suppression d'une FONCTIONNALITÉ depuis le panneau : confirmation → DELETE.
+// Si le registre refuse (`[ADR_LAST_FEATURE]` : l'ADR perdrait sa dernière
+// fonctionnalité), une 2ᵉ confirmation propose la cascade ADR
+// (`?cascadeAdrs=1`). Aucune suppression silencieuse d'ADR.
+async function deleteFeatureFlow(featureId, onDone) {
+  if (!featureId) return;
+  if (!confirm('Supprimer cette fonctionnalité ? Ses liens (règles, Gherkin, ADR, sprints, tâches, recettes) seront détachés.')) return;
+  const del = (cascade) => api(`/api/features/${encodeURIComponent(featureId)}${cascade ? '?cascadeAdrs=1' : ''}`, { method: 'DELETE' });
+  try {
+    await del(false);
+    if (typeof onDone === 'function') await onDone();
+  } catch (e) {
+    const msg = String((e && e.message) || e);
+    if (msg.includes('ADR_LAST_FEATURE')) {
+      if (!confirm(`${msg}\n\nSupprimer AUSSI l'ADR (cascade) ? Cette action est définitive.`)) return;
+      try { await del(true); if (typeof onDone === 'function') await onDone(); }
+      catch (e2) { alert('Suppression impossible : ' + ((e2 && e2.message) || e2)); }
+    } else {
+      alert('Suppression impossible : ' + msg);
+    }
+  }
+}
+
+// Suppression d'une RÈGLE MÉTIER depuis le panneau : confirmation → DELETE
+// (liens `fonctionnalite_regles` / `sprint_regles` détachés en CASCADE).
+async function deleteRuleFlow(ruleId, onDone) {
+  if (!ruleId) return;
+  if (!confirm('Supprimer cette règle métier ? Ses liens (fonctionnalités, sprints) seront détachés.')) return;
+  try {
+    await api(`/api/rules/${encodeURIComponent(ruleId)}`, { method: 'DELETE' });
+    if (typeof onDone === 'function') await onDone();
+  } catch (e) { alert('Suppression impossible : ' + ((e && e.message) || e)); }
+}
+
 // Table ISOLÉE du sous-onglet Fonctionnalités (US-xxx) — Ref (badge émergent),
 // Rôle, User story, Liens (index A003), Actions. Aucune règle métier ici.
 function frFeatureTableHtml(features, linkIndex) {
@@ -5349,6 +5394,7 @@ function frFeatureTableHtml(features, linkIndex) {
       <button type="button" class="ghost tiny" data-fr-edit="${esc(f.id)}">Éditer</button>
       <button type="button" class="ghost tiny" data-fr-detail="${esc(f.id)}">Détail</button>
       <button type="button" class="ghost tiny" data-fr-link="${esc(f.id)}">Lier</button>
+      <button type="button" class="ghost tiny danger-text" data-fr-del="${esc(f.id)}" title="Supprimer la fonctionnalité">Supprimer</button>
     </td>
   </tr>`).join('');
   return `<div class="adr-table-wrap"><table class="adr-table">
@@ -5371,6 +5417,7 @@ function frRuleTableHtml(rules, linkIndex) {
       <button type="button" class="ghost tiny" data-rule-edit="${esc(r.id)}">Éditer</button>
       <button type="button" class="ghost tiny" data-rule-detail="${esc(r.id)}">Détail</button>
       <button type="button" class="ghost tiny" data-rule-link="${esc(r.id)}">Lier</button>
+      <button type="button" class="ghost tiny danger-text" data-rule-del="${esc(r.id)}" title="Supprimer la règle métier">Supprimer</button>
     </td>
   </tr>`).join('');
   return `<div class="adr-table-wrap"><table class="adr-table">
@@ -5425,6 +5472,7 @@ function renderFrFeaturePanel(features, refs, pieces, linkIndex) {
     panel.querySelectorAll('[data-fr-edit]').forEach((b) => b.addEventListener('click', () => featureFormModal(features.find((x) => x.id === b.dataset.frEdit), pieces, renderFeaturesRules)));
     panel.querySelectorAll('[data-fr-detail]').forEach((b) => b.addEventListener('click', () => featureDetailModal(b.dataset.frDetail)));
     panel.querySelectorAll('[data-fr-link]').forEach((b) => b.addEventListener('click', () => linkModal(LINK_PRESETS.feature, b.dataset.frLink, refs, renderFeaturesRules)));
+    panel.querySelectorAll('[data-fr-del]').forEach((b) => b.addEventListener('click', () => deleteFeatureFlow(b.dataset.frDel, renderFeaturesRules)));
   };
   const rerender = () => {
     frFeatureFilters = {
@@ -5494,6 +5542,7 @@ function renderFrRulePanel(rules, refs, pieces, linkIndex) {
     panel.querySelectorAll('[data-rule-edit]').forEach((b) => b.addEventListener('click', () => ruleFormModal(rules.find((x) => x.id === b.dataset.ruleEdit), pieces, renderFeaturesRules)));
     panel.querySelectorAll('[data-rule-detail]').forEach((b) => b.addEventListener('click', () => ruleDetailModal(b.dataset.ruleDetail)));
     panel.querySelectorAll('[data-rule-link]').forEach((b) => b.addEventListener('click', () => linkModal(LINK_PRESETS.rule, b.dataset.ruleLink, refs, renderFeaturesRules)));
+    panel.querySelectorAll('[data-rule-del]').forEach((b) => b.addEventListener('click', () => deleteRuleFlow(b.dataset.ruleDel, renderFeaturesRules)));
   };
   const rerender = () => {
     frRuleFilters = {

@@ -742,6 +742,13 @@ export async function attachSprintPieces(args = {}) {
   });
 }
 
+// `deleteSprint` : SUPPRIME un sprint (refus dur du sprint par défaut et des
+// sprints portant tâches/recettes — c'est le registre qui décide).
+export async function deleteSprint(args = {}) {
+  if (!args.sprintId) throw new Error("sprintId requis");
+  return taskOrchestrator("sprint_delete", { sprintId: args.sprintId });
+}
+
 // `sprintReport` : RAPPORT DE SPRINT généré côté registre (markdown par défaut).
 export async function sprintReport(args = {}) {
   if (!args.sprintId) throw new Error("sprintId requis");
@@ -835,6 +842,19 @@ export async function updateFeature(args = {}) {
   });
 }
 
+// `deleteFeature` : SUPPRIME une fonctionnalité + ses liens (CASCADE). Garde
+// d'intégrité « ADR ≥ 1 fonctionnalité » : refus `[ADR_LAST_FEATURE]` sauf
+// `cascadeAdrs=true` (supprime aussi l'ADR orpheline). Le registre reste la
+// source de vérité ; le panneau ne fait que relayer.
+export async function deleteFeature(args = {}) {
+  if (!args.featureId) throw new Error("featureId requis");
+  return taskOrchestrator("feature_delete", {
+    featureId: args.featureId,
+    cascadeAdrs: args.cascadeAdrs === true,
+    by: args.by || undefined,
+  });
+}
+
 export async function listRules(args = {}) {
   if (!args.projectId) throw new Error("projectId requis");
   return taskOrchestrator("rule_list", {
@@ -877,6 +897,12 @@ export async function updateRule(args = {}) {
     implementedNote: args.implementedNote != null ? args.implementedNote : undefined,
     by: args.by || undefined,
   });
+}
+
+// `deleteRule` : SUPPRIME une règle métier + ses liens (CASCADE). Aucun invariant.
+export async function deleteRule(args = {}) {
+  if (!args.ruleId) throw new Error("ruleId requis");
+  return taskOrchestrator("rule_delete", { ruleId: args.ruleId });
 }
 
 // ===========================================================================

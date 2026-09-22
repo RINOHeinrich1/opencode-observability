@@ -1853,6 +1853,13 @@ const server = createServer(async (req, res) => {
       try { return sendJson(res, 200, await pilot.getSprintDetail({ sprintId: decodeURIComponent(sprintGetMatch[1]) })); }
       catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
     }
+    // DELETE /api/sprints/:id — SUPPRESSION d'un sprint. Refus DURS du registre
+    // (sprint par défaut `[SPRINT_DEFAULT]`, tâches/recettes `[SPRINT_LINKED]`)
+    // → 409 avec message explicite affiché tel quel par le panneau.
+    if (sprintGetMatch && req.method === "DELETE") {
+      try { return sendJson(res, 200, await pilot.deleteSprint({ sprintId: decodeURIComponent(sprintGetMatch[1]) })); }
+      catch (e) { return sendJson(res, 409, { error: String((e && e.message) || e) }); }
+    }
     // POST /api/sprints/:id/close — CLÔTURE manuelle (déclenche l'émergence).
     const sprintCloseMatch = path.match(/^\/api\/sprints\/([^/]+)\/close$/);
     if (sprintCloseMatch && req.method === "POST") {
@@ -2024,6 +2031,18 @@ const server = createServer(async (req, res) => {
         }));
       } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
     }
+    // DELETE /api/features/:id?cascadeAdrs=1 — SUPPRESSION d'une fonctionnalité
+    // (+ liens CASCADE). Garde d'intégrité « ADR ≥ 1 fonctionnalité » : refus
+    // `[ADR_LAST_FEATURE]` → 409 (le panneau propose alors la cascade ADR).
+    if (featureMatch && req.method === "DELETE") {
+      try {
+        return sendJson(res, 200, await pilot.deleteFeature({
+          featureId: decodeURIComponent(featureMatch[1]),
+          cascadeAdrs: url.searchParams.get("cascadeAdrs") === "1",
+          by: user.username,
+        }));
+      } catch (e) { return sendJson(res, 409, { error: String((e && e.message) || e) }); }
+    }
     // GET /api/rules?projectId=&emergent=&search=&limit=
     if (path === "/api/rules" && req.method === "GET") {
       try {
@@ -2067,6 +2086,11 @@ const server = createServer(async (req, res) => {
           by: user.username,
         }));
       } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    // DELETE /api/rules/:id — SUPPRESSION d'une règle métier (+ liens CASCADE).
+    if (ruleMatch && req.method === "DELETE") {
+      try { return sendJson(res, 200, await pilot.deleteRule({ ruleId: decodeURIComponent(ruleMatch[1]) })); }
+      catch (e) { return sendJson(res, 409, { error: String((e && e.message) || e) }); }
     }
     // POST /api/links — dispatcher de LIAISON N:N ({ kind, a, b }).
     if (path === "/api/links" && req.method === "POST") {

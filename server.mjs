@@ -189,6 +189,10 @@ const MIME = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=u
 
 const PUBLIC_EXT = [".css", ".js", ".svg", ".ico", ".png", ".woff", ".woff2", ".map"];
 function isPublicAsset(path) {
+  // Les routes d'API peuvent porter une extension statique (ex. sous-ressources de
+  // maquette : `/api/recettes/:id/maquette/<slug>/style.css`) : le raccourci
+  // d'asset public ne doit JAMAIS court-circuiter le routeur d'API (garde l.1662).
+  if (path.startsWith("/api/")) return false;
   return PUBLIC_EXT.some((e) => path.toLowerCase().endsWith(e));
 }
 
@@ -1659,6 +1663,9 @@ const server = createServer(async (req, res) => {
     if (path === "/login" && req.method === "GET") return serveFile(res, "login.html");
     if (path === "/api/login" && req.method === "POST") return handleLogin(req, res);
 
+    // Asset statique HORS `/api/**` uniquement (cf. sous-ressources de maquette
+    // `/api/recettes/:id/maquette/...`) : ce raccourci ne doit JAMAIS intercepter
+    // une route d'API (voir l'invariant porté par isPublicAsset).
     if (isPublicAsset(path)) return serveFile(res, path.slice(1));
 
     // Documentation publique (markdown) — accessible sans authentification.

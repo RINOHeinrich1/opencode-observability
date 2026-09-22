@@ -39,6 +39,21 @@ CREATE TABLE IF NOT EXISTS archives (
   archived_by TEXT,
   snapshot    TEXT NOT NULL
 );
+-- Audit de la migration du rôle 'user' (ADR-002, doc 16) : trace RÉVERSIBLE et
+-- IDEMPOTENTE des comptes migrés vers 'executeur' (ou un autre rôle cible).
+-- Aucune migration automatique : alimentée par scripts/migrate-user-role.mjs.
+CREATE TABLE IF NOT EXISTS user_role_migrations (
+  id          INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  user_id     INTEGER NOT NULL,
+  username    TEXT NOT NULL,
+  from_role   TEXT NOT NULL,
+  to_role     TEXT NOT NULL,
+  rule        TEXT,
+  migrated_at TEXT NOT NULL,
+  migrated_by TEXT,
+  reverted_at TEXT,
+  reverted_by TEXT
+);
 `;
 
 let _pool = null;
@@ -157,6 +172,86 @@ export async function updateUserRole(userId, role) {
   const targetRole = ROLES.includes(role) ? role : "user";
   await pool().query("UPDATE users SET role = $1, is_admin = $2 WHERE id = $3", [targetRole, targetRole === "admin" ? 1 : 0, userId]);
   return getUserById(userId);
+}
+
+// --- Migration du rôle `user` (ADR-002, doc 16) ----------------------------
+// Rôles CIBLES valides (jamais `user` : c'est précisément ce qu'on élimine).
+const MIGRATION_TARGET_ROLES = ["admin", "supervisor", "evaluateur", "executeur"];
+
+// Migre tous les comptes `role='user'` vers un rôle cible, en TRACE (audit) et
+// de façon IDEMPOTENTE : le filtre `WHERE role='user'` garantit qu'une seconde
+// exécution ne migre plus rien (aucune double ligne d'audit).
+// `rules` : table de correspondance par username (ex. { Ronald: "executeur" }) ;
+// tout autre compte `user` reçoit `targetRole` (défaut `executeur`).
+// ATTENTION : fonction d'ÉCRITURE — n'est appelée que par le CLI explicite
+// (`--apply`) ; JAMAIS au démarrage du serveur.
+export async function migrateUserRole({ targetRole = "executeur", rules = { Ronald: "executeur" }, by = "system" } = {}) {
+  await ensureReady();
+  const fallback = MIGRATION_TARGET_ROLES.includes(targetRole) ? targetRole : "executeur";
+  const ruleMap = new Map(Object.entries(rules || {}).map(([k, v]) => [String(k), String(v)]));
+  const client = await pool().connect();
+  const applied = [];
+  try {
+    await client.query("BEGIN");
+    const rows = (await client.query("SELECT id, username, role FROM users WHERE role = 'user' ORDER BY id FOR UPDATE")).rows;
+    for (const u of rows) {
+      const rawTarget = ruleMap.has(u.username) ? ruleMap.get(u.username) : fallback;
+      const to = MIGRATION_TARGET_ROLES.includes(rawTarget) ? rawTarget : fallback;
+      await client.query("UPDATE users SET role = $1, is_admin = $2 WHERE id = $3", [to, to === "admin" ? 1 : 0, u.id]);
+      const ins = await client.query(
+        `INSERT INTO user_role_migrations (user_id, username, from_role, to_role, rule, migrated_at, migrated_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+        [u.id, u.username, u.role, to, ruleMap.has(u.username) ? "explicit" : "default", new Date().toISOString(), by],
+      );
+      applied.push(ins.rows[0]);
+    }
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+  return applied;
+}
+
+// Annule une (ou toutes les) migration(s) non encore annulée(s) : restaure le
+// rôle d'origine (`from_role`) et pose `reverted_at`/`reverted_by` (audit conservé,
+// jamais supprimé). Idempotente : une migration déjà annulée est ignorée.
+export async function revertUserRoleMigration({ migrationIds = null, all = false, by = "system" } = {}) {
+  await ensureReady();
+  const client = await pool().connect();
+  const reverted = [];
+  try {
+    await client.query("BEGIN");
+    let rows;
+    if (all) {
+      rows = (await client.query("SELECT * FROM user_role_migrations WHERE reverted_at IS NULL ORDER BY id FOR UPDATE")).rows;
+    } else {
+      const ids = (migrationIds || []).map((x) => Number(x)).filter((x) => Number.isInteger(x) && x > 0);
+      if (!ids.length) { await client.query("COMMIT"); return []; }
+      rows = (await client.query("SELECT * FROM user_role_migrations WHERE id = ANY($1) AND reverted_at IS NULL ORDER BY id FOR UPDATE", [ids])).rows;
+    }
+    for (const m of rows) {
+      await client.query("UPDATE users SET role = $1, is_admin = $2 WHERE id = $3", [m.from_role, m.from_role === "admin" ? 1 : 0, m.user_id]);
+      const upd = await client.query("UPDATE user_role_migrations SET reverted_at = $1, reverted_by = $2 WHERE id = $3 RETURNING *", [new Date().toISOString(), by, m.id]);
+      reverted.push(upd.rows[0]);
+    }
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+  return reverted;
+}
+
+// Lecture de l'audit de migration (tri du plus récent au plus ancien).
+export async function listUserRoleMigrations() {
+  await ensureReady();
+  const res = await pool().query("SELECT * FROM user_role_migrations ORDER BY migrated_at DESC, id DESC");
+  return res.rows;
 }
 
 // Affecte un utilisateur à une organisation.

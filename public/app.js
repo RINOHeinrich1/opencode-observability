@@ -4972,8 +4972,8 @@ async function openSprintSession(sprintId, force, btn) {
 // rafraîchissement. Le sous-onglet est en plus persisté (localStorage) pour
 // survivre à un rechargement de page.
 let frSubTab = localStorage.getItem('panel_fr_subtab') === 'rules' ? 'rules' : 'features';
-let frFeatureFilters = { q: '', role: '', emergent: '', link: '', impl: '' };
-let frRuleFilters = { q: '', role: '', emergent: '', link: '', impl: '' };
+let frFeatureFilters = { q: '', role: '', sprint: '', emergent: '', link: '', impl: '' };
+let frRuleFilters = { q: '', role: '', sprint: '', emergent: '', link: '', impl: '' };
 const persistFrSubTab = () => { localStorage.setItem('panel_fr_subtab', frSubTab); };
 
 // Relations affichables/créables depuis une fonctionnalité ou une règle.
@@ -5094,10 +5094,14 @@ function featureFormModal(feature, pieces, onSaved) {
   });
 }
 
-function ruleFormModal(rule, pieces, onSaved) {
+function ruleFormModal(rule, pieces, onSaved, projectRoles) {
   const isEdit = !!(rule && rule.id);
   const pieceIds = (pieces || []).map((p) => p.pieceId);
   const curImpl = rule && rule.implemented ? (rule.implementedOrigin || 'ecosystem') : '';
+  // Association EXPLICITE de rôles (T-20260922-064200-e0yw).
+  const curRoles = (rule && Array.isArray(rule.roles)) ? rule.roles : [];
+  const curGlobal = !!(rule && rule.roleGlobal);
+  const roleVocab = Array.isArray(projectRoles) ? projectRoles : [];
   showModal(`<div class="modal">
     <h2>${isEdit ? 'Éditer la règle métier' : 'Nouvelle règle métier'}</h2>
     <p class="muted-sm">Projet <code>${esc(currentProject)}</code> — référence <code>RM-xxxx</code>.</p>
@@ -5105,6 +5109,15 @@ function ruleFormModal(rule, pieces, onSaved) {
       <label class="modal-field">Référence <input id="rule-ref" value="${esc((rule && rule.ref) || '')}" placeholder="RM-xxxx" required></label>
       <label class="modal-field">Contenu <textarea id="rule-content" class="modal-textarea" rows="4" placeholder="Formulation de la règle métier" required>${esc((rule && rule.content) || '')}</textarea></label>
       <label class="modal-field">Pièce client source (optionnel) <input id="rule-piece" list="rule-pieces" value="${esc((rule && rule.sourcedPieceId) || '')}" placeholder="pieceId"><datalist id="rule-pieces">${pieceIds.map((id) => `<option value="${esc(id)}">`).join('')}</datalist></label>
+      <div class="modal-field">
+        <div class="muted-sm" style="margin-bottom:4px">Rôles associés (1..N) — ou cochez « Rôle global »</div>
+        <div id="rule-roles" class="fr-role-picker">
+          ${roleVocab.length
+            ? roleVocab.map((role) => `<label class="fr-role-item"><input type="checkbox" class="rule-role-cb" value="${esc(role)}" ${curRoles.includes(role) ? 'checked' : ''}> ${esc(role)}</label>`).join('')
+            : '<span class="muted-sm">Aucun rôle connu dans ce projet — cochez « Rôle global ».</span>'}
+        </div>
+      </div>
+      <label class="modal-field"><input type="checkbox" id="rule-role-global" ${curGlobal ? 'checked' : ''}> Rôle global (tous les rôles)</label>
       <label class="modal-field">Implémentation <select id="rule-impl">
         <option value="" ${curImpl === '' ? 'selected' : ''}>Non implémentée</option>
         <option value="ecosystem" ${curImpl === 'ecosystem' ? 'selected' : ''}>Implémentée · dans l'écosystème</option>
@@ -5119,15 +5132,33 @@ function ruleFormModal(rule, pieces, onSaved) {
     <div id="rule-msg" class="msg"></div>
   </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
+  // « Rôle global » dispense de sélection : on désactive alors les cases de rôles.
+  const globalCb = document.getElementById('rule-role-global');
+  const syncRoleDisabled = () => {
+    const on = !!(globalCb && globalCb.checked);
+    document.querySelectorAll('.rule-role-cb').forEach((c) => { c.disabled = on; });
+  };
+  if (globalCb) globalCb.addEventListener('change', syncRoleDisabled);
+  syncRoleDisabled();
   document.getElementById('rule-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const msg = document.getElementById('rule-msg');
     const impl = document.getElementById('rule-impl').value;
     const implNote = document.getElementById('rule-impl-note').value.trim();
+    // Association EXPLICITE : ≥1 rôle OU rôle global (garde UI miroir du registre).
+    const roleGlobal = !!(document.getElementById('rule-role-global') || {}).checked;
+    const roles = roleGlobal ? [] : Array.from(document.querySelectorAll('.rule-role-cb:checked')).map((c) => c.value);
+    if (!roleGlobal && !roles.length) {
+      msg.textContent = 'Association requise : sélectionnez au moins 1 rôle ou cochez « Rôle global (tous les rôles) ».';
+      msg.className = 'msg error';
+      return;
+    }
     const body = {
       ref: document.getElementById('rule-ref').value.trim(),
       content: document.getElementById('rule-content').value.trim(),
       sourcedPieceId: document.getElementById('rule-piece').value.trim(),
+      roles,
+      roleGlobal,
     };
     // Qualification d'implémentation (T-20260921-133134-yz2i) — cf. featureFormModal.
     if (impl) { body.implemented = true; body.implementedOrigin = impl; }
@@ -5287,8 +5318,9 @@ function frQualifyModal(kind, id, current, onSaved) {
 }
 
 // Filtrage CLIENT du sous-onglet Fonctionnalités (pur, sans effet de bord).
-// `filter` = { q, role, emergent, link, impl } ; `role` ∈ '' | <rôle> | __none__
+// `filter` = { q, role, sprint, emergent, link, impl } ; `role` ∈ '' | <rôle> | __none__
 // (__none__ = « Sans rôle », homogène avec le sous-onglet Règles) ;
+// `sprint` ∈ '' | <sprintId> | __none__ (__none__ = « Sans sprint », via `sprintIds`) ;
 // `link` ∈ '' | sans_regle | sans_gherkin | sans_adr | sans_sprint (index A003) ;
 // `impl` ∈ '' | yes | no | ecosystem | hors_ecosystem (état d'implémentation).
 function frFilterFeatures(features, filter, linkIndex) {
@@ -5300,6 +5332,8 @@ function frFilterFeatures(features, filter, linkIndex) {
     if (q && !hay.includes(q)) return false;
     if (f.role === '__none__') { if ((x.role || '') !== '') return false; }
     else if (f.role && (x.role || '') !== f.role) return false;
+    if (f.sprint === '__none__') { if ((x.sprintIds || []).length) return false; }
+    else if (f.sprint && !(x.sprintIds || []).includes(f.sprint)) return false;
     if (f.emergent === 'yes' && !x.emergent) return false;
     if (f.emergent === 'no' && x.emergent) return false;
     if (f.impl === 'yes' && !x.implemented) return false;
@@ -5318,9 +5352,12 @@ function frFilterFeatures(features, filter, linkIndex) {
 }
 
 // Filtrage CLIENT du sous-onglet Règles métier (pur, sans effet de bord).
-// `filter` = { q, role, emergent, link, impl } ; `role` ∈ '' | <rôle> | __none__
-// (rôle d'une règle = union des rôles de ses fonctionnalités liées ; __none__ =
-// « Sans rôle ») ; `link` ∈ '' | sans_fonctionnalite | sans_sprint ;
+// `filter` = { q, role, sprint, emergent, link, impl } ; le rôle d'une règle est son
+// ASSOCIATION EXPLICITE (`roles` 1..N / `roleGlobal`) ; `role` ∈ '' | <rôle> | __global__ | __none__.
+// Sémantique « Global » (une règle globale s'applique à TOUS les rôles) : une règle
+// `roleGlobal` est retenue par tout filtre rôle SPÉCIFIQUE et par « Global » ; elle
+// n'est PAS « Sans rôle ». `sprint` ∈ '' | <sprintId> | __none__ (via `sprintIds`) ;
+// `link` ∈ '' | sans_fonctionnalite | sans_sprint ;
 // `impl` ∈ '' | yes | no | ecosystem | hors_ecosystem.
 function frFilterRules(rules, filter, linkIndex) {
   const f = filter || {};
@@ -5329,8 +5366,11 @@ function frFilterRules(rules, filter, linkIndex) {
   return (rules || []).filter((x) => {
     const hay = `${x.ref || ''} ${x.content || ''}`.toLowerCase();
     if (q && !hay.includes(q)) return false;
-    if (f.role === '__none__') { if ((x.roles || []).length) return false; }
-    else if (f.role && !(x.roles || []).includes(f.role)) return false;
+    if (f.role === '__global__') { if (!x.roleGlobal) return false; }
+    else if (f.role === '__none__') { if (x.roleGlobal || (x.roles || []).length) return false; }
+    else if (f.role && !(x.roleGlobal || (x.roles || []).includes(f.role))) return false;
+    if (f.sprint === '__none__') { if ((x.sprintIds || []).length) return false; }
+    else if (f.sprint && !(x.sprintIds || []).includes(f.sprint)) return false;
     if (f.emergent === 'yes' && !x.emergent) return false;
     if (f.emergent === 'no' && x.emergent) return false;
     if (f.impl === 'yes' && !x.implemented) return false;
@@ -5403,12 +5443,24 @@ function frFeatureTableHtml(features, linkIndex) {
   </table></div>`;
 }
 
+// Badges de l'ASSOCIATION EXPLICITE de rôles d'une règle métier :
+// `roleGlobal` → chip « Global » (tous les rôles) ; sinon un chip par rôle ;
+// aucun rôle et non global → « — » (Sans rôle).
+function frRuleRolesBadges(r) {
+  if (!r) return '<span class="muted-sm">—</span>';
+  if (r.roleGlobal) return '<span class="chip" title="s\'applique à tous les rôles">Global</span>';
+  const roles = r.roles || [];
+  if (!roles.length) return '<span class="muted-sm">—</span>';
+  return roles.map((x) => `<span class="chip">${esc(x)}</span>`).join(' ');
+}
+
 // Table ISOLÉE du sous-onglet Règles métier (RM-xxxx) — Ref (badge émergente),
 // Contenu, Pièce source, Liens (index A003), Actions. Aucune fonctionnalité ici.
 function frRuleTableHtml(rules, linkIndex) {
   const rows = (rules || []).map((r) => `<tr>
     <td><strong>${esc(r.ref)}</strong>${r.emergent ? ' <span class="chip" title="émergente">émergente</span>' : ''}</td>
     <td>${frImplBadge(r)}</td>
+    <td>${frRuleRolesBadges(r)}</td>
     <td>${adrCellText(r.content, 220)}</td>
     <td>${r.sourcedPieceId ? `<code class="chip">${esc(r.sourcedPieceId)}</code>` : '<span class="muted-sm">—</span>'}</td>
     <td class="fr-links">${frLinkCellHtml('rule', r.id, linkIndex)}</td>
@@ -5421,8 +5473,8 @@ function frRuleTableHtml(rules, linkIndex) {
     </td>
   </tr>`).join('');
   return `<div class="adr-table-wrap"><table class="adr-table">
-    <thead><tr><th>Ref</th><th>État</th><th>Contenu</th><th>Pièce source</th><th>Liens</th><th>Actions</th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="6" class="muted-sm" style="padding:10px">Aucune règle métier pour ce projet.</td></tr>'}</tbody>
+    <thead><tr><th>Ref</th><th>État</th><th>Rôles</th><th>Contenu</th><th>Pièce source</th><th>Liens</th><th>Actions</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="7" class="muted-sm" style="padding:10px">Aucune règle métier pour ce projet.</td></tr>'}</tbody>
   </table></div>`;
 }
 
@@ -5430,11 +5482,12 @@ function frRuleTableHtml(rules, linkIndex) {
 // story, rôle, émergence, sans règle/Gherkin/ADR/sprint) + table isolée +
 // bouton « + Nouvelle fonctionnalité ». Le filtrage est CLIENT : seule la table
 // est re-rendue au changement de filtre (la saisie de recherche garde le focus).
-function renderFrFeaturePanel(features, refs, pieces, linkIndex) {
+function renderFrFeaturePanel(features, refs, pieces, linkIndex, sprints) {
   const panel = document.getElementById('fr-subpanel');
   if (!panel) return;
   const f = frFeatureFilters;
   const roles = [...new Set((features || []).map((x) => x.role).filter(Boolean))].sort();
+  const sprintOpts = (sprints || []).map((s) => `<option value="${esc(s.id)}" ${f.sprint === s.id ? 'selected' : ''}>${esc(s.title || s.id)}</option>`).join('');
   const filtered = frFilterFeatures(features, f, linkIndex);
   panel.innerHTML = `
     <div class="adr-pane-filters fr-filters">
@@ -5444,6 +5497,11 @@ function renderFrFeaturePanel(features, refs, pieces, linkIndex) {
         <option value="">Rôle : tous</option>
         ${roles.map((r) => `<option value="${esc(r)}" ${f.role === r ? 'selected' : ''}>${esc(r)}</option>`).join('')}
         <option value="__none__" ${f.role === '__none__' ? 'selected' : ''}>Sans rôle</option>
+      </select>
+      <select id="fr-f-sprint" title="Filtrer par sprint">
+        <option value="">Sprint : tous</option>
+        ${sprintOpts}
+        <option value="__none__" ${f.sprint === '__none__' ? 'selected' : ''}>Sans sprint</option>
       </select>
       <select id="fr-f-emergent" title="Filtrer par émergence">
         <option value="">Émergence : toutes</option>
@@ -5478,6 +5536,7 @@ function renderFrFeaturePanel(features, refs, pieces, linkIndex) {
     frFeatureFilters = {
       q: (document.getElementById('fr-f-q') || {}).value || '',
       role: (document.getElementById('fr-f-role') || {}).value || '',
+      sprint: (document.getElementById('fr-f-sprint') || {}).value || '',
       emergent: (document.getElementById('fr-f-emergent') || {}).value || '',
       impl: (document.getElementById('fr-f-impl') || {}).value || '',
       link: (document.getElementById('fr-f-link') || {}).value || '',
@@ -5489,7 +5548,7 @@ function renderFrFeaturePanel(features, refs, pieces, linkIndex) {
     if (cnt) cnt.textContent = `${list.length} / ${(features || []).length} fonctionnalité(s)`;
     wireRows();
   };
-  ['fr-f-q', 'fr-f-role', 'fr-f-emergent', 'fr-f-impl', 'fr-f-link'].forEach((id) => {
+  ['fr-f-q', 'fr-f-role', 'fr-f-sprint', 'fr-f-emergent', 'fr-f-impl', 'fr-f-link'].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.addEventListener(id === 'fr-f-q' ? 'input' : 'change', rerender);
   });
@@ -5502,20 +5561,29 @@ function renderFrFeaturePanel(features, refs, pieces, linkIndex) {
 // rôle [union des rôles des fonctionnalités liées], émergence, sans
 // fonctionnalité/sprint) + table isolée + bouton « + Nouvelle
 // règle ». Même mécanique de filtrage CLIENT que le sous-panneau Fonctionnalités.
-function renderFrRulePanel(rules, refs, pieces, linkIndex) {
+function renderFrRulePanel(rules, refs, pieces, linkIndex, sprints, projectRoles) {
   const panel = document.getElementById('fr-subpanel');
   if (!panel) return;
   const f = frRuleFilters;
-  const roles = [...new Set((rules || []).flatMap((x) => x.roles || []))].sort();
+  // Vocabulaire = RÔLES DISTINCTS DU PROJET (union fonctionnalités + règles), fourni
+  // par l'appelant (0 appel réseau supplémentaire) — cf. décision (b) du plan.
+  const roles = (projectRoles || []).slice().sort();
+  const sprintOpts = (sprints || []).map((s) => `<option value="${esc(s.id)}" ${f.sprint === s.id ? 'selected' : ''}>${esc(s.title || s.id)}</option>`).join('');
   const filtered = frFilterRules(rules, f, linkIndex);
   panel.innerHTML = `
     <div class="adr-pane-filters fr-filters">
       <span class="muted-sm" id="fr-r-count">${filtered.length} / ${(rules || []).length} règle(s)</span>
       <input type="search" id="fr-r-q" class="adr-search" placeholder="Rechercher (ref, contenu…)" value="${esc(f.q || '')}">
-      <select id="fr-r-role" title="Filtrer par rôle">
+      <select id="fr-r-role" title="Filtrer par rôle (association explicite)">
         <option value="">Rôle : tous</option>
         ${roles.map((r) => `<option value="${esc(r)}" ${f.role === r ? 'selected' : ''}>${esc(r)}</option>`).join('')}
+        <option value="__global__" ${f.role === '__global__' ? 'selected' : ''}>Global (tous les rôles)</option>
         <option value="__none__" ${f.role === '__none__' ? 'selected' : ''}>Sans rôle</option>
+      </select>
+      <select id="fr-r-sprint" title="Filtrer par sprint">
+        <option value="">Sprint : tous</option>
+        ${sprintOpts}
+        <option value="__none__" ${f.sprint === '__none__' ? 'selected' : ''}>Sans sprint</option>
       </select>
       <select id="fr-r-emergent" title="Filtrer par émergence">
         <option value="">Émergence : toutes</option>
@@ -5539,7 +5607,7 @@ function renderFrRulePanel(rules, refs, pieces, linkIndex) {
     <div id="fr-rule-table">${frRuleTableHtml(filtered, linkIndex)}</div>`;
   const wireRows = () => {
     panel.querySelectorAll('[data-rule-impl]').forEach((b) => b.addEventListener('click', () => frQualifyModal('rule', b.dataset.ruleImpl, rules.find((x) => x.id === b.dataset.ruleImpl), renderFeaturesRules)));
-    panel.querySelectorAll('[data-rule-edit]').forEach((b) => b.addEventListener('click', () => ruleFormModal(rules.find((x) => x.id === b.dataset.ruleEdit), pieces, renderFeaturesRules)));
+    panel.querySelectorAll('[data-rule-edit]').forEach((b) => b.addEventListener('click', () => ruleFormModal(rules.find((x) => x.id === b.dataset.ruleEdit), pieces, renderFeaturesRules, roles)));
     panel.querySelectorAll('[data-rule-detail]').forEach((b) => b.addEventListener('click', () => ruleDetailModal(b.dataset.ruleDetail)));
     panel.querySelectorAll('[data-rule-link]').forEach((b) => b.addEventListener('click', () => linkModal(LINK_PRESETS.rule, b.dataset.ruleLink, refs, renderFeaturesRules)));
     panel.querySelectorAll('[data-rule-del]').forEach((b) => b.addEventListener('click', () => deleteRuleFlow(b.dataset.ruleDel, renderFeaturesRules)));
@@ -5548,6 +5616,7 @@ function renderFrRulePanel(rules, refs, pieces, linkIndex) {
     frRuleFilters = {
       q: (document.getElementById('fr-r-q') || {}).value || '',
       role: (document.getElementById('fr-r-role') || {}).value || '',
+      sprint: (document.getElementById('fr-r-sprint') || {}).value || '',
       emergent: (document.getElementById('fr-r-emergent') || {}).value || '',
       impl: (document.getElementById('fr-r-impl') || {}).value || '',
       link: (document.getElementById('fr-r-link') || {}).value || '',
@@ -5559,19 +5628,21 @@ function renderFrRulePanel(rules, refs, pieces, linkIndex) {
     if (cnt) cnt.textContent = `${list.length} / ${(rules || []).length} règle(s)`;
     wireRows();
   };
-  ['fr-r-q', 'fr-r-role', 'fr-r-emergent', 'fr-r-impl', 'fr-r-link'].forEach((id) => {
+  ['fr-r-q', 'fr-r-role', 'fr-r-sprint', 'fr-r-emergent', 'fr-r-impl', 'fr-r-link'].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.addEventListener(id === 'fr-r-q' ? 'input' : 'change', rerender);
   });
   const newBtn = document.getElementById('fr-new-rule');
-  if (newBtn) newBtn.addEventListener('click', () => ruleFormModal(null, pieces, renderFeaturesRules));
+  if (newBtn) newBtn.addEventListener('click', () => ruleFormModal(null, pieces, renderFeaturesRules, roles));
   wireRows();
 }
 
 // Dispatch du sous-onglet actif (A007 / A008) dans le panneau `#fr-subpanel`.
-function renderFrSubpanel(features, rules, refs, pieces, linkIndex) {
-  if (frSubTab === 'rules') renderFrRulePanel(rules, refs, pieces, linkIndex);
-  else renderFrFeaturePanel(features, refs, pieces, linkIndex);
+// `sprints`/`projectRoles` = options des filtres + vocabulaire du formulaire règle
+// (calculés une fois dans `renderFeaturesRules`, 0 appel réseau supplémentaire).
+function renderFrSubpanel(features, rules, refs, pieces, linkIndex, sprints, projectRoles) {
+  if (frSubTab === 'rules') renderFrRulePanel(rules, refs, pieces, linkIndex, sprints, projectRoles);
+  else renderFrFeaturePanel(features, refs, pieces, linkIndex, sprints);
 }
 
 async function renderFeaturesRules() {
@@ -5608,6 +5679,14 @@ async function renderFeaturesRules() {
   // « sans lien » des DEUX sous-onglets — désormais SANS appel réseau (dérivé du
   // payload des listes qui portent `links`, calculés en 1 requête bulk).
   const linkIndex = buildFeatureRuleLinkIndex(features, rules);
+  // Options du filtre SPRINT = sprints du projet courant (déjà chargés) + « Sans sprint ».
+  const sprints = sprintRes.sprints || [];
+  // Vocabulaire des rôles = RÔLES DISTINCTS DU PROJET (union `fonctionnalites.role`
+  // + rôles explicitement associés aux règles) — décision (b) du plan, 0 référentiel.
+  const projectRoles = [...new Set([
+    ...features.map((x) => x.role).filter(Boolean),
+    ...rules.flatMap((x) => x.roles || []),
+  ])].sort();
   if (features.length && !features[0].links && !frLinkWarned) {
     frLinkWarned = true;
     console.warn('[orchestrator-panel] feature_list/rule_list ne renvoient pas `links` : colonne « Liens » en repli — le registre MCP n\'est probablement pas déployé.');
@@ -5625,9 +5704,9 @@ async function renderFeaturesRules() {
     frSubTab = b.dataset.frSubtab === 'rules' ? 'rules' : 'features';
     persistFrSubTab();
     pane.querySelectorAll('[data-fr-subtab]').forEach((x) => x.classList.toggle('active', x.dataset.frSubtab === frSubTab));
-    renderFrSubpanel(features, rules, refs, pieces, linkIndex);
+    renderFrSubpanel(features, rules, refs, pieces, linkIndex, sprints, projectRoles);
   }));
-  renderFrSubpanel(features, rules, refs, pieces, linkIndex);
+  renderFrSubpanel(features, rules, refs, pieces, linkIndex, sprints, projectRoles);
 }
 
 // ===========================================================================

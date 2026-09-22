@@ -2063,6 +2063,9 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 201, await pilot.createRule({
           projectId: b.projectId, ref: b.ref, content: b.content,
           sourcedPieceId: b.sourcedPieceId || undefined, recetteId: b.recetteId || undefined,
+          // Association EXPLICITE de rôles (T-20260922-064200-e0yw).
+          roles: Array.isArray(b.roles) ? b.roles : undefined,
+          roleGlobal: typeof b.roleGlobal === "boolean" ? b.roleGlobal : undefined,
           createdBy: user.username,
         }));
       } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
@@ -2079,6 +2082,9 @@ const server = createServer(async (req, res) => {
           ruleId: decodeURIComponent(ruleMatch[1]),
           ref: b.ref, content: b.content,
           sourcedPieceId: b.sourcedPieceId != null ? b.sourcedPieceId : undefined,
+          // Association EXPLICITE de rôles (T-20260922-064200-e0yw).
+          roles: Array.isArray(b.roles) ? b.roles : undefined,
+          roleGlobal: typeof b.roleGlobal === "boolean" ? b.roleGlobal : undefined,
           // Qualification d'implémentation (T-20260921-133134-yz2i).
           implemented: typeof b.implemented === "boolean" ? b.implemented : undefined,
           implementedOrigin: b.implementedOrigin || undefined,

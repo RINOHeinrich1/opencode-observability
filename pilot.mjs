@@ -880,6 +880,9 @@ export async function createRule(args = {}) {
     content: args.content,
     sourcedPieceId: args.sourcedPieceId || undefined,
     recetteId: args.recetteId || undefined,
+    // Association EXPLICITE de rôles (T-20260922-064200-e0yw) — pass-through.
+    roles: Array.isArray(args.roles) ? args.roles : undefined,
+    roleGlobal: typeof args.roleGlobal === "boolean" ? args.roleGlobal : undefined,
     createdBy: args.createdBy || undefined,
   });
 }
@@ -891,6 +894,10 @@ export async function updateRule(args = {}) {
     ref: args.ref || undefined,
     content: args.content || undefined,
     sourcedPieceId: args.sourcedPieceId != null ? args.sourcedPieceId : undefined,
+    // Association EXPLICITE de rôles (T-20260922-064200-e0yw) — pass-through.
+    // `[]` est transmis tel quel (association vidée) : `Array.isArray` le distingue d'un champ absent.
+    roles: Array.isArray(args.roles) ? args.roles : undefined,
+    roleGlobal: typeof args.roleGlobal === "boolean" ? args.roleGlobal : undefined,
     // Qualification d'implémentation (T-20260921-133134-yz2i) — pass-through.
     implemented: typeof args.implemented === "boolean" ? args.implemented : undefined,
     implementedOrigin: args.implementedOrigin || undefined,

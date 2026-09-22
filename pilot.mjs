@@ -5,7 +5,7 @@
 // sessions opencode est délégué au bridge `session-bridge.mjs` (Plan C).
 
 import { taskOrchestrator, coderWorkspaces } from "./mcp-client.mjs";
-import { launchSession, injectMessage, buildLaunchPrompt, buildReworkPrompt, buildRecettePrompt, buildSprintPrompt, buildMigrationPrompt, buildTestPrompt, buildFreeTestPrompt, buildBatchSessionPrompt, listSessions, killSession, sessionExists, sessionExistsById } from "./session-bridge.mjs";
+import { launchSession, injectMessage, buildLaunchPrompt, buildReworkPrompt, buildCadragePrompt, buildEvaluationPrompt, buildSprintPrompt, buildMigrationPrompt, buildTestPrompt, buildFreeTestPrompt, buildBatchSessionPrompt, listSessions, killSession, sessionExists, sessionExistsById } from "./session-bridge.mjs";
 import { existsSync } from "node:fs";
 
 // Décision n°7 : agents contraints par type de tâche.
@@ -1217,7 +1217,8 @@ export async function createRecette({ project, title, description, taskIds, docu
   return { ok: true, recette: r.recette };
 }
 
-// Lance (ou reprend) la session dédiée de l'agent-recette pour une recette.
+// Lance (ou reprend) la session dédiée de l'agent de CADRAGE TECHNIQUE
+// (`agent-cadrage`) pour une recette (objet « cadrage technique », ex-« recette »).
 // `force = true` : ignore la session rattachée et en démarre une nouvelle.
 export async function launchRecetteSession({ recetteId, force = false, adrIds, featureIds, ruleIds }) {
   if (!recetteId) throw new Error("recetteId requis");
@@ -1255,13 +1256,75 @@ export async function launchRecetteSession({ recetteId, force = false, adrIds, f
     let ruleCtx = { context: "" };
     try { featureCtx = await featureContext({ projectId: proj, featureIds: fIds }); } catch {}
     try { ruleCtx = await ruleContext({ projectId: proj, ruleIds: rIds }); } catch {}
-    const prompt = buildRecettePrompt({ project: proj, repos: rec.repos || [], title: rec.title, taskIds: rec.tasks || [], adrContext: adrCtx.context || "", featureContext: featureCtx.context || "", ruleContext: ruleCtx.context || "", evaluationItems: rec.evaluationItems || [] });
-    const { sessionId } = await launchSession({ dir, agent: "agent-recette", prompt, title: `Recette ${rec.title || proj}` });
+    const prompt = buildCadragePrompt({ project: proj, repos: rec.repos || [], title: rec.title, taskIds: rec.tasks || [], adrContext: adrCtx.context || "", featureContext: featureCtx.context || "", ruleContext: ruleCtx.context || "", evaluationItems: rec.evaluationItems || [] });
+    const { sessionId } = await launchSession({ dir, agent: "agent-cadrage", prompt, title: `Cadrage ${rec.title || proj}` });
     if (!sessionId || !/^ses_/.test(sessionId)) {
-      throw new Error("échec de lancement de la session de recette (agent-recette indisponible ?)");
+      throw new Error("échec de lancement de la session de cadrage technique (agent-cadrage indisponible ?)");
     }
     await taskOrchestrator("recette_session_set", { recetteId, sessionId });
     return { recetteId, sessionId, resumed: false };
+  });
+}
+
+// Lance (ou reprend) la session dédiée de l'agent-recette ÉVALUATEUR PRODUIT
+// (`agent-recette`) pour une ÉVALUATION (`evaluations`, objet de 1er niveau
+// DISTINCT du cadrage technique). Miroir de `launchRecetteSession` : reprise
+// anti-doublon via `evaluations.session_id` (tool `evaluation_session_set`),
+// prompt `buildEvaluationPrompt` avec blocs ADR/Fonctionnalités/Règles dérivés
+// des LIENS PERSISTÉS de l'évaluation. `force = true` : nouvelle session.
+export async function launchEvaluationSession({ evaluationId, force = false, adrIds, featureIds, ruleIds }) {
+  if (!evaluationId) throw new Error("evaluationId requis");
+  return withLaunchLock(`evaluation:${evaluationId}`, async () => {
+    const r = await taskOrchestrator("evaluation_get", { evaluationId });
+    const ev = r && r.evaluation;
+    if (!ev) throw new Error(`évaluation inconnue : ${evaluationId}`);
+
+    const proj = ev.project;
+    const dir = await projectAnchorDir(proj);
+
+    // REPRISE : dès qu'une session est rattachée à l'évaluation, on la REPREND —
+    // existence vérifiée PAR IDENTIFIANT auprès du serveur opencode. Pour
+    // repartir de zéro : `force = true`.
+    if (!force && ev.sessionId && /^ses_/.test(ev.sessionId)) {
+      if (await sessionAlive(ev.sessionId, dir)) {
+        return { evaluationId, sessionId: ev.sessionId, resumed: true };
+      }
+    }
+    // Bloc ADR du projet — `adrIds` = sélection du panneau, sinon ADR actives.
+    let adrCtx = { context: "", adrs: [] };
+    try { adrCtx = await adrContext({ projectId: proj, adrIds, scope: [] }); } catch {}
+    // Blocs Fonctionnalités / Règles métier dérivés des LIENS PERSISTÉS de
+    // l'évaluation (`ev.fonctionnalites` / `ev.regles`, lus par `evaluation_get`)
+    // ⇒ 0 N+1 ; surcharge explicite possible (parité avec `adrIds`).
+    const fIds = Array.isArray(featureIds) ? featureIds : (ev.fonctionnalites || []).map((f) => f.id);
+    const rIds = Array.isArray(ruleIds) ? ruleIds : (ev.regles || []).map((x) => x.id);
+    let featureCtx = { context: "" };
+    let ruleCtx = { context: "" };
+    try { featureCtx = await featureContext({ projectId: proj, featureIds: fIds }); } catch {}
+    try { ruleCtx = await ruleContext({ projectId: proj, ruleIds: rIds }); } catch {}
+    // Documents de référence du projet (ADR-12) — décrivent l'EXISTANT.
+    let docs = [];
+    try {
+      const dl = await listDocs({ projectId: proj, includeRepoDocs: true });
+      docs = ((dl && dl.docs) || []).filter((x) => x && x.path);
+    } catch { docs = []; }
+    const prompt = buildEvaluationPrompt({
+      evaluationId,
+      project: proj,
+      repos: ev.repos || [],
+      title: ev.title,
+      description: ev.description || "",
+      docs,
+      adrContext: adrCtx.context || "",
+      featureContext: featureCtx.context || "",
+      ruleContext: ruleCtx.context || "",
+    });
+    const { sessionId } = await launchSession({ dir, agent: "agent-recette", prompt, title: `Recette ${ev.title || proj}` });
+    if (!sessionId || !/^ses_/.test(sessionId)) {
+      throw new Error("échec de lancement de la session d'évaluation produit (agent-recette indisponible ?)");
+    }
+    await taskOrchestrator("evaluation_session_set", { evaluationId, sessionId });
+    return { evaluationId, sessionId, resumed: false };
   });
 }
 

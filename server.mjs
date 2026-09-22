@@ -36,7 +36,7 @@ const EVALUATEUR_ALLOWED_API = [
 // les couvrirait : `/api/docs/file` sert le contenu des ADR (onglet ADR interdit).
 const EVALUATEUR_DENIED_API = ["/api/docs/file", "/api/e2e-secrets", "/api/recettes", "/api/cadrages"];
 // Écritures autorisées (méthodes non-GET) : SES recettes évaluateur
-// (création/items/documents/verdicts/finish), le lancement d'un test E2E, le
+// (création/items/documents/verdicts/finish/session), le lancement d'un test E2E, le
 // marquage « incohérent » d'un test, le dépôt de pièces, la levée d'une
 // vigilance ADR et le changement d'organisation active. Rien d'autre (cadrage
 // technique, création/modification/obsolescence E2E, vars/secrets,
@@ -45,7 +45,7 @@ const EVALUATEUR_WRITE_PATTERNS = [
   /^\/api\/session\/organization$/,
   /^\/api\/pieces$/,
   /^\/api\/evaluations$/,
-  /^\/api\/evaluations\/[^/]+\/(items|documents|verdicts|finish)(\/.*)?$/,
+  /^\/api\/evaluations\/[^/]+\/(items|documents|verdicts|finish|session)(\/.*)?$/,
   // Lancement d'un TEST DE PERFORMANCE préprod depuis sa recette (maquette +
   // perf — ADR-003). La LECTURE de la maquette est déjà couverte par le préfixe
   // `/api/evaluations` de l'allowlist ; seul le déclenchement est ajouté ici.
@@ -3104,6 +3104,17 @@ const server = createServer(async (req, res) => {
     if (evalItemAdd && req.method === "POST") {
       const b = await readBody(req);
       return sendJson(res, 200, await pilot.addEvaluationItem({ evaluationId: evalItemAdd[1], content: b.content, category: b.category, severity: b.severity, discussion: b.discussion }));
+    }
+    // LANCEMENT (ou REPRISE) de la SESSION de l'agent-recette ÉVALUATEUR pour une
+    // recette évaluateur (ADR-001/003). Anti-doublon via `evaluations.session_id`
+    // (tool MCP `evaluation_session_set`) ; `force` démarre une nouvelle session.
+    // L'ACL évaluateur autorise cette route sur SES propres recettes (B009) et la
+    // garde d'ownership (userOwnsEntity) reste appliquée plus haut.
+    const evalSession = path.match(/^\/api\/evaluations\/([^/]+)\/session$/);
+    if (evalSession && req.method === "POST") {
+      let sb = {};
+      try { sb = await readBody(req); } catch {}
+      return sendJson(res, 200, await pilot.launchEvaluationSession({ evaluationId: evalSession[1], force: !!(sb && sb.force), adrIds: (sb && sb.adrIds) || undefined, featureIds: (sb && sb.featureIds) || undefined, ruleIds: (sb && sb.ruleIds) || undefined }));
     }
     // DÉCISION ADMIN d'un élément (« à traiter » / « non retenu »). ADMIN-ONLY :
     // l'évaluateur INFORME, l'admin décide (ADR-001/002). Garde EXPLICITE requise

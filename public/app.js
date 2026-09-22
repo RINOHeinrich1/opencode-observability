@@ -2769,6 +2769,24 @@ async function openRecetteSession(recetteId, force, btn) {
   }
 }
 
+// Ouvre la SESSION de la recette ÉVALUATEUR (agent-recette) : reprend la
+// session rattachée si elle existe (jamais de doublon) ; `force = true` démarre
+// une nouvelle session. Miroir de `openRecetteSession` (route
+// POST /api/evaluations/:id/session, ADR-001/003).
+async function openEvaluationSession(evaluationId, force, btn) {
+  const original = btn ? btn.innerHTML : null;
+  setBtnBusy(btn, 'Ouverture');
+  try {
+    const r = await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: !!force }) });
+    if (r.sessionId && /^ses_/.test(r.sessionId)) window.open(sessionHref(r.sessionId), '_blank');
+    else alert(r.error || (force ? "Impossible de lancer une nouvelle session de recette." : "Aucune session de recette disponible."));
+    refreshActive();
+  } catch (e) {
+    if (btn && original != null) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+    alert("Échec de la session de recette : " + (e.message || e));
+  }
+}
+
 function recetteCard(r) {
   const T = cadrageTerms();
   const canSession = r.status === 'pending' || r.status === 'in_progress';
@@ -3010,6 +3028,7 @@ function evaluationCard(e) {
     <div class="project-card-actions">
       <button class="ghost" data-eval-detail="${esc(e.evaluation_id)}">Détail</button>
       <button class="ghost" data-eval-pieces="${esc(e.evaluation_id)}">Pièces (${e.documents_count || 0})</button>
+      ${canFinish && !IS_EXECUTEUR && !IS_SUPERVISOR ? `<button class="launch-btn" data-eval-session="${esc(e.evaluation_id)}" title="${e.session_id ? 'Reprendre la session rattachée' : "Ouvrir une session d'évaluation"}">Session de la recette</button>` : ''}
       ${canFinish && !IS_EXECUTEUR && !IS_SUPERVISOR ? `<button class="approve" data-eval-finish="${esc(e.evaluation_id)}">Terminer la recette</button>` : ''}
     </div>
   </article>`;
@@ -3067,6 +3086,7 @@ async function renderEvaluations() {
   if (newEvalBtn) newEvalBtn.addEventListener('click', () => evaluationCreateModal());
   document.querySelectorAll('#pane-evaluations [data-eval-detail]').forEach((b) => b.addEventListener('click', () => evaluationDetailModal(b.dataset.evalDetail)));
   document.querySelectorAll('#pane-evaluations [data-eval-pieces]').forEach((b) => b.addEventListener('click', () => evaluationPiecesModal(b.dataset.evalPieces)));
+  document.querySelectorAll('#pane-evaluations [data-eval-session]').forEach((b) => b.addEventListener('click', () => openEvaluationSession(b.dataset.evalSession, false, b)));
   document.querySelectorAll('#pane-evaluations [data-eval-finish]').forEach((b) => b.addEventListener('click', () => evaluationFinishConfirm(b.dataset.evalFinish)));
 }
 

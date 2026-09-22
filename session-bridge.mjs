@@ -328,15 +328,16 @@ export function buildReworkPrompt({ taskId, remarks, by }) {
 }
 
 /**
- * Prompt d'ouverture d'une session de CADRAGE TECHNIQUE (agent-recette,
- * terminologie « cadrage technique » — ADR-001) — v0.8.0.
+ * Prompt d'ouverture d'une session de CADRAGE TECHNIQUE (agent `agent-cadrage`,
+ * terminologie « cadrage technique » — ADR-001) — v0.9.1.
  * Le cadrage technique est un objet de PROJET (titre + 0..N tâches couvertes) :
  * il conserve le workflow historique de la recette (contexte + code réel →
  * éléments → liste de tâches techniques). Mission + cadre, jamais méthode.
- * NB : la fonction `buildRecettePrompt` et les outils MCP `recette_*` gardent
- * leur nom (contrat `pilot.mjs`) — seule la terminologie du prompt change.
+ * NB : les outils MCP `recette_*` gardent leur nom (contrat `pilot.mjs`/
+ * `server.mjs`) — seule la terminologie du prompt et l'agent changent.
+ * Rétrocompat : exporté aussi sous l'alias `buildRecettePrompt`.
  */
-export function buildRecettePrompt({ project, repos, title, taskIds, docs = [], adrContext = "", featureContext = "", ruleContext = "", evaluationItems = [] }) {
+export function buildCadragePrompt({ project, repos, title, taskIds, docs = [], adrContext = "", featureContext = "", ruleContext = "", evaluationItems = [] }) {
   const proj = (project && String(project).trim()) || "";
   const repoBlock = (repos && repos.length)
     ? `  Repos transverses du projet (portée réelle — ADR 11) : ${repos.map((x) => x.repoId || x.id || x).join(", ")}`
@@ -404,24 +405,40 @@ export function buildRecettePrompt({ project, repos, title, taskIds, docs = [], 
   ].join("\n");
 }
 
+// Rétrocompatibilité : `buildRecettePrompt` était le nom historique du prompt de
+// cadrage technique (avant la scission cadrage/évaluation, ADR-001). Alias
+// conservé pour ne casser aucun appelant (`pilot.mjs`, tests…).
+export const buildRecettePrompt = buildCadragePrompt;
+
 /**
  * Prompt d'ouverture d'une session d'ÉVALUATION PRODUIT (agent-recette
- * évaluateur, ADR-002/003) — v0.1.0.
+ * évaluateur, ADR-001/003) — v0.1.1.
  * L'évaluateur décrit le parcours évalué, rattache fonctionnalités (verdict) et
  * règles métier, enregistre des recommandations/problèmes et joint des pièces.
+ * Blocs `featureContext`/`ruleContext` injectés (parité `buildCadragePrompt`).
  * Il peut en outre : GÉNÉRER UNE MAQUETTE HTML/CSS/JS (données mock) servie par
  * le panneau comme PAGE STATIQUE (URL rattachable à un élément), LANCER UN TEST
  * DE PERFORMANCE préprod (réseau + Core Web Vitals + stress borné) et LANCER
  * LES TESTS E2E disponibles. La recette évaluateur N'EST JAMAIS convertie en
  * tâches : les éléments « à traiter » sont repris par un cadrage technique.
  */
-export function buildEvaluationPrompt({ evaluationId, project, repos, title, description, docs = [], adrContext = "", featureIds = [], ruleIds = [] }) {
+export function buildEvaluationPrompt({ evaluationId, project, repos, title, description, docs = [], adrContext = "", featureContext = "", ruleContext = "", featureIds = [], ruleIds = [] }) {
   const proj = (project && String(project).trim()) || "";
   const repoBlock = (repos && repos.length)
     ? `  Repos transverses du projet (portée réelle — ADR 11) : ${repos.map((x) => x.repoId || x.id || x).join(", ")}`
     : "";
   const adrBlock = (adrContext && String(adrContext).trim())
     ? ["", String(adrContext).trim(), ""]
+    : [];
+  // Blocs « ## Fonctionnalités de référence » / « ## Règles métier de référence »
+  // construits par `feature_context`/`rule_context` (mêmes règles d'injection que
+  // `buildCadragePrompt`) : bloc VIDE si la sélection est vide, inséré APRÈS le
+  // bloc ADR et AVANT les documents de référence.
+  const featureBlock = (featureContext && String(featureContext).trim())
+    ? ["", String(featureContext).trim(), ""]
+    : [];
+  const ruleBlock = (ruleContext && String(ruleContext).trim())
+    ? ["", String(ruleContext).trim(), ""]
     : [];
   const docBlock = (docs && docs.length)
     ? [
@@ -432,13 +449,16 @@ export function buildEvaluationPrompt({ evaluationId, project, repos, title, des
       ]
     : [];
   return [
-    `Ouvre la recette d'ÉVALUATION PRODUIT **« ${title || proj} »** — projet : \`${proj}\`${repoBlock ? `\n${repoBlock}` : ""} (v0.1.0).`,
+    `Ouvre la recette d'ÉVALUATION PRODUIT **« ${title || proj} »** — projet : \`${proj}\`${repoBlock ? `\n${repoBlock}` : ""} (v0.1.1).`,
     evaluationId ? `Recette : \`${evaluationId}\`.` : "",
     "",
     description ? `Parcours évalué : ${description}` : "Parcours évalué : à préciser avec l'utilisateur.",
     "",
+    "Tu es l'agent **`agent-recette` ÉVALUATEUR PRODUIT** (ADR-001/003) : ta mission est l'ÉVALUATION du produit (parcours réel, UX, design, cohérence, performance) — distincte du CADRAGE TECHNIQUE (`agent-cadrage`). Tu peux LIRE le code réel si besoin (maquette réaliste), mais tu ne produis AUCUNE tâche technique.",
     "Cette recette est un objet de 1er NIVEAU, DISTINCT du cadrage technique : elle N'EST JAMAIS convertie en tâches (les éléments « à traiter » sont repris par un cadrage technique, décision ADMIN).",
     ...adrBlock,
+    ...featureBlock,
+    ...ruleBlock,
     ...docBlock,
     "Mission :",
     "- Récupère le contexte : `evaluation_get(<evaluationId>)` (titre, projet, fonctionnalités + verdicts, règles, éléments, pièces), `feature_list`/`rule_list` du projet, `e2e_list` pour les tests E2E disponibles.",

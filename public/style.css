@@ -911,7 +911,10 @@ body.evaluateur #agent-session-btn,
 body.evaluateur [data-e2e-obsolete],
 body.evaluateur [data-e2e-session],
 body.evaluateur [data-e2e-session-force],
-body.evaluateur [data-e2e-create-task] {
+body.evaluateur [data-e2e-create-task],
+/* Sections techniques du test E2E (params, vars/secrets projet, docs, tâches
+   liées, session de création) : hors périmètre évaluateur (ADR-003). */
+body.evaluateur [data-e2e-tech] {
   display: none !important;
 }
 body.evaluateur .readonly-banner { display: inline-block !important; }

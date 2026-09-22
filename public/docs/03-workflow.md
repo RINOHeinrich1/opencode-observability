@@ -164,6 +164,40 @@ Voir [`13-adr-et-artefacts.md`](13-adr-et-artefacts.md) §3.
 - **MCP** : `evaluation_item_decision`, `evaluation_items_treatable`,
   `cadrage_evaluation_item_link`/`_unlink`/`_list` (voir `05-reference.md` §1bis).
 
+### Périmètre E2E de l'évaluateur (v0.9.67)
+
+> **ADR-003** — depuis sa **recette** (`evaluations`), l'évaluateur peut
+> **exécuter les tests E2E du projet**, **lire les preuves** rattachées aux
+> exécutions (détails, **vidéos**, rapport texte) et — **unique écriture
+> permise** — **marquer un test « incohérent »** avec des **remarques
+> obligatoires** (signal « comportement réel ≠ scénario / règle »). Il ne
+> **crée**, ne **modifie** ni n'**obsolète** un test, et n'accède à **aucun
+> réglage technique**.
+
+- **Exécution** : `POST /api/e2e-tests/:id/run` (déjà autorisé) ; l'évaluateur
+  lance le test **tel qu'enregistré** (dépôt, config Playwright, spec, paramètres
+  et variables du projet résolus côté serveur) — **modale minimale**, sans saisie
+  de `repoDir`, config, `specPattern`, `pwArgs`, origine, `taskId`, vars ni secrets.
+- **Lecture** : `GET /api/e2e-tests`, `GET /api/e2e-tests/:id`,
+  `GET /api/e2e/file` (rapport/vidéo), `GET /api/e2e/jobs/:jobId`. Le **détail**
+  renvoyé à l'évaluateur est **épuré** : ni `params`, ni `projectVars` /
+  `projectSecrets`, ni `docs` (ADR), ni `linkedTasks` / `requiredOpenTasks`.
+- **Unique écriture** : `POST /api/e2e-tests/:id/incoherent` `{ remarks }` →
+  statut **`INCOHERENT`** + `incoherent_remarks` / `incoherent_by` /
+  `incoherent_at` persistés (MCP `e2e_test_incoherent`). Les remarques sont
+  **obligatoires** ; le spec et la formalisation du test ne sont **jamais**
+  modifiés.
+- **Hors périmètre (403)** : `e2e_test_register` / `update` / `param_set` /
+  `session` / `obsolete` (création/modification/obsolescence) et les **réglages
+  techniques** (`/api/e2e-vars`, `/api/e2e-secrets`) — retirés de l'allowlist
+  évaluateur. Les sections techniques du détail sont masquées côté UI
+  (`[data-e2e-tech]`, défense en profondeur).
+- **Statut `INCOHERENT`** : valeur supplémentaire de `e2e_tests.status`
+  (`ACTIVE | OBSOLETE | QUARANTINE | DRAFT | INCOHERENT`), exposée par
+  `e2e_test_get` / `e2e_list` (filtre `status`). Un test **re-synchronisé**
+  (`upsertE2ETest` / `reactivateE2ETest`) repasse `ACTIVE` mais **conserve** ses
+  remarques (trace historique).
+
 ## 1ter. Sprints, émergence et cardinalités (ADR-001)
 
 ### Cycle de vie d'un sprint

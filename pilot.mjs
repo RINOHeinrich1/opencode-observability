@@ -2059,6 +2059,17 @@ export async function obsoleteE2ETest(e2eTestId) {
   return taskOrchestrator("e2e_test_obsolete", { e2eTestId });
 }
 
+// Marque un test E2E INCOHERENT (signal ÉVALUATEUR : le comportement réel ne
+// correspond pas au scénario / à la règle) avec des remarques OBLIGATOIRES.
+// Unique écriture E2E permise à l'évaluateur — ne touche ni au spec ni à la
+// formalisation du test.
+export async function markE2ETestIncoherent({ e2eTestId, remarks, by }) {
+  if (!e2eTestId) throw new Error("e2eTestId requis");
+  const txt = String(remarks || "").trim();
+  if (!txt) throw new Error("remarks requis (décrivez l'incohérence constatée)");
+  return taskOrchestrator("e2e_test_incoherent", { e2eTestId, remarks: txt, by: by || undefined });
+}
+
 // ===========================================================================
 // Vars E2E (module vars/secrets unifié) — variables d'env par projet.
 // kind='variable' (clair, éditable) | 'secret' (chiffré côté MCP, jamais en clair).

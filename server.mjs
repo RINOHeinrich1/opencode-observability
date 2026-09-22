@@ -22,12 +22,14 @@ import { generateSubtitledVideo, generateNarratedVideo } from "./subtitles.mjs";
 // L'évaluateur n'accède qu'aux pages Fonctionnalités & Règles, Tests E2E et
 // Recettes (+ lecture Projets/Repos pour choisir un projet). Toute route NON
 // listée est refusée en 403 : la protection est côté serveur, jamais l'UI.
+// Les RÉGLAGES TECHNIQUES E2E (`/api/e2e-vars`, `/api/e2e-secrets`) sont HORS
+// périmètre évaluateur (ADR-003) : le run est lancé tel qu'enregistré.
 // Allowlist de LECTURE (préfixes autorisés, méthode GET/HEAD uniquement).
 const EVALUATEUR_ALLOWED_API = [
   "/api/me", "/api/config", "/api/orgs", "/api/session/organization", "/api/render-md",
   "/api/projects", "/api/repos", "/api/pieces", "/api/features", "/api/rules", "/api/links",
   "/api/cardinality", "/api/sprints", "/api/docs", "/api/e2e-tests", "/api/e2e/jobs",
-  "/api/e2e/agent-sessions", "/api/e2e-vars", "/api/e2e/file", "/api/evaluations",
+  "/api/e2e/agent-sessions", "/api/e2e/file", "/api/evaluations",
   "/api/batches", "/api/adr-vigilances",
 ];
 // Interdits EXPLICITES (défense en profondeur) même si un préfixe de l'allowlist
@@ -35,8 +37,9 @@ const EVALUATEUR_ALLOWED_API = [
 const EVALUATEUR_DENIED_API = ["/api/docs/file", "/api/e2e-secrets", "/api/recettes", "/api/cadrages"];
 // Écritures autorisées (méthodes non-GET) : SES recettes évaluateur
 // (création/items/documents/verdicts/finish), le lancement d'un test E2E, le
-// dépôt de pièces, la levée d'une vigilance ADR et le changement d'organisation
-// active. Rien d'autre (cadrage technique, création E2E, vars/secrets,
+// marquage « incohérent » d'un test, le dépôt de pièces, la levée d'une
+// vigilance ADR et le changement d'organisation active. Rien d'autre (cadrage
+// technique, création/modification/obsolescence E2E, vars/secrets,
 // features/rules/docs/sprints/projets/repos… = 403).
 const EVALUATEUR_WRITE_PATTERNS = [
   /^\/api\/session\/organization$/,
@@ -48,6 +51,11 @@ const EVALUATEUR_WRITE_PATTERNS = [
   // `/api/evaluations` de l'allowlist ; seul le déclenchement est ajouté ici.
   /^\/api\/evaluations\/[^/]+\/perf-run$/,
   /^\/api\/e2e-tests\/[^/]+\/run$/,
+  // SEULE écriture E2E permise à l'évaluateur : marquer un test « incohérent »
+  // (signal comportement réel ≠ scénario) avec remarques. Créer / modifier /
+  // obsoléter un test reste interdit (403) — l'évaluateur ne touche pas au code
+  // de test (ADR-003).
+  /^\/api\/e2e-tests\/[^/]+\/incoherent$/,
   /^\/api\/adr-vigilances\/[^/]+\/resolve$/,
 ];
 
@@ -1158,6 +1166,10 @@ function mapE2ETestRow(r) {
     firstSeenAt: r.first_seen_at,
     updatedAt: r.updated_at,
     createdBy: r.created_by || null,
+    // Signal évaluateur « comportement réel ≠ scénario » (statut INCOHERENT).
+    incoherentRemarks: r.incoherent_remarks || null,
+    incoherentBy: r.incoherent_by || null,
+    incoherentAt: r.incoherent_at || null,
   };
 }
 
@@ -1282,7 +1294,13 @@ async function registryE2ETests(url, forcedOrg, ownerScope, projectAccess) {
   return { tests };
 }
 
-async function registryE2ETestDetail(res, id) {
+async function registryE2ETestDetail(res, id, user) {
+  // Projection ÉVALUATEUR (ADR-003) : AUCUNE donnée technique. Les sections
+  // `params` (paramètres du test), `projectVars` / `projectSecrets` (réglages
+  // d'environnement), `docs` (ADR) et `linkedTasks` / `requiredOpenTasks`
+  // (tâches liées) sont réservées aux rôles NON restreints. Fail-closed : pour
+  // l'évaluateur elles ne sont ni calculées ni renvoyées.
+  const isEvaluateur = !!(user && user.role === "evaluateur");
   const db = registry();
   let row = null;
   try { row = (await db.query("SELECT * FROM e2e_tests WHERE id = $1", [id])).rows[0]; } catch { row = null; }
@@ -1296,63 +1314,67 @@ async function registryE2ETestDetail(res, id) {
      FROM e2e_test_repos x JOIN repos r ON r.id = x.repo_id
      WHERE x.e2e_test_id = $1 ORDER BY r.name ASC`, [id],
   ));
-  // ADR-12 : documents de référence du projet (contexte test-agent / recette).
-  const docs = (await q(
-    `SELECT DISTINCT a.artifact_id AS "docId", a.doc_type AS kind, a.title, a.path, a.description
-     FROM artifacts a
-     WHERE a.doc_type IN ('adr','specs','gherkin','project_doc')
-       AND (a.artifact_id IN (SELECT artifact_id FROM artifact_projects WHERE project_id = $1)
-         OR a.artifact_id IN (SELECT ar.artifact_id FROM artifact_repos ar JOIN project_repos pr ON pr.repo_id = ar.repo_id WHERE pr.project_id = $1))
-     ORDER BY a.doc_type, a.title NULLS LAST, a.created_at DESC`, [row.project],
-  ));
-  const params = (await q("SELECT name, kind, default_value, secret_ref, required FROM e2e_test_params WHERE e2e_test_id = $1 ORDER BY name", [id])).map((x) => ({
-    name: x.name,
-    kind: x.kind,
-    // SÉCURITÉ : un paramètre secret ne renvoie JAMAIS de valeur (defaultValue).
-    defaultValue: x.kind === "secret" ? null : x.default_value,
-    secretRef: x.secret_ref,
-    required: !!x.required,
-  }));
-  const linkedTasks = (await q(
-    `SELECT te.task_id, te.relation_type, te.reason,
-            t.project AS task_project, t.title AS task_title, t.request AS task_request,
-            (SELECT x.status FROM executions x WHERE x.task_id = te.task_id ORDER BY attempt DESC LIMIT 1) AS task_status
-     FROM task_e2e te LEFT JOIN tasks t ON t.id = te.task_id
-     WHERE te.e2e_test_id = $1 ORDER BY te.task_id`,
-    [id],
-  )).map((x) => ({
-    taskId: x.task_id,
-    relationType: x.relation_type,
-    reason: x.reason,
-    taskProject: x.task_project,
-    taskTitle: x.task_title,
-    taskRequest: x.task_request,
-    taskStatus: x.task_status,
-  }));
+  // Exécutions (preuve scénario ↔ comportement : rapport texte + vidéo) —
+  // conservées pour TOUS les rôles, y compris l'évaluateur.
   const executions = (await q("SELECT * FROM e2e_executions WHERE e2e_test_id = $1 ORDER BY created_at DESC LIMIT 100", [id])).map(mapE2EExecRow);
-  // Tâches REQUIRED (contrat BDD/TDD) dont la tâche n'est pas done → test « bloqué par ».
-  const requiredOpenTasks = linkedTasks.filter((l) => l.relationType === "REQUIRED" && l.taskStatus !== "done")
-    .map((l) => ({ taskId: l.taskId, title: l.taskTitle, taskStatus: l.taskStatus }));
-  // Vars du projet (module vars unifié) disponibles au run — méta seulement.
-  let projectVars = [];
-  let projectSecrets = [];
-  try {
-    const d = await pilot.listE2EVars(row.project);
-    projectVars = ((d && d.vars) || []).filter((v) => v.kind !== "secret");
-    projectSecrets = ((d && d.vars) || []).filter((v) => v.kind === "secret").map((v) => ({ name: v.name, kind: v.kind, purpose: v.purpose }));
-  } catch { projectVars = []; projectSecrets = []; }
   const test = {
     ...mapE2ETestRow(row),
     projects: projects.length ? projects : (row.project ? [row.project] : []),
     repos,
-    docs, // ADR-12 : documents de référence du projet (contexte)
-    params,
-    linkedTasks,
-    requiredOpen: requiredOpenTasks.length,
-    requiredOpenTasks,
-    projectSecrets,
-    projectVars,
   };
+  if (!isEvaluateur) {
+    // ADR-12 : documents de référence du projet (contexte test-agent / recette).
+    const docs = (await q(
+      `SELECT DISTINCT a.artifact_id AS "docId", a.doc_type AS kind, a.title, a.path, a.description
+       FROM artifacts a
+       WHERE a.doc_type IN ('adr','specs','gherkin','project_doc')
+         AND (a.artifact_id IN (SELECT artifact_id FROM artifact_projects WHERE project_id = $1)
+           OR a.artifact_id IN (SELECT ar.artifact_id FROM artifact_repos ar JOIN project_repos pr ON pr.repo_id = ar.repo_id WHERE pr.project_id = $1))
+       ORDER BY a.doc_type, a.title NULLS LAST, a.created_at DESC`, [row.project],
+    ));
+    const params = (await q("SELECT name, kind, default_value, secret_ref, required FROM e2e_test_params WHERE e2e_test_id = $1 ORDER BY name", [id])).map((x) => ({
+      name: x.name,
+      kind: x.kind,
+      // SÉCURITÉ : un paramètre secret ne renvoie JAMAIS de valeur (defaultValue).
+      defaultValue: x.kind === "secret" ? null : x.default_value,
+      secretRef: x.secret_ref,
+      required: !!x.required,
+    }));
+    const linkedTasks = (await q(
+      `SELECT te.task_id, te.relation_type, te.reason,
+              t.project AS task_project, t.title AS task_title, t.request AS task_request,
+              (SELECT x.status FROM executions x WHERE x.task_id = te.task_id ORDER BY attempt DESC LIMIT 1) AS task_status
+       FROM task_e2e te LEFT JOIN tasks t ON t.id = te.task_id
+       WHERE te.e2e_test_id = $1 ORDER BY te.task_id`,
+      [id],
+    )).map((x) => ({
+      taskId: x.task_id,
+      relationType: x.relation_type,
+      reason: x.reason,
+      taskProject: x.task_project,
+      taskTitle: x.task_title,
+      taskRequest: x.task_request,
+      taskStatus: x.task_status,
+    }));
+    // Tâches REQUIRED (contrat BDD/TDD) dont la tâche n'est pas done → test « bloqué par ».
+    const requiredOpenTasks = linkedTasks.filter((l) => l.relationType === "REQUIRED" && l.taskStatus !== "done")
+      .map((l) => ({ taskId: l.taskId, title: l.taskTitle, taskStatus: l.taskStatus }));
+    // Vars du projet (module vars unifié) disponibles au run — méta seulement.
+    let projectVars = [];
+    let projectSecrets = [];
+    try {
+      const d = await pilot.listE2EVars(row.project);
+      projectVars = ((d && d.vars) || []).filter((v) => v.kind !== "secret");
+      projectSecrets = ((d && d.vars) || []).filter((v) => v.kind === "secret").map((v) => ({ name: v.name, kind: v.kind, purpose: v.purpose }));
+    } catch { projectVars = []; projectSecrets = []; }
+    test.docs = docs; // ADR-12 : documents de référence du projet (contexte)
+    test.params = params;
+    test.linkedTasks = linkedTasks;
+    test.requiredOpen = requiredOpenTasks.length;
+    test.requiredOpenTasks = requiredOpenTasks;
+    test.projectSecrets = projectSecrets;
+    test.projectVars = projectVars;
+  }
   return sendJson(res, 200, { test, executions });
 }
 
@@ -1569,6 +1591,22 @@ async function handleE2EObsolete(res, id) {
   const t = await registryE2ETest(id);
   if (!t) return sendJson(res, 404, { error: "test E2E inconnu" });
   return sendJson(res, 200, await pilot.obsoleteE2ETest(id));
+}
+
+// Marque un test E2E INCOHERENT (signal ÉVALUATEUR : le comportement réel ne
+// correspond pas au scénario / à la règle) avec des remarques OBLIGATOIRES.
+// Unique écriture E2E permise à l'évaluateur (aucune modif du code de test).
+async function handleE2EIncoherent(res, id, b, user) {
+  const t = await registryE2ETest(id);
+  if (!t) return sendJson(res, 404, { error: "test E2E inconnu" });
+  const remarks = String((b && b.remarks) || "").trim();
+  if (!remarks) return sendJson(res, 400, { error: "remarks requis (décrivez l'incohérence constatée)" });
+  const by = (b && b.by) || (user && user.username) || null;
+  try {
+    return sendJson(res, 200, await pilot.markE2ETestIncoherent({ e2eTestId: id, remarks, by }));
+  } catch (e) {
+    return sendJson(res, 500, { error: String((e && e.message) || e) });
+  }
 }
 
 // --- Redémarrage des instances opencode (systemd) ---------------------------
@@ -3221,7 +3259,7 @@ const server = createServer(async (req, res) => {
       return handleE2ECreate(res, b, user);
     }
     const e2eDetailMatch = path.match(/^\/api\/e2e-tests\/([^/]+)$/);
-    if (e2eDetailMatch && req.method === "GET") return registryE2ETestDetail(res, e2eDetailMatch[1]);
+    if (e2eDetailMatch && req.method === "GET") return registryE2ETestDetail(res, e2eDetailMatch[1], user);
     const e2eRunMatch = path.match(/^\/api\/e2e-tests\/([^/]+)\/run$/);
     if (e2eRunMatch && req.method === "POST") {
       const b = await readBody(req);
@@ -3364,6 +3402,13 @@ const server = createServer(async (req, res) => {
     const e2eObsoleteMatch = path.match(/^\/api\/e2e-tests\/([^/]+)\/obsolete$/);
     if (e2eObsoleteMatch && req.method === "POST") {
       return handleE2EObsolete(res, e2eObsoleteMatch[1]);
+    }
+    // Marquage « incohérent » (signal évaluateur : comportement réel ≠ scénario)
+    // — seule écriture E2E autorisée à l'évaluateur (remarques obligatoires).
+    const e2eIncoherentMatch = path.match(/^\/api\/e2e-tests\/([^/]+)\/incoherent$/);
+    if (e2eIncoherentMatch && req.method === "POST") {
+      const b = await readBody(req).catch(() => ({}));
+      return handleE2EIncoherent(res, e2eIncoherentMatch[1], b, user);
     }
     // --- Tests E2E (cadrage 07) : collecteur hôte + lecture ---
     if (path === "/api/e2e/collect" && req.method === "POST") {

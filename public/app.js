@@ -1676,7 +1676,7 @@ function recetteScopeChips(rec) {
 // ===========================================================================
 // Tests E2E (v0.9.0) — entités de 1er niveau, indépendantes des tâches
 // ===========================================================================
-const E2E_TEST_STATUS_LABEL = { ACTIVE: 'actif', OBSOLETE: 'obsolète', QUARANTINE: 'quarantaine', DRAFT: 'brouillon' };
+const E2E_TEST_STATUS_LABEL = { ACTIVE: 'actif', OBSOLETE: 'obsolète', QUARANTINE: 'quarantaine', DRAFT: 'brouillon', INCOHERENT: 'incohérent' };
 const E2E_STATUS_OPTIONS = Object.entries(E2E_TEST_STATUS_LABEL).map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('');
 const E2E_REL_BADGE = { CREATED: 'approved', UPDATED: 'in_progress', REGRESSION: 'danger', EXISTING: 'queued', REQUIRED: 'awaiting' };
 const E2E_REL_LABEL = { CREATED: 'créé', UPDATED: 'modifié', REGRESSION: 'régression', EXISTING: 'existant', REQUIRED: 'requis (bloquant)' };
@@ -1700,7 +1700,7 @@ function e2eQuery() {
 }
 
 function e2eTestStatusBadge(st) {
-  const cls = { ACTIVE: 'approved', OBSOLETE: 'queued', QUARANTINE: 'danger', DRAFT: 'queued' }[st] || 'queued';
+  const cls = { ACTIVE: 'approved', OBSOLETE: 'queued', QUARANTINE: 'danger', DRAFT: 'queued', INCOHERENT: 'danger' }[st] || 'queued';
   return `<span class="badge ${cls}" title="Statut du test">${esc(E2E_TEST_STATUS_LABEL[st] || st || '—')}</span>`;
 }
 
@@ -1809,6 +1809,7 @@ async function renderE2ETests() {
   document.querySelectorAll('#pane-e2etests [data-e2e-detail]').forEach((b) => b.addEventListener('click', () => e2eDetailModal(b.dataset.e2eDetail)));
   document.querySelectorAll('#pane-e2etests [data-e2e-run]').forEach((b) => b.addEventListener('click', () => e2eRunModal(b.dataset.e2eRun)));
   document.querySelectorAll('#pane-e2etests [data-e2e-obsolete]').forEach((b) => b.addEventListener('click', () => e2eObsoleteModal(b.dataset.e2eObsolete)));
+  document.querySelectorAll('#pane-e2etests [data-e2e-incoherent]').forEach((b) => b.addEventListener('click', () => e2eIncoherentModal(b.dataset.e2eIncoherent)));
 }
 
 function e2eTableRow(t) {
@@ -1830,7 +1831,13 @@ function e2eTableRow(t) {
           <button class="icon-btn" data-e2e-run="${esc(t.e2eTestId)}" title="Lancer une exécution">▶ Lancer</button>
           ${t.status === 'ACTIVE' ? `<button class="icon-btn danger-btn" data-e2e-obsolete="${esc(t.e2eTestId)}" title="Marquer obsolète (spec disparu)">⚠ Obsolète</button>` : ''}
         </div>`
-      : `<div class="e2e-actions"><button class="ghost tiny" data-e2e-detail="${esc(t.e2eTestId)}" title="Voir le détail du test (exécutions, vidéo, rapport)">Détail</button></div>`}
+      : IS_EVALUATEUR
+        ? `<div class="e2e-actions">
+            <button class="ghost tiny" data-e2e-detail="${esc(t.e2eTestId)}" title="Voir le détail du test (exécutions, vidéo, rapport)">Détail</button>
+            <button class="ghost tiny" data-e2e-run="${esc(t.e2eTestId)}" title="Lancer une exécution du test (tel qu'enregistré)">▶ Lancer</button>
+            <button class="ghost tiny danger-btn" data-e2e-incoherent="${esc(t.e2eTestId)}" title="Marquer le test « incohérent » (comportement réel ≠ scénario)">⚠ Incohérent</button>
+          </div>`
+        : `<div class="e2e-actions"><button class="ghost tiny" data-e2e-detail="${esc(t.e2eTestId)}" title="Voir le détail du test (exécutions, vidéo, rapport)">Détail</button></div>`}
     </td>
   </tr>`;
 }
@@ -1965,6 +1972,11 @@ async function e2eDetailModal(e2eTestId) {
     <div class="modal modal-wide">
       <h2>${esc(test.title || test.scenario || e2eTestId)}</h2>
       <p class="muted"><code class="e2e-id">${esc(test.e2eTestId || e2eTestId)}</code> · ${e2eTestStatusBadge(test.status)} · Projet <span class="badge approved">${esc(test.project || '—')}</span></p>
+      ${test.status === 'INCOHERENT' ? `<div class="actions-section e2e-incoherent-block">
+        <h3>⚠ Incohérence signalée</h3>
+        <p class="muted-sm"><strong>Comportement réel ≠ scénario / règle</strong>${test.incoherentBy ? ' — signalé par ' + esc(test.incoherentBy) : ''}${test.incoherentAt ? ' le ' + esc(fmtTS(test.incoherentAt)) : ''}</p>
+        <div class="modal-request">${esc(test.incoherentRemarks || '')}</div>
+      </div>` : ''}
       <div class="actions-section">
         <div class="project-kv"><span class="lbl">Projet</span><code class="muted-sm">${esc(test.project || '—')}</code></div>
         <div class="project-kv"><span class="lbl">Repos traversés</span><span>${testRepos.length ? testRepos.map((r) => `<code class="chip">${esc(r.id)}${r.workspace ? ' · ' + esc(r.workspace) : ''}</code>`).join(' ') : '<span class="muted-sm">—</span>'}</span></div>
@@ -1972,7 +1984,7 @@ async function e2eDetailModal(e2eTestId) {
         <div class="project-kv"><span class="lbl">Scénario</span><span class="muted-sm">${esc(test.scenario || '—')}</span></div>
         <div class="project-kv"><span class="lbl">Suivi</span><span class="muted-sm">vu depuis ${esc(fmtTS(test.firstSeenAt))} · màj ${esc(fmtTS(test.updatedAt))} · ${(test.taskCount != null ? test.taskCount : linked.length)} tâche(s) liée(s)</span></div>
       </div>
-      ${(test.docs && test.docs.length) ? `<div class="actions-section"><h3>Documents de référence du projet (contexte test-agent / recette)</h3>
+      ${(test.docs && test.docs.length) ? `<div class="actions-section" data-e2e-tech><h3>Documents de référence du projet (contexte test-agent / recette)</h3>
         <div class="recette-list">${test.docs.map((d) => `<div class="recette-item">
           <code class="chip">${esc(docKindLabel(d.kind))}</code> <strong>${esc(d.title || d.docId)}</strong>
           <span class="muted-sm">${esc(d.path)}</span>
@@ -1983,7 +1995,7 @@ async function e2eDetailModal(e2eTestId) {
       ${test.gherkin ? `<div class="actions-section"><h3>Comportement (Gherkin)</h3>
         <pre style="background:rgba(255,255,255,0.05);padding:12px;border-radius:6px;overflow:auto;white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:12px;line-height:1.5">${esc(test.gherkin)}</pre>
       </div>` : ''}
-      ${(test.requiredOpen != null && test.requiredOpen > 0) ? `<div class="actions-section">
+      ${(test.requiredOpen != null && test.requiredOpen > 0) ? `<div class="actions-section" data-e2e-tech>
         <p class="badge danger" style="display:inline-block">⚠ bloqué par ${test.requiredOpen} tâche(s) REQUIRED non terminée(s) — le test ne sera PASS qu'une fois ces tâches done.</p>
         <div class="recette-list">${(test.requiredOpenTasks || []).map((rt) => `<div class="recette-item">
           <code class="muted-sm">${esc(rt.taskId)}</code>
@@ -1991,17 +2003,17 @@ async function e2eDetailModal(e2eTestId) {
           <button type="button" class="ghost" data-e2e-task-goto="${esc(rt.taskId)}">Ouvrir la tâche</button>
         </div>`).join('')}</div>
       </div>` : ''}
-      <div class="actions-buttons">
+      <div class="actions-buttons" data-e2e-tech>
         <button type="button" class="ghost" data-e2e-create-task="${esc(test.e2eTestId || e2eTestId)}" title="Créer une tâche requise pour que ce test passe (contrat BDD/TDD)">+ Créer une tâche (requise)</button>
       </div>
-      ${(test.status === 'DRAFT' || test.sessionId) ? `<div class="actions-section"><h3>Session de création / mise à jour</h3>
+      ${(test.status === 'DRAFT' || test.sessionId) ? `<div class="actions-section" data-e2e-tech><h3>Session de création / mise à jour</h3>
         <p class="muted-sm">${test.status === 'DRAFT' ? 'Test en DRAFT : le spec est en cours de rédaction par la session test-agent.' : 'Une session test-agent est rattachée à ce test (création / mise à jour).'}</p>
         <div class="actions-buttons">
           <button type="button" class="launch-btn" data-e2e-session="${esc(test.e2eTestId || e2eTestId)}" title="${test.sessionId ? 'Reprendre la session de création en cours' : 'Ouvrir une session de création (test-agent)'}">${test.sessionId ? 'Reprendre la session' : 'Session de création'}</button>
           <button type="button" class="ghost" data-e2e-session-force="${esc(test.e2eTestId || e2eTestId)}" title="Démarrer une NOUVELLE session test-agent (force)">Nouvelle session</button>
         </div>
       </div>` : ''}
-      ${params.length ? `<div class="actions-section"><h3>Params historiques (${params.length})</h3>
+      ${params.length ? `<div class="actions-section" data-e2e-tech><h3>Params historiques (${params.length})</h3>
         <p class="muted-sm">Anciens « paramètres de test » — migrés vers des variables de projet (onglet Vars &amp; Secrets E2E).</p>
         <div class="table-scroll"><table><thead><tr><th>Nom</th><th>Type</th><th>Défaut</th></tr></thead>
         <tbody>${params.map((p) => `<tr>
@@ -2009,7 +2021,7 @@ async function e2eDetailModal(e2eTestId) {
           <td>${esc(p.kind)}</td>
           <td>${p.kind === 'secret' ? '<span class="muted-sm">—</span>' : esc(p.defaultValue ?? '—')}</td>
         </tr>`).join('')}</tbody></table></div></div>` : ''}
-      ${((test.projectVars || []).length || (test.projectSecrets || []).length) ? `<div class="actions-section"><h3>Variables &amp; secrets du projet (injectés au run)</h3>
+      ${((test.projectVars || []).length || (test.projectSecrets || []).length) ? `<div class="actions-section" data-e2e-tech><h3>Variables &amp; secrets du projet (injectés au run)</h3>
         <div class="recette-list">${[...(test.projectVars || []).map((v) => ({ ...v, kind: 'variable' })), ...(test.projectSecrets || [])].map((s) => `<div class="recette-item">
           <code>${esc(s.name)}</code>
           ${s.kind === 'secret' ? '<span class="badge rejected">secret</span>' : `<span class="badge approved">variable</span><span class="muted-sm"> · ${esc((s.value ?? s.defaultValue) || '—')}</span>`}
@@ -2017,7 +2029,7 @@ async function e2eDetailModal(e2eTestId) {
         </div>`).join('')}</div>
         <p class="muted-sm"><a href="#" onclick="goToTab('e2esecrets'); return false;">Gérer les variables &amp; secrets (onglet Vars &amp; Secrets E2E)</a></p>
       </div>` : ''}
-      <div class="actions-section"><h3>Tâches liées (${linked.length})</h3>
+      <div class="actions-section" data-e2e-tech><h3>Tâches liées (${linked.length})</h3>
         ${linked.length ? `<div class="recette-list">${linked.map((l) => `<div class="recette-item">
           <code class="muted-sm">${esc(l.taskId)}</code>
           <span class="badge ${E2E_REL_BADGE[l.relationType] || 'queued'}" title="Relation : ${esc(l.relationType || '')}">${esc(E2E_REL_LABEL[l.relationType] || l.relationType || 'lié')}</span>
@@ -2030,11 +2042,14 @@ async function e2eDetailModal(e2eTestId) {
       </div>
       <div class="modal-actions">
         <button class="ghost" id="modal-cancel">Fermer</button>
+        ${(IS_EVALUATEUR || IS_ADMIN) ? `<button class="ghost danger-btn" id="e2e-incoherent-btn" title="Signaler que le comportement réel ne correspond pas au scénario / à la règle">⚠ Marquer incohérent</button>` : ''}
         <button class="launch-btn" id="e2e-launch-btn" title="Lancer une exécution sur ce test">Lancer une exécution</button>
       </div>
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
   document.getElementById('e2e-launch-btn').onclick = () => { closeModal(); e2eRunModal(e2eTestId); };
+  const e2eIncBtn = document.getElementById('e2e-incoherent-btn');
+  if (e2eIncBtn) e2eIncBtn.onclick = () => e2eIncoherentModal(e2eTestId, () => e2eDetailModal(e2eTestId));
   document.querySelectorAll('#modal-backdrop [data-e2e-session]').forEach((b) => b.addEventListener('click', () => openTestSession(b.dataset.e2eSession, false)));
   document.querySelectorAll('#modal-backdrop [data-e2e-session-force]').forEach((b) => b.addEventListener('click', () => openTestSession(b.dataset.e2eSessionForce, true)));
   document.querySelectorAll('#modal-backdrop [data-e2e-create-task]').forEach((b) => b.addEventListener('click', () => e2eCreateTaskModal(b.dataset.e2eCreateTask)));
@@ -2143,6 +2158,12 @@ async function e2eRunModal(e2eTestId) {
   let test = {};
   try { const d = await api(`/api/e2e-tests/${encodeURIComponent(e2eTestId)}`); test = d.test || {}; }
   catch (e) { alert('Impossible de charger le test : ' + (e.message || e)); return; }
+  // --- Branche ÉVALUATEUR (ADR-003) : run minimal, SANS réglages techniques ---
+  // L'évaluateur exécute le test TEL QU'ENREGISTRÉ (spec + paramètres + vars du
+  // projet résolus côté serveur). Aucune saisie repoDir / config Playwright /
+  // specPattern / pwArgs / origine / taskId / vars / secrets, et AUCUN appel à
+  // `/api/e2e-vars` (hors périmètre évaluateur — cf. allowlist serveur).
+  if (IS_EVALUATEUR) return e2eRunModalEvaluateur(e2eTestId, test);
   // ADR 11 : repo d'exécution par défaut = un des repos traversés du test (celui
   // qui a un checkout E2E, de préférence contenant le spec). Le serveur résout
   // aussi le repo d'exécution si on laisse le champ vide.
@@ -2299,6 +2320,38 @@ async function e2eRunModal(e2eTestId) {
   });
 }
 
+// Run ÉVALUATEUR (ADR-003) : modale minimale — le test est exécuté TEL
+// QU'ENREGISTRÉ. Aucun réglage technique exposé, aucun appel à `/api/e2e-vars`.
+async function e2eRunModalEvaluateur(e2eTestId, test) {
+  const t = test || {};
+  showModal(`
+    <div class="modal">
+      <h2>Lancer une exécution</h2>
+      <p class="muted"><code class="e2e-id">${esc(t.e2eTestId || e2eTestId)}</code> · ${esc(t.scenario || t.title || '')} <span class="muted-sm">· Projet : <code>${esc(t.project || '')}</code></span></p>
+      <p class="muted-sm">Le test sera exécuté <strong>tel qu'enregistré</strong> : le dépôt, la configuration Playwright, le spec, les paramètres et les variables du projet sont résolus automatiquement. Aucun réglage technique n'est modifiable.</p>
+      <div class="modal-actions">
+        <button type="button" class="ghost" id="modal-cancel">Annuler</button>
+        <button type="button" class="launch-btn" id="e2e-run-go">▶ Lancer</button>
+      </div>
+      <div id="e2e-run-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('e2e-run-go').onclick = async () => {
+    const msg = document.getElementById('e2e-run-msg');
+    msg.textContent = 'Lancement du run en arrière-plan…';
+    msg.className = 'msg';
+    try {
+      const r = await api(`/api/e2e-tests/${encodeURIComponent(e2eTestId)}/run`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ origin: 'manual' }),
+      });
+      closeModal();
+      if (r && r.jobId) e2eRunJobWait(e2eTestId, r.jobId);
+      else alert((r && r.message) || (r && r.error) || 'Run terminé.');
+    } catch (e) { msg.textContent = 'Échec : ' + (e.message || e); msg.className = 'msg error'; }
+  };
+}
+
 // Modale « spec absent du checkout » — le test existe dans l'historique git.
 // Propose de relancer via un WORKTREE temporaire au commit choisi (spec +
 // helpers + config complets au commit ; rien n'est restauré dans main).
@@ -2382,6 +2435,37 @@ function e2eObsoleteModal(e2eTestId) {
       await api(`/api/e2e-tests/${encodeURIComponent(e2eTestId)}/obsolete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
       closeModal();
       refreshActive();
+    } catch (e) { msg.textContent = e.message || String(e); msg.className = 'msg error'; }
+  };
+}
+
+// Modale « Marquer incohérent » (évaluateur, ADR-003) : signal comportement réel
+// ≠ scénario. Remarques OBLIGATOIRES ; l'évaluateur ne modifie PAS le code de
+// test (spec / formalisation). `onDone` permet de re-rendre la vue d'origine.
+function e2eIncoherentModal(e2eTestId, onDone) {
+  showModal(`
+    <div class="modal">
+      <h2>Marquer le test « incohérent »</h2>
+      <p class="muted">Test <span class="code">${esc(e2eTestId)}</span></p>
+      <p class="muted-sm">Signalez que le <strong>comportement réel ne correspond pas au scénario / à la règle</strong> du test. Le statut passe à <strong>INCOHERENT</strong> et vos remarques sont conservées. Vous ne modifiez ni le spec ni la formalisation du test.</p>
+      <label class="modal-field">Remarques <span class="muted-sm">(obligatoire — décrivez l'écart constaté)</span>
+        <textarea id="e2e-incoherent-remarks" class="modal-textarea" rows="4" placeholder="ex. : la règle X n'est pas appliquée lorsque…"></textarea>
+      </label>
+      <div class="modal-actions">
+        <button class="ghost" id="modal-cancel">Annuler</button>
+        <button class="danger" id="modal-confirm">Marquer incohérent</button>
+      </div>
+      <div id="e2e-incoherent-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('modal-confirm').onclick = async () => {
+    const msg = document.getElementById('e2e-incoherent-msg');
+    const remarks = (document.getElementById('e2e-incoherent-remarks').value || '').trim();
+    if (!remarks) { msg.textContent = 'Remarques obligatoires : décrivez l\'incohérence constatée.'; msg.className = 'msg error'; return; }
+    try {
+      await api(`/api/e2e-tests/${encodeURIComponent(e2eTestId)}/incoherent`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ remarks }) });
+      closeModal();
+      if (typeof onDone === 'function') onDone(); else refreshActive();
     } catch (e) { msg.textContent = e.message || String(e); msg.className = 'msg error'; }
   };
 }
@@ -3123,6 +3207,14 @@ async function evaluationDetailModal(evaluationId) {
   const items = ev.items || [];
   const feats = ev.fonctionnalites || [];
   const rules = ev.regles || [];
+  // Tests E2E du projet (ADR-003) : depuis une recette évaluateur, on peut
+  // EXÉCUTER un test et lire ses preuves (détail, vidéos, rapport). Le test
+  // reste en lecture seule — seul le marquage « incohérent » est ouvert.
+  let projectTests = [];
+  try {
+    const td = await api(`/api/e2e-tests?project=${encodeURIComponent(ev.project || '')}`);
+    projectTests = (td && td.tests) || [];
+  } catch {}
   // Pièces rattachées à un élément précis (`document.itemId`).
   const docsByItem = new Map();
   for (const doc of (ev.documents || [])) {
@@ -3180,6 +3272,18 @@ async function evaluationDetailModal(evaluationId) {
           ${evalDocDetailsHtml(doc)}
         </div>`).join('') || '<p class="muted-sm">Aucune pièce rattachée.</p>'}
       </div>
+      <h3>Tests E2E du projet</h3>
+      <p class="muted-sm">Exécutez un test E2E et consultez ses preuves (détails, vidéos, rapport) — preuve du comportement réel. Vous ne modifiez pas le test : seul le statut <strong>incohérent</strong> vous est ouvert.</p>
+      <div class="recette-list">
+        ${projectTests.length ? projectTests.map((t) => `<div class="recette-item">
+          ${e2eTestStatusBadge(t.status)}
+          <span><strong>${esc(t.title || t.scenario || t.e2eTestId)}</strong></span>
+          <span class="muted-sm">${esc(t.specFile || '')}</span>
+          <button class="ghost" data-e2e-detail="${esc(t.e2eTestId)}" title="Voir le détail (exécutions, vidéos, rapport)">Détail</button>
+          <button class="ghost" data-e2e-run="${esc(t.e2eTestId)}" title="Lancer une exécution du test (tel qu'enregistré)">▶ Lancer</button>
+          ${(IS_EVALUATEUR || IS_ADMIN) ? `<button class="ghost danger-btn" data-e2e-incoherent="${esc(t.e2eTestId)}" title="Marquer le test « incohérent » (comportement réel ≠ scénario)">⚠ Incohérent</button>` : ''}
+        </div>`).join('') : '<p class="muted-sm">Aucun test E2E pour ce projet.</p>'}
+      </div>
       ${canWrite ? `
       <h3>Performance (préprod)</h3>
       <p class="muted-sm">Mesure des durées de requêtes réseau (type Network), timings (TTFB/load), Core Web Vitals (LCP/CLS) et stress test borné (accès parallèles). Les tests E2E se lancent depuis la page <strong>Tests E2E</strong>.</p>
@@ -3197,6 +3301,10 @@ async function evaluationDetailModal(evaluationId) {
       <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
+  // Tests E2E du projet (ADR-003) : exécuter / lire les preuves depuis la recette.
+  document.querySelectorAll('#modal-backdrop [data-e2e-detail]').forEach((b) => b.addEventListener('click', () => e2eDetailModal(b.dataset.e2eDetail)));
+  document.querySelectorAll('#modal-backdrop [data-e2e-run]').forEach((b) => b.addEventListener('click', () => e2eRunModal(b.dataset.e2eRun)));
+  document.querySelectorAll('#modal-backdrop [data-e2e-incoherent]').forEach((b) => b.addEventListener('click', () => e2eIncoherentModal(b.dataset.e2eIncoherent, () => evaluationDetailModal(evaluationId))));
   const addBtn = document.getElementById('eval-item-add');
   if (addBtn) addBtn.onclick = () => evaluationItemModal(evaluationId, null);
   document.querySelectorAll('#modal-backdrop [data-eval-item-edit]').forEach((b) => b.addEventListener('click', () => {

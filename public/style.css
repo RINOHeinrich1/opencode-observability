@@ -850,6 +850,10 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 
 /* Repos par projet (ADR 09) */
 .chip { display:inline-block; padding: 0 6px; border-radius: 8px; background: rgba(255,255,255,.08); font-size: 11px; }
+/* Lien-chip cliquable (Tests E2E liés à une fonctionnalité, T-20260922-100651-m6va). */
+button.chip.fr-e2e-link { border: 1px solid rgba(255,255,255,.18); cursor: pointer; color: inherit; font: inherit; font-size: 11px; line-height: 1.6; }
+button.chip.fr-e2e-link:hover { background: rgba(255,255,255,.2); }
+.fr-e2e-cell { max-width: 220px; }
 .repo-mini { border: 1px solid rgba(255,255,255,.1); border-radius: 8px; padding: 6px 8px; background: rgba(255,255,255,.03); }
 .repo-mini-actions { display: flex; gap: 6px; margin-top: 4px; }
 .repo-mini-actions .tiny { font-size: 11px; padding: 1px 6px; }

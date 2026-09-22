@@ -3,6 +3,7 @@ let ME = null;
 let IS_ADMIN = false;    // vrai si l'utilisateur courant est admin (écritures)
 let IS_EVALUATEUR = false; // vrai si rôle « évaluateur » (ADR-002 : périmètre restreint)
 let IS_EXECUTEUR = false;  // vrai si rôle « exécuteur » (ADR-001/002 : périmètre restreint)
+let IS_SUPERVISOR = false; // vrai si rôle « superviseur » (ADR-002 : lecture seule stricte, TOUS les onglets)
 let REFRESH_S = 10;      // intervalle (s), surchargé par /api/config (min 10)
 let refreshTimer = null;
 let activeTab = 'overview';
@@ -1190,7 +1191,7 @@ async function renderUsers() {
   const roleOpts = (sel) => `<select class="role-sel" data-user="${esc(sel.id)}">${['admin', 'supervisor', 'evaluateur', 'executeur', 'user'].map((rl) => `<option value="${rl}" ${sel.role === rl ? 'selected' : ''}>${ROLE_LABELS[rl]}</option>`).join('')}</select>`;
   document.getElementById('pane-users').innerHTML = `
     <h2>Utilisateurs <span class="muted-sm">— organisation ${esc(currentOrg)}</span></h2>
-    <p class="muted-sm">Rôles : <strong>admin</strong> (écriture, tous les projets de l'organisation) · <strong>superviseur</strong> (lecture seule, tous les projets) · <strong>évaluateur</strong> (pages Fonctionnalités & Règles, Tests E2E, Recette ; écrit sur <em>ses propres recettes</em>, lance les tests E2E et dépose des pièces) · <strong>exécuteur</strong> (Vue d'ensemble, Tâches, Cadrage technique, Recette évaluateur en lecture seule, Tests E2E, Fonctionnalités & Règles, Décisions, ADR, Workspaces ; travaille dans le <em>sprint actif</em> du projet et crée/lance les cadrages techniques) · <strong>utilisateur</strong> (peut créer/agir, ne voit que <em>ses propres créations</em>). L'accès aux <strong>projets</strong> est explicite (aucun par défaut ; l'admin a tous les projets).</p>
+    <p class="muted-sm">Rôles : <strong>admin</strong> (écriture, tous les projets de l'organisation) · <strong>superviseur</strong> (lecture seule stricte : TOUTES les pages et tous les projets de l'organisation, y compris les nouveaux onglets Cadrage technique et Recette évaluateur — toutes les tâches, toutes les recettes) · <strong>évaluateur</strong> (pages Fonctionnalités & Règles, Tests E2E, Recette ; écrit sur <em>ses propres recettes</em>, lance les tests E2E et dépose des pièces) · <strong>exécuteur</strong> (Vue d'ensemble, Tâches, Cadrage technique, Recette évaluateur en lecture seule, Tests E2E, Fonctionnalités & Règles, Décisions, ADR, Workspaces ; travaille dans le <em>sprint actif</em> du projet et crée/lance les cadrages techniques) · <strong>utilisateur</strong> (peut créer/agir, ne voit que <em>ses propres créations</em>). L'accès aux <strong>projets</strong> est explicite (aucun par défaut ; l'admin et le superviseur ont tous les projets).</p>
     <div class="eco-restart-bar"><button class="launch-btn" id="add-user-btn">Ajouter un utilisateur</button><span id="users-msg" class="muted-sm"></span></div>
     <table><thead><tr><th>Utilisateur</th><th>Rôle</th><th>Organisations</th><th>Projets</th><th>opencode</th><th>Email notif.</th><th>Créé le</th><th></th></tr></thead>
     <tbody>${users.map((u) => `<tr><td>${esc(u.username)}</td><td>${roleOpts(u)}</td><td><button class="ghost tiny" data-user-orgs="${u.id}" data-user-name="${esc(u.username)}">Gérer</button></td><td><button class="ghost tiny" data-user-projects="${u.id}" data-user-name="${esc(u.username)}">Gérer</button></td><td><button class="ghost tiny" data-user-oc="${u.id}" data-user-name="${esc(u.username)}">Accès</button></td><td><button class="ghost tiny" data-user-email="${u.id}" data-user-name="${esc(u.username)}" data-user-email-val="${esc(u.notifyEmail || '')}" title="Configurer l'email de notification">${u.notifyEmail ? esc(u.notifyEmail) : '—'}</button></td><td class="code">${esc((u.created_at || '').replace('T', ' ').slice(0, 19))}</td>    <td><div class="icon-actions"><button class="ghost tiny" data-oc-restart="${esc(u.username)}" title="Redémarrer l'instance opencode@${esc(u.username)}.service">Redémarrer</button><button class="danger" data-del="${u.id}">Supprimer</button></div></td></tr>`).join('')}</tbody></table>`;
@@ -3009,7 +3010,7 @@ function evaluationCard(e) {
     <div class="project-card-actions">
       <button class="ghost" data-eval-detail="${esc(e.evaluation_id)}">Détail</button>
       <button class="ghost" data-eval-pieces="${esc(e.evaluation_id)}">Pièces (${e.documents_count || 0})</button>
-      ${canFinish && !IS_EXECUTEUR ? `<button class="approve" data-eval-finish="${esc(e.evaluation_id)}">Terminer la recette</button>` : ''}
+      ${canFinish && !IS_EXECUTEUR && !IS_SUPERVISOR ? `<button class="approve" data-eval-finish="${esc(e.evaluation_id)}">Terminer la recette</button>` : ''}
     </div>
   </article>`;
 }
@@ -3033,11 +3034,18 @@ async function renderEvaluations() {
   // D012 : l'évaluateur ne voit que SES recettes → le filtre créateurs est masqué.
   // L'exécuteur accède à la page en LECTURE SEULE (ADR-002) : pas de filtre créateurs.
   evals = (IS_EVALUATEUR || IS_EXECUTEUR) ? evals : evals.filter((e) => !evaluationsUserFilter.length || evaluationsUserFilter.includes(e.created_by || '—'));
-  const evalReadOnly = IS_EXECUTEUR;
+  const evalReadOnly = IS_EXECUTEUR || IS_SUPERVISOR;
   const treatableTotal = evals.reduce((n, e) => n + (Number(e.treatable_count) || 0), 0);
+  // Libellé d'accès : l'exécuteur ne voit que les éléments « à traiter » ; le
+  // superviseur voit TOUTES les recettes (évaluateur + cadrages) en lecture seule.
+  const evalReadOnlyHint = IS_EXECUTEUR
+    ? `Lecture seule — vous n'accédez qu'aux éléments <strong>à traiter</strong> (${treatableTotal}).`
+    : IS_SUPERVISOR
+      ? `Lecture seule — vous voyez toutes les recettes (${evals.length}).`
+      : IS_EVALUATEUR ? 'Vous ne voyez que vos recettes.' : 'Admin/superviseur voient toutes les recettes.';
   document.getElementById('pane-evaluations').innerHTML = `
     <h2>Recettes</h2>
-    <p class="muted-sm">Recette de l'<strong>évaluateur produit</strong> — décrit le parcours évalué, rattache des fonctionnalités (verdict) et des règles métier, enregistre des recommandations/problèmes et joint des pièces (lien, document, photo, vidéo). ${evalReadOnly ? `Lecture seule — vous n'accédez qu'aux éléments <strong>à traiter</strong> (${treatableTotal}).` : IS_EVALUATEUR ? 'Vous ne voyez que vos recettes.' : 'Admin/superviseur voient toutes les recettes.'}</p>
+    <p class="muted-sm">Recette de l'<strong>évaluateur produit</strong> — décrit le parcours évalué, rattache des fonctionnalités (verdict) et des règles métier, enregistre des recommandations/problèmes et joint des pièces (lien, document, photo, vidéo). ${evalReadOnlyHint}</p>
     <div class="filters">
       ${(IS_EVALUATEUR || IS_EXECUTEUR) ? '' : `<div class="status-tagfilter" id="eval-user-tagfilter" title="Afficher les recettes des évaluateurs sélectionnés (multi)">
         <span class="tagfilter-label">Créateurs :</span>
@@ -3222,9 +3230,10 @@ async function evaluationDetailModal(evaluationId) {
   try { d = await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}`); } catch (e) { alert('Impossible de charger la recette : ' + (e.message || e)); return; }
   const ev = d.evaluation || {};
   const editable = ev.status !== 'done';
-  // Écritures : l'évaluateur (propriétaire) et l'admin ; l'exécuteur est en
-  // LECTURE SEULE (ADR-002) — ses POST seraient refusés côté serveur.
-  const canWrite = editable && !IS_EXECUTEUR;
+  // Écritures : l'évaluateur (propriétaire) et l'admin ; l'exécuteur ET le
+  // superviseur sont en LECTURE SEULE (ADR-002) — leurs POST seraient refusés
+  // côté serveur (garde `isReadOnly`).
+  const canWrite = editable && !IS_EXECUTEUR && !IS_SUPERVISOR;
   const items = ev.items || [];
   const feats = ev.fonctionnalites || [];
   const rules = ev.regles || [];
@@ -3301,7 +3310,7 @@ async function evaluationDetailModal(evaluationId) {
           <span><strong>${esc(t.title || t.scenario || t.e2eTestId)}</strong></span>
           <span class="muted-sm">${esc(t.specFile || '')}</span>
           <button class="ghost" data-e2e-detail="${esc(t.e2eTestId)}" title="Voir le détail (exécutions, vidéos, rapport)">Détail</button>
-          <button class="ghost" data-e2e-run="${esc(t.e2eTestId)}" title="Lancer une exécution du test (tel qu'enregistré)">▶ Lancer</button>
+          ${!IS_SUPERVISOR ? `<button class="ghost" data-e2e-run="${esc(t.e2eTestId)}" title="Lancer une exécution du test (tel qu'enregistré)">▶ Lancer</button>` : ''}
           ${(IS_EVALUATEUR || IS_ADMIN) ? `<button class="ghost danger-btn" data-e2e-incoherent="${esc(t.e2eTestId)}" title="Marquer le test « incohérent » (comportement réel ≠ scénario)">⚠ Incohérent</button>` : ''}
         </div>`).join('') : '<p class="muted-sm">Aucun test E2E pour ce projet.</p>'}
       </div>
@@ -3446,6 +3455,8 @@ async function evaluationItemPieceModal(evaluationId, itemId) {
   const ev = d.evaluation || {};
   const item = (ev.items || []).find((x) => Number(x.itemId) === Number(itemId)) || {};
   const pieces = (ev.documents || []).filter((doc) => Number(doc.itemId) === Number(itemId));
+  // Lecture seule stricte du superviseur (ADR-002) : ni ajout ni retrait de pièce.
+  const canEdit = ev.status !== 'done' && !IS_SUPERVISOR;
   let allArtifacts = [];
   try { allArtifacts = ((await api('/api/artifacts')).artifacts || []); } catch {}
   showModal(`
@@ -3458,10 +3469,10 @@ async function evaluationItemPieceModal(evaluationId, itemId) {
           <span><strong>${esc(doc.title || (doc.path || '').split('/').pop())}</strong></span>
           ${doc.nature ? `<span class="muted-sm">${esc(doc.nature)}</span>` : ''}
           ${evalDocDetailsHtml(doc)}
-          <button class="danger" data-eval-item-doc-del="${esc(doc.documentId || doc.id)}">Retirer</button>
+          ${canEdit ? `<button class="danger" data-eval-item-doc-del="${esc(doc.documentId || doc.id)}">Retirer</button>` : ''}
         </div>`).join('') || '<p class="muted-sm">Aucune pièce rattachée à cet élément.</p>'}
       </div>
-      <form id="eval-item-piece-form" class="pilot-form">
+      ${canEdit ? `<form id="eval-item-piece-form" class="pilot-form">
         <div class="links-head"><label class="modal-field" style="margin:0">Ajouter une pièce à cet élément</label></div>
         <select id="eip-nature">
           <option value="lien">Lien</option>
@@ -3479,24 +3490,27 @@ async function evaluationItemPieceModal(evaluationId, itemId) {
         <input id="eip-file" type="file" hidden>
         <select id="eip-art" hidden><option value="">— artefact existant —</option>${allArtifacts.map((a) => `<option value="${esc(a.artifact_id)}">${esc((a.title || a.path).slice(0, 60))}</option>`).join('')}</select>
         <div class="modal-actions"><button type="submit" class="launch-btn">Ajouter</button></div>
-      </form>
+      </form>` : ''}
       <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
       <div id="eval-item-piece-msg" class="msg"></div>
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
   const modeSel = document.getElementById('eip-mode');
-  const sync = () => {
-    const m = modeSel.value;
-    document.getElementById('eip-url').hidden = m !== 'link';
-    document.getElementById('eip-file').hidden = m !== 'import';
-    document.getElementById('eip-art').hidden = m !== 'artifact';
-  };
-  modeSel.addEventListener('change', sync); sync();
+  if (modeSel) {
+    const sync = () => {
+      const m = modeSel.value;
+      document.getElementById('eip-url').hidden = m !== 'link';
+      document.getElementById('eip-file').hidden = m !== 'import';
+      document.getElementById('eip-art').hidden = m !== 'artifact';
+    };
+    modeSel.addEventListener('change', sync); sync();
+  }
   document.querySelectorAll('#modal-backdrop [data-eval-item-doc-del]').forEach((b) => b.addEventListener('click', async () => {
     try { await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/documents/${b.dataset.evalItemDocDel}`, { method: 'DELETE' }); evaluationItemPieceModal(evaluationId, itemId); }
     catch (e) { alert('Échec : ' + (e.message || e)); }
   }));
-  document.getElementById('eval-item-piece-form').addEventListener('submit', async (e) => {
+  const itemPieceForm = document.getElementById('eval-item-piece-form');
+  if (itemPieceForm) itemPieceForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const msg = document.getElementById('eval-item-piece-msg');
     try {
@@ -3525,7 +3539,8 @@ async function evaluationPiecesModal(evaluationId) {
   let d;
   try { d = await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}`); } catch (e) { alert('Impossible de charger la recette : ' + (e.message || e)); return; }
   const ev = d.evaluation || {};
-  const editable = ev.status !== 'done';
+  // Lecture seule stricte du superviseur (ADR-002) : pas d'ajout ni de retrait.
+  const editable = ev.status !== 'done' && !IS_SUPERVISOR;
   let allArtifacts = [];
   try { allArtifacts = ((await api('/api/artifacts')).artifacts || []); } catch {}
   showModal(`
@@ -3684,6 +3699,9 @@ async function recetteDetailModal(recetteId) {
   const tasks = rec.tasks || [];
   const items = rec.items || [];
   const project = rec.project || '';
+  // Écritures du cadrage : masquées au superviseur (lecture seule stricte, ADR-002)
+  // — le contenu de LECTURE reste affiché.
+  const canEditRec = rec.status !== 'done' && !IS_SUPERVISOR;
   showModal(`
     <div class="modal modal-wide">
       <h2>${esc(rec.title || recetteId)}</h2>
@@ -3694,14 +3712,14 @@ async function recetteDetailModal(recetteId) {
         const ttl = (t && typeof t === 'object') ? (t.title || '') : '';
         const req = (t && typeof t === 'object') ? (t.request || '') : '';
         const tproj = (t && typeof t === 'object') ? (t.project || '') : '';
-        return `<div class="recette-item"><code class="muted-sm">${esc(tid)}</code><div class="recette-task">${tproj ? `<code class="chip-project">${esc(tproj)}</code>` : ''}<strong>${esc(ttl)}</strong>${req ? `<p class="muted-sm">${esc(req)}</p>` : ''}</div>${rec.status !== 'done' ? `<button type="button" class="ghost rec-task-del" data-rec-task-del="${esc(tid)}" title="Détacher cette tâche (elle reste intacte)">✕ retirer</button>` : ''}</div>`;
-      }).join('')}</div>${rec.status !== 'done' ? `<div class="rec-tasks-add"><select id="rec-task-add"><option value="">+ Ajouter une tâche couverte…</option></select></div>` : ''}</div></div>` : `<p class="muted-sm">Aucune tâche couverte (${T.entityLower} exploratoire).</p>`}
-      ${items.length ? `<div class="actions-section"><h3>${T.elementsCap} (${items.length})</h3><div class="recette-list">${items.map((it) => `<div class="recette-item"><span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span>${it.project ? `<code class="chip-project">${esc(it.project)}</code>` : ''}${it.execOrder != null ? `<span class="badge order-badge" title="Ordre d'exécution">ordre ${esc(it.execOrder)}</span>` : ''}${testIntentBadge(it)}${docIntentBadge(it)}${it.vigilance ? `<span class="badge danger" title="${esc(it.vigilance)}">⚠ vigilance</span>` : ''}<span>${esc(it.title || it.content.slice(0, 80))}</span>${rec.status !== 'done' && it.status !== 'task_created' ? `<button type="button" class="ghost rec-item-del" data-rec-item-del="${it.id}" title="Retirer cet élément (fusion/consolidation)">✕</button>` : ''}</div>`).join('')}</div></div>` : ''}
-      ${(IS_EXECUTEUR || IS_ADMIN) ? `<div class="actions-section"><h3>Éléments de recette à traiter</h3><div class="recette-list">${(rec.evaluationItems || []).map((it) => `<div class="recette-item">${evalCategoryBadge(it.category)} ${evalSeverityBadge(it.severity)}<span>${esc(it.content)}</span><span class="muted-sm">repris par ce cadrage</span>${rec.status !== 'done' ? `<button type="button" class="ghost rec-eval-item-del" data-rec-eval-item-del="${it.itemId}" title="Retirer la reprise (l'élément reste « à traiter »)">✕ retirer</button>` : ''}</div>`).join('') || '<p class="muted-sm">Aucun élément de recette évaluateur repris dans ce cadrage.</p>'}</div>${rec.status !== 'done' ? `<div class="rec-tasks-add"><select id="rec-eval-item-add"><option value="">+ Reprendre un élément « à traiter »…</option></select></div>` : ''}</div>` : ''}
+        return `<div class="recette-item"><code class="muted-sm">${esc(tid)}</code><div class="recette-task">${tproj ? `<code class="chip-project">${esc(tproj)}</code>` : ''}<strong>${esc(ttl)}</strong>${req ? `<p class="muted-sm">${esc(req)}</p>` : ''}</div>${canEditRec ? `<button type="button" class="ghost rec-task-del" data-rec-task-del="${esc(tid)}" title="Détacher cette tâche (elle reste intacte)">✕ retirer</button>` : ''}</div>`;
+      }).join('')}</div>${canEditRec ? `<div class="rec-tasks-add"><select id="rec-task-add"><option value="">+ Ajouter une tâche couverte…</option></select></div>` : ''}</div></div>` : `<p class="muted-sm">Aucune tâche couverte (${T.entityLower} exploratoire).</p>`}
+      ${items.length ? `<div class="actions-section"><h3>${T.elementsCap} (${items.length})</h3><div class="recette-list">${items.map((it) => `<div class="recette-item"><span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span>${it.project ? `<code class="chip-project">${esc(it.project)}</code>` : ''}${it.execOrder != null ? `<span class="badge order-badge" title="Ordre d'exécution">ordre ${esc(it.execOrder)}</span>` : ''}${testIntentBadge(it)}${docIntentBadge(it)}${it.vigilance ? `<span class="badge danger" title="${esc(it.vigilance)}">⚠ vigilance</span>` : ''}<span>${esc(it.title || it.content.slice(0, 80))}</span>${canEditRec && it.status !== 'task_created' ? `<button type="button" class="ghost rec-item-del" data-rec-item-del="${it.id}" title="Retirer cet élément (fusion/consolidation)">✕</button>` : ''}</div>`).join('')}</div></div>` : ''}
+      ${(IS_EXECUTEUR || IS_ADMIN || IS_SUPERVISOR) ? `<div class="actions-section"><h3>Éléments de recette à traiter</h3><div class="recette-list">${(rec.evaluationItems || []).map((it) => `<div class="recette-item">${evalCategoryBadge(it.category)} ${evalSeverityBadge(it.severity)}<span>${esc(it.content)}</span><span class="muted-sm">repris par ce cadrage</span>${canEditRec ? `<button type="button" class="ghost rec-eval-item-del" data-rec-eval-item-del="${it.itemId}" title="Retirer la reprise (l'élément reste « à traiter »)">✕ retirer</button>` : ''}</div>`).join('') || '<p class="muted-sm">Aucun élément de recette évaluateur repris dans ce cadrage.</p>'}</div>${canEditRec ? `<div class="rec-tasks-add"><select id="rec-eval-item-add"><option value="">+ Reprendre un élément « à traiter »…</option></select></div>` : ''}</div>` : ''}
       <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
-  if (rec.status !== 'done') {
+  if (canEditRec) {
     // Gestion des tâches couvertes : ajout (candidates du projet) + retrait.
     const coveredIds = new Set((tasks || []).map((t) => (t && (t.taskId || t.task_id)) || t));
     const taskAddSel = document.getElementById('rec-task-add');
@@ -8476,6 +8494,7 @@ async function init() {
     IS_ADMIN = !!(ME && ME.is_admin);
     IS_EVALUATEUR = !!(ME && ME.role === 'evaluateur');
     IS_EXECUTEUR = !!(ME && ME.role === 'executeur');
+    IS_SUPERVISOR = !!(ME && ME.role === 'supervisor');
     document.getElementById('whoami').textContent = ME.username + (ME.is_admin ? ' (admin)' : (ME.role === 'supervisor' ? ' (superviseur)' : (ME.role === 'evaluateur' ? ' (évaluateur)' : (ME.role === 'executeur' ? ' (exécuteur)' : (ME.role === 'user' ? ' (utilisateur)' : '')))));
     // Bandeau : libellé COURT (évite le débordement d'en-tête).
     const roBanner = document.querySelector('.readonly-banner');
@@ -8486,7 +8505,7 @@ async function init() {
         roBanner.style.display = 'inline-block';
       } else if (ME.role === 'supervisor') {
         roBanner.textContent = 'Superviseur';
-        roBanner.title = "Rôle superviseur : lecture seule sur toutes les données de l'organisation active.";
+        roBanner.title = "Rôle superviseur : lecture seule stricte sur TOUTES les pages et toutes les données de l'organisation active (toutes les tâches, toutes les recettes — évaluateur et cadrages techniques). Aucune écriture possible.";
       } else if (ME.role === 'evaluateur') {
         roBanner.textContent = 'Évaluateur produit';
         roBanner.title = "Rôle évaluateur : accès limité aux pages Fonctionnalités & Règles, Tests E2E et Recette ; vous ne voyez que vos propres recettes (écriture sur vos recettes, lancement de tests E2E, dépôt de pièces).";
@@ -8499,7 +8518,7 @@ async function init() {
     }
     // Rôle SUPERVISOR / lecture seule stricte : classe body (masque les actions
     // d'écriture via CSS). Un `user` peut écrire (boutons visibles).
-    if (ME.role === 'supervisor') {
+    if (IS_SUPERVISOR) {
       document.body.classList.add('readonly');
     }
     // Rôle ÉVALUATEUR : classe body dédiée (masque les écritures hors périmètre

@@ -54,9 +54,10 @@ export async function currentUser(req) {
     // recettes ; `admin`/`supervisor` voient toutes les recettes (null). Le rôle
     // `user` conserve son comportement historique (couvert ici pour ne rien casser).
     recetteOwnerScope: role === "evaluateur" || role === "user" ? u.username : null,
-    // Accès par PROJET : `admin` = tous les projets (null) ; les autres = liste
-    // explicite (aucun par défaut).
-    projectAccess: role === "admin" ? null : await listUserProjects(u.id),
+    // Accès par PROJET : `admin` ET `supervisor` = tous les projets de
+    // l'organisation active (null) — le superviseur les voit en LECTURE SEULE
+    // (ADR-002). Les autres rôles = liste explicite (aucun par défaut).
+    projectAccess: role === "admin" || role === "supervisor" ? null : await listUserProjects(u.id),
     // Lecture seule STRICTE : uniquement le superviseur. Un `user` peut écrire
     // (créer/agir) mais ne voit/écrit que ses propres créations.
     isReadOnly: role === "supervisor",
@@ -79,12 +80,16 @@ export const canWrite = (user) => !!(user && !isReadOnly(user));
 // Secrets, Archives et Écosystème/Utilisateurs sont masqués. Les Déploiements
 // restent accessibles via le modal de détail de tâche (`data-goto="deployments"`)
 // — pas d'onglet dédié. `admin`/`supervisor`/`user` conservent toutes les pages.
+// Ensemble COMPLET des pages du panneau : `admin`, `supervisor` et `user`
+// partagent le MÊME périmètre de pages (seule la capacité d'ÉCRITURE diffère —
+// ADR-002). Source unique pour éviter la duplication de la liste entre ces rôles.
+const ALL_PAGES = ["projects", "overview", "tasks", "recettes", "evaluations", "e2etests", "decisions", "artifacts", "adr", "sprints", "features", "e2esecrets", "archives", "ecosystem", "workspaces", "users"];
 export const ROLE_PAGES = {
-  admin: ["projects", "overview", "tasks", "recettes", "evaluations", "e2etests", "decisions", "artifacts", "adr", "sprints", "features", "e2esecrets", "archives", "ecosystem", "workspaces", "users"],
-  supervisor: ["projects", "overview", "tasks", "recettes", "evaluations", "e2etests", "decisions", "artifacts", "adr", "sprints", "features", "e2esecrets", "archives", "ecosystem", "workspaces", "users"],
+  admin: ALL_PAGES,
+  supervisor: ALL_PAGES,
   evaluateur: ["projects", "features", "e2etests", "evaluations"],
   executeur: ["projects", "overview", "tasks", "recettes", "evaluations", "e2etests", "decisions", "adr", "features", "workspaces"],
-  user: ["projects", "overview", "tasks", "recettes", "evaluations", "e2etests", "decisions", "artifacts", "adr", "sprints", "features", "e2esecrets", "archives", "ecosystem", "workspaces", "users"],
+  user: ALL_PAGES,
 };
 export function allowedPages(role) {
   return ROLE_PAGES[role] || ROLE_PAGES.user;

@@ -1679,6 +1679,12 @@ export async function createEvaluation({ project, title, description, featureIds
 // `itemId` (optionnel) : rattache la pièce à un ÉLÉMENT précis de l'évaluation
 // (via `meta.itemId` côté registre) — sans `itemId`, la pièce reste au niveau de
 // l'évaluation. Contrat `evaluation_doc_add` (plan MCP …-mcp-20260922-113243).
+//
+// GARDE CIBLÉE : cette fonction n'appelle PAS `assertPieceAllowed` — les photos
+// et vidéos sont ADMISES comme pièces d'une recette de l'évaluateur. La garde
+// photo/vidéo reste portée par `POST /api/pieces` (`addPiece` →
+// `assertPieceAllowed`) pour les pièces CLIENT de sprint. Ne pas ajouter de garde
+// de nature ici.
 export async function addEvaluationDocument({ evaluationId, mode, filename, dataBase64, artifactId, nature, title, path, url, itemId }) {
   if (!evaluationId) throw new Error("evaluationId requis");
   const item = itemId !== undefined && itemId !== null && itemId !== "" ? { itemId: Number(itemId) } : {};

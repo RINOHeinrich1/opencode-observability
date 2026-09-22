@@ -3021,6 +3021,12 @@ const server = createServer(async (req, res) => {
       const html = /\.md$/i.test(d.path) ? marked.parse(raw) : null;
       return sendJson(res, 200, { title: d.title || basename(d.path), html, raw: html ? null : raw });
     }
+    // Pièces d'une recette de l'ÉVALUATEUR (lien | document | photo | vidéo) —
+    // GARDE CIBLÉE : AUCUNE restriction de nature ici, l'évaluateur joint
+    // librement ses preuves visuelles (captures, photos, vidéos de parcours).
+    // La garde photo/vidéo ne vise QUE les pièces CLIENT de sprint : elle est
+    // portée par POST /api/pieces (`pilot.assertPieceAllowed`, voir l.1941) et
+    // NE DOIT JAMAIS être appliquée sur cette route.
     const evalDocAction = path.match(/^\/api\/evaluations\/([^/]+)\/documents$/);
     if (evalDocAction && req.method === "POST") {
       const b = await readBody(req);

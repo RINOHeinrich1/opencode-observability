@@ -58,7 +58,7 @@ const EXECUTEUR_ALLOWED_API = [
   "/api/projects", "/api/repos", "/api/pieces",
   "/api/features", "/api/rules", "/api/links", "/api/cardinality", "/api/sprints",
   "/api/docs", "/api/e2e-tests", "/api/e2e/jobs", "/api/e2e/agent-sessions", "/api/e2e/file",
-  "/api/e2e-vars", "/api/recettes", "/api/tasks", "/api/plans", "/api/events",
+  "/api/e2e-vars", "/api/recettes", "/api/cadrages", "/api/tasks", "/api/plans", "/api/events",
   "/api/deployments", "/api/decisions", "/api/batches", "/api/adr-vigilances", "/api/artifacts",
 ];
 // Interdits EXPLICITES (défense en profondeur) : secrets E2E et gestion des
@@ -74,11 +74,25 @@ const EXECUTEUR_WRITE_PATTERNS = [
   /^\/api\/pieces$/,
   /^\/api\/recettes$/,
   /^\/api\/recettes\/[^/]+\/(items|documents|session|finish|tasks)(\/.*)?$/,
+  // Alias « Cadrage technique » (ADR-001) — mêmes capacités que /api/recettes*.
+  /^\/api\/cadrages$/,
+  /^\/api\/cadrages\/[^/]+\/(items|documents|session|finish|tasks)(\/.*)?$/,
   /^\/api\/e2e-tests\/[^/]+\/run$/,
   /^\/api\/adr-vigilances\/[^/]+\/resolve$/,
   /^\/api\/tasks$/,
   /^\/api\/tasks\/[^/]+\/(edit|archive|restore)$/,
 ];
+
+// --- Alias de routes « Cadrage technique » (ADR-001) -----------------------
+// `/api/cadrages*` est un ALIAS ADDITIF de `/api/recettes*` (mêmes handlers ;
+// AUCUNE route supprimée). L'historique et les appels legacy `/api/recettes*`
+// (pilot.mjs, autres rôles) restent strictement inchangés. La réécriture est
+// appliquée APRÈS le contrôle ACL : chaque rôle reste maître de son périmètre
+// (l'exécuteur autorise explicitement `/api/cadrages*` — cf. ROLE_ACL).
+const CADRAGE_ROUTE_RE = /^\/api\/cadrages(?=\/|$)/;
+function aliasCadrageRoute(p) {
+  return CADRAGE_ROUTE_RE.test(p) ? p.replace(/^\/api\/cadrages/, "/api/recettes") : p;
+}
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1577,7 +1591,7 @@ function listOpencodeUnits() {
 // --- Router ----------------------------------------------------------------
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
-  const path = url.pathname;
+  let path = url.pathname;
   try {
     await pruneSessions();
 
@@ -1616,6 +1630,11 @@ const server = createServer(async (req, res) => {
     // ACL rôles restreints (ADR-002) : refus 403 FAIL-CLOSED AVANT toute route
     // (`evaluateur`, `executeur` — dispatcher unique `enforceRoleAcl`).
     if (enforceRoleAcl(user, path, req.method, res)) return;
+
+    // Alias « Cadrage technique » (ADR-001) : `/api/cadrages*` → `/api/recettes*`
+    // (mêmes handlers). Appliqué APRÈS l'ACL (le périmètre du rôle est évalué sur
+    // le chemin demandé) et AVANT les gardes de propriété / lecture seule.
+    path = aliasCadrageRoute(path);
 
     // Rôle SUPERVISEUR / lecture seule (v0.9.29) : accès en LECTURE (GET)
     // uniquement. Toute méthode d'écriture (POST/PUT/DELETE/PATCH) est refusée

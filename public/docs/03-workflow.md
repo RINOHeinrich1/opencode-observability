@@ -10,9 +10,9 @@
 ```
 queued → started → planning → awaiting_validation → planned → in_progress → done
                                                                           │
-                                                              [recette]   ▼
-                                          recette auto-entrée (v0.7) : pending → in_progress → done
-                                          (session dédiée agent-recette → éléments → « Terminer la recette »)
+                                                              [cadrage]   ▼
+                                          cadrage technique (v0.7) : pending → in_progress → done
+                                          (session dédiée agent-recette → éléments de cadrage → « Terminer le cadrage »)
                                           └─→ nouvelles tâches (rework/bug/improvement/feature) liées à la tâche
 ```
 
@@ -26,51 +26,61 @@ queued → started → planning → awaiting_validation → planned → in_progr
 | `in_progress` | Plans en exécution | orchestrator |
 | `rework` | Reprise après rejet (review) — **non terminal** depuis v0.2.1 | panneau/orchestrator |
 | `done` | Tous les plans terminés | orchestrator |
-| recette `pending/in_progress/done` | Opération de recette (v0.7) : pas faite → en cours (session `agent-recette`) → faite | auto à `done` + humain |
+| recette `pending/in_progress/done` | Cadrage technique (v0.7, ex-« recette » côté exécuteur, ADR-001) : pas fait → en cours (session `agent-recette`) → fait | auto à `done` + humain |
 
 **Attente humaine visible** (v0.4.1) : une tâche avec une décision `validation`/
 `review` en attente affiche un badge « ⏳ attente humaine » (la recette est suivie
 via sa propre table, pas une décision — v0.7.5).
 
-## 1bis. Recette = phase distincte (v0.7.0)
+## 1bis. Cadrage technique (exécuteur) = phase distincte (v0.7.0)
 
-- La recette est un **objet de PROJET** (v0.8.0) : titre propre, session
-  dédiée, couvrant **0..N tâches** (ou aucune — recette exploratoire). Créée
-  depuis l'onglet **Recettes** (projet + titre + tâches couvertes optionnelles).
-- **Contexte de la recette (sélecteurs multi-lignes, toutes cochées par défaut)** :
+> **ADR-001** — séparation de premier niveau : le **Cadrage technique** est un
+> outil de l'**exécuteur** (analyse du code réel + contexte → liste de tâches
+> techniques). Il est **distinct** de la future page **« Recette »** de
+> l'**évaluateur** (vérification produit). Côté UI, routes et prompt, l'exécuteur
+> voit « Cadrage technique » et ses « **éléments de cadrage** » ; les autres rôles
+> (évaluateur/admin/superviseur) conservent la terminologie « Recette » tant que
+> la page Recette évaluateur n'existe pas. Les tables (`recettes`, `recette_*`) et
+> l'historique sont **conservés** (renommage des surfaces, jamais des données).
+
+- Le cadrage technique est un **objet de PROJET** (v0.8.0) : titre propre, session
+  dédiée, couvrant **0..N tâches** (ou aucune — cadrage exploratoire). Créé
+  depuis l'onglet **Cadrage technique** (exécuteur) / **Recettes** (autres rôles)
+  (projet + titre + tâches couvertes optionnelles).
+- **Contexte du cadrage (sélecteurs multi-lignes, toutes cochées par défaut)** :
   **ADR** (`adrIds` → bloc « ADR de référence »), **Fonctionnalités** (`featureIds`
   → bloc « Fonctionnalités de référence ») et **Règles métier** (`ruleIds` → bloc
-  « Règles métier de référence »). Les sélections sont **rattachées à la recette**
+  « Règles métier de référence »). Les sélections sont **rattachées au cadrage**
   (`recette_adr` / `recette_fonctionnalites` / `recette_regles`) et **injectées
   dans le prompt** de la session `agent-recette`.
-- Le panneau propose **« Session de recette »** : lance la session dédiée
+- Le panneau propose **« Session du cadrage »** : lance la session dédiée
   `agent-recette` (contexte réel : titre, projet, tâches couvertes, commits,
-  artefacts, événements, plans). L'agent **enregistre les éléments** avec
+  artefacts, événements, plans). L'agent **enregistre les éléments de cadrage** avec
   **classification** (`rework` / `bug` / `improvement` / `feature`), **titre
   court**, **critère d'acceptation** et **scope** suggéré.
-- **« Terminer la recette »** → synthèse consolidée → **confirmation** → création
+- **« Terminer le cadrage »** → synthèse consolidée → **confirmation** → création
   de **nouvelles tâches** via `task_register` (typées, `recette_class`,
-  **liées** à la tâche initiale via `task_links`, scope transmis) → recette
+  **liées** à la tâche initiale via `task_links`, scope transmis) → cadrage
   `done`. La tâche initiale reste `done` et **intacte**.
 - **Modification / suppression des éléments à la clôture** (v0.9.59) : dans la
-  modale « Terminer la recette », chaque élément est **éditable** (classification,
+  modale « Terminer le cadrage », chaque élément est **éditable** (classification,
   titre, contenu, critère d'acceptation, scope, ordre d'exécution, vigilance) et
   **supprimable** avant confirmation ; les corrections sont persistées
   (`recette_item_update` / `recette_item_delete`). Un élément en cours d'édition
   doit être enregistré ou annulé avant de terminer.
 - **Clôture sans génération de tâches** (v0.9.59) : le bouton **« Terminer sans
-  créer de tâches »** clôt la recette (`done`) **sans** `task_register` ; les
-  éléments relevés restent consultables dans le détail de la recette. Utile pour
-  une recette exploratoire ou des constats déjà traités ailleurs.
+  créer de tâches »** clôt le cadrage (`done`) **sans** `task_register` ; les
+  éléments relevés restent consultables dans le détail du cadrage. Utile pour
+  un cadrage exploratoire ou des constats déjà traités ailleurs.
 - **Création de tâche** : on peut lier des **tâches associées** (v0.6.0) avec une
   **nature de liaison** (« c'est là que le package a été créé ») — exploitées par
   atomic-plan (commits, plans, docs).
 
-### Gouvernance ADR en recette (points de vigilance bloquants)
+### Gouvernance ADR en cadrage technique (points de vigilance bloquants)
 
-Une recette peut révéler qu'une **décision d'architecture est manquante** ou
+Un cadrage technique peut révéler qu'une **décision d'architecture est manquante** ou
 **contredite**. Le framework en fait un **point de vigilance global** qui **bloque
-la terminaison** de la recette — jamais de validation silencieuse :
+la terminaison** du cadrage — jamais de validation silencieuse :
 
 - **Signalement** : `adr_report_missing` (ADR manquante pour une entité
   réellement discutée) ou `adr_report_conflict` (conflit code ↔ ADR, `recetteId`
@@ -79,7 +89,7 @@ la terminaison** de la recette — jamais de validation silencieuse :
 - **Blocage** : `recette_confirm` est **REFUSÉ** tant qu'un point est `open`, avec
   la **raison explicite** (« ADR manquant pour [entité] » / « Conflit d'ADR :
   [ancienne] vs [nouvelle] »). Le panneau effectue le **même pré-check** avant
-  toute création de tâches et **bloque** le bouton « Terminer la recette ».
+  toute création de tâches et **bloque** le bouton « Terminer le cadrage ».
 - **Levée tracée (2 canaux)** : `adr_vigilance_resolve` (raison **obligatoire**,
   `resolutionKind` = `adr_created`/`adr_deprecated`/`decision`/`manual`), ou la
   résolution de la **décision humaine** `kind='conflict'` (qui clôt le conflit).

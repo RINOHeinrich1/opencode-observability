@@ -328,9 +328,13 @@ export function buildReworkPrompt({ taskId, remarks, by }) {
 }
 
 /**
- * Prompt d'ouverture d'une session de RECETTE (agent-recette) — v0.8.0.
- * La recette est un objet de PROJET (titre + 0..N tâches couvertes).
- * Mission + cadre, jamais méthode.
+ * Prompt d'ouverture d'une session de CADRAGE TECHNIQUE (agent-recette,
+ * terminologie « cadrage technique » — ADR-001) — v0.8.0.
+ * Le cadrage technique est un objet de PROJET (titre + 0..N tâches couvertes) :
+ * il conserve le workflow historique de la recette (contexte + code réel →
+ * éléments → liste de tâches techniques). Mission + cadre, jamais méthode.
+ * NB : la fonction `buildRecettePrompt` et les outils MCP `recette_*` gardent
+ * leur nom (contrat `pilot.mjs`) — seule la terminologie du prompt change.
  */
 export function buildRecettePrompt({ project, repos, title, taskIds, docs = [], adrContext = "", featureContext = "", ruleContext = "" }) {
   const proj = (project && String(project).trim()) || "";
@@ -356,15 +360,15 @@ export function buildRecettePrompt({ project, repos, title, taskIds, docs = [], 
         "",
         "Documents de référence des projets couverts (à LIRE avant la vérification) :",
         ...docs.map((d, i) => `  ${i + 1}. [${d.kind}] ${d.title || d.docId || ""} — chemin : \`${d.path}\``),
-        "Lis chacun de ces fichiers : architecture technique (stack, archi cible, composants, patterns, structure de dossiers), specs fonctionnelles (User stories, règles métier) et scénarios Gherkin. Confronte le constat (comportement réel) à ces références — un écart entre le réalisé et l'architecture/spécification documentée est un élément de recette (rework/bug).",
+        "Lis chacun de ces fichiers : architecture technique (stack, archi cible, composants, patterns, structure de dossiers), specs fonctionnelles (User stories, règles métier) et scénarios Gherkin. Confronte le constat (comportement réel) à ces références — un écart entre le réalisé et l'architecture/spécification documentée est un élément de cadrage (rework/bug).",
         "",
       ]
     : [];
   return [
-    `Ouvre la recette **« ${title || proj} »** — projet : \`${proj}\`${repoBlock ? `\n${repoBlock}` : ""} (v0.9.0).`,
+    `Ouvre le cadrage technique **« ${title || proj} »** — projet : \`${proj}\`${repoBlock ? `\n${repoBlock}` : ""} (v0.9.0).`,
     "",
-    taskIds && taskIds.length ? `Tâches couvertes par cette recette : ${taskIds.join(", ")}.` : "Cette recette ne couvre aucune tâche (parcours global / exploratoire).",
-    "Une recette = **un seul projet** (produit). Sa portée réelle est couverte par les **repos transverses du projet** (ex: le projet mada-talk traverse les repos mada-talk et oniria). Chaque élément relevé est rattaché au **projet de la recette** (la future tâche y sera créée) — le `project` de `recette_item_add` doit être le projet de la recette, jamais un repo transverse.",
+    taskIds && taskIds.length ? `Tâches couvertes par ce cadrage technique : ${taskIds.join(", ")}.` : "Ce cadrage technique ne couvre aucune tâche (parcours global / exploratoire).",
+    "Un cadrage technique = **un seul projet** (produit). Sa portée réelle est couverte par les **repos transverses du projet** (ex: le projet mada-talk traverse les repos mada-talk et oniria). Chaque élément de cadrage relevé est rattaché au **projet du cadrage** (la future tâche y sera créée) — le `project` de `recette_item_add` doit être le projet du cadrage, jamais un repo transverse.",
     "Les tâches couvertes restent HISTORIQUEMENT INTACTES : tu ne les modifies jamais (aucune transition, aucun rework direct).",
     ...adrBlock,
     ...featureBlock,
@@ -373,11 +377,11 @@ export function buildRecettePrompt({ project, repos, title, taskIds, docs = [], 
     "Mission :",
     "- Récupère le contexte : `recette_get(<recetteId>)` (titre, projet, repos transverses, tâches couvertes, éléments), et pour chaque tâche couverte `task_get` (plans, commits, artefacts, tâches liées), `artifact_list`, `events_list`.",
     "- Accompagne l'utilisateur dans la vérification du périmètre : réponds à ses questions, aide-le à comprendre ce qui a été réalisé.",
-    "- Enregistre chaque élément détecté via `recette_item_add` avec **classification** (`rework`/`bug`/`improvement`/`feature`), **project** (= projet de la recette), **scope** (chemins), **titre court** et **critère d'acceptation** (ce qui permettra de considérer la tâche créée comme terminée).",
+    "- Enregistre chaque élément de cadrage détecté via `recette_item_add` avec **classification** (`rework`/`bug`/`improvement`/`feature`), **project** (= projet du cadrage), **scope** (chemins), **titre court** et **critère d'acceptation** (ce qui permettra de considérer la tâche créée comme terminée).",
     "- Regroupe les remarques liées ; **ne crée AUCUNE tâche pendant la discussion** (les tâches seront créées à la confirmation finale, via le panneau).",
-    "- Prépare la synthèse consolidée des éléments (type + action + projet) pour la présenter à l'utilisateur.",
+    "- Prépare la synthèse consolidée des éléments de cadrage (type + action + projet) pour la présenter à l'utilisateur.",
     "",
-    "Cadre : session dédiée à la recette ; l'utilisateur déclenchera « Terminer la recette » puis confirmera la liste.",
+    "Cadre : session dédiée au cadrage technique ; l'utilisateur déclenchera « Terminer le cadrage » puis confirmera la liste.",
   ].join("\n");
 }
 

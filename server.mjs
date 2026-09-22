@@ -104,19 +104,21 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const E2E_STORAGE_DIR = join(__dirname, "storage", "e2e");
 mkdirSync(join(E2E_STORAGE_DIR, "inbox"), { recursive: true });
 mkdirSync(join(E2E_STORAGE_DIR, "runs"), { recursive: true });
-// Pièces binaires des ÉVALUATIONS (recette évaluateur) — famille isolée.
-const EVALUATION_STORAGE_DIR = join(__dirname, "storage", "evaluation-docs");
-mkdirSync(EVALUATION_STORAGE_DIR, { recursive: true });
-// MAQUETTES d'évaluation (HTML/CSS/JS, données mock) — pages STATIQUES servies
+// Pièces binaires des RECETTES (recette évaluateur) — famille isolée.
+const RECETTE_DOC_DIR = join(__dirname, "storage", "recette-docs");
+mkdirSync(RECETTE_DOC_DIR, { recursive: true });
+// MAQUETTES de recette (HTML/CSS/JS, données mock) — pages STATIQUES servies
 // par le panneau via `GET /api/recettes/:id/maquette/*`. Le tool MCP
 // `recette_maquette_add` écrit dans CE répertoire (même chemin des deux
 // côtés). Garde anti-traversée stricte au service.
-const EVALUATION_MAQUETTE_DIR = process.env.EVALUATION_MAQUETTE_DIR || join(__dirname, "storage", "evaluation-maquettes");
-mkdirSync(EVALUATION_MAQUETTE_DIR, { recursive: true });
-// RAPPORTS de PERFORMANCE + jobs de lancement asynchrone (`perf-jobs`). Le
-// runner `perf-runner.mjs` écrit `report.json`/`report.md` ici.
-const EVALUATION_PERF_DIR = process.env.EVALUATION_PERF_DIR || join(__dirname, "storage", "evaluation-perf");
-mkdirSync(join(EVALUATION_PERF_DIR, "jobs"), { recursive: true });
+// `EVALUATION_MAQUETTE_DIR` (legacy) reste en FALLBACK une release (transition).
+const RECETTE_MAQUETTE_DIR = process.env.RECETTE_MAQUETTE_DIR || process.env.EVALUATION_MAQUETTE_DIR || join(__dirname, "storage", "recette-maquettes");
+mkdirSync(RECETTE_MAQUETTE_DIR, { recursive: true });
+// RAPPORTS de PERFORMANCE (tests standard) + jobs de lancement asynchrone
+// (`perf-jobs`). Le runner `perf-runner.mjs` écrit `report.json`/`report.md` ici.
+// `EVALUATION_PERF_DIR` (legacy) reste en FALLBACK une release (transition).
+const RECETTE_PERF_DIR = process.env.RECETTE_PERF_DIR || process.env.EVALUATION_PERF_DIR || join(__dirname, "storage", "recette-perf");
+mkdirSync(join(RECETTE_PERF_DIR, "jobs"), { recursive: true });
 const PUBLIC_DIR = join(__dirname, "public");
 const PORT = Number(process.env.PORT || 4000);
 const HOST = process.env.HOST || "127.0.0.1";
@@ -3035,8 +3037,8 @@ const server = createServer(async (req, res) => {
     // Pièce binaire d'une évaluation (document/photo/vidéo) — AVANT /:id.
     if (path === "/api/recettes/file" && req.method === "GET") {
       const rel = url.searchParams.get("p") || "";
-      const abs = normalize(join(EVALUATION_STORAGE_DIR, rel));
-      if (!abs.startsWith(EVALUATION_STORAGE_DIR + "/") || !existsSync(abs)) return sendJson(res, 404, { error: "introuvable" });
+      const abs = normalize(join(RECETTE_DOC_DIR, rel));
+      if (!abs.startsWith(RECETTE_DOC_DIR + "/") || !existsSync(abs)) return sendJson(res, 404, { error: "introuvable" });
       const ext = extname(abs).toLowerCase();
       // MIME photo/vidéo étendus : vidéos de parcours (iPhone .mov, .avi, .mkv,
       // .m4v) et images (.heic, .bmp, .tiff) servies *inline* comme .mp4/.webm.
@@ -3072,8 +3074,8 @@ const server = createServer(async (req, res) => {
     if (evalMaquette && req.method === "GET") {
       let rel = "";
       try { rel = decodeURIComponent(evalMaquette[2]); } catch { return sendJson(res, 400, { error: "chemin invalide" }); }
-      const abs = normalize(join(EVALUATION_MAQUETTE_DIR, decodeURIComponent(evalMaquette[1]), rel));
-      if (!abs.startsWith(EVALUATION_MAQUETTE_DIR + "/") || !existsSync(abs) || !statSync(abs).isFile()) return sendJson(res, 404, { error: "maquette introuvable" });
+      const abs = normalize(join(RECETTE_MAQUETTE_DIR, decodeURIComponent(evalMaquette[1]), rel));
+      if (!abs.startsWith(RECETTE_MAQUETTE_DIR + "/") || !existsSync(abs) || !statSync(abs).isFile()) return sendJson(res, 404, { error: "maquette introuvable" });
       const ext = extname(abs).toLowerCase();
       const MAQUETTE_MIME = {
         ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8",
@@ -3169,7 +3171,7 @@ const server = createServer(async (req, res) => {
       const e = (await registry().query("SELECT recette_id FROM recettes WHERE recette_id = $1", [recetteId])).rows[0];
       if (!e) return sendJson(res, 404, { error: "recette inconnue" });
       if (!b || !b.url || !/^https?:\/\//i.test(String(b.url))) return sendJson(res, 400, { error: "url préprod requise (http/https)" });
-      const PERF_JOBS = join(EVALUATION_PERF_DIR, "jobs");
+      const PERF_JOBS = join(RECETTE_PERF_DIR, "jobs");
       const jobId = `perf-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       try { mkdirSync(PERF_JOBS, { recursive: true }); } catch {}
       const payload = {
@@ -3204,7 +3206,7 @@ const server = createServer(async (req, res) => {
     const evalPerfJob = path.match(/^\/api\/recettes\/([^/]+)\/perf-jobs\/([^/]+)$/);
     if (evalPerfJob && req.method === "GET") {
       const jobId = decodeURIComponent(evalPerfJob[2]);
-      const resultFile = join(EVALUATION_PERF_DIR, "jobs", `${jobId}.result.json`);
+      const resultFile = join(RECETTE_PERF_DIR, "jobs", `${jobId}.result.json`);
       if (!existsSync(resultFile)) return sendJson(res, 200, { jobId, status: "RUNNING" });
       try {
         const r = JSON.parse(readFileSync(resultFile, "utf8"));

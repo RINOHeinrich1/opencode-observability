@@ -1712,7 +1712,7 @@ export async function addCadrageDocument({ cadrageId, mode, filename, dataBase64
   }
   // mode import
   if (!dataBase64 || !filename) throw new Error("fichier requis (mode import)");
-  const docDir = "/root/orchestrator-panel/storage/recette-docs";
+  const docDir = "/root/orchestrator-panel/storage/cadrage-docs";
   const fs = await import("node:fs");
   fs.mkdirSync(docDir, { recursive: true });
   const safeName = String(filename).replace(/[^\w.\-]+/g, "_");
@@ -1767,7 +1767,7 @@ export async function createRecette({ project, title, description, featureIds, r
 }
 
 // Rattache une PIÈCE à une évaluation : lien (URL), document/photo/vidéo
-// (upload base64) ou artefact existant. Stockage binaire : storage/evaluation-docs.
+// (upload base64) ou artefact existant. Stockage binaire : storage/recette-docs.
 // `itemId` (optionnel) : rattache la pièce à un ÉLÉMENT précis de l'évaluation
 // (via `meta.itemId` côté registre) — sans `itemId`, la pièce reste au niveau de
 // l'évaluation. Contrat `recette_doc_add` (plan MCP …-mcp-20260922-113243).
@@ -1791,7 +1791,7 @@ export async function addRecetteDocument({ recetteId, mode, filename, dataBase64
     return taskOrchestrator("recette_doc_add", { recetteId, source: "import", path: String(link), nature: nature || "lien", title: title || String(link), ...item });
   }
   if (!dataBase64 || !filename) throw new Error("fichier requis (mode import)");
-  const docDir = "/root/orchestrator-panel/storage/evaluation-docs";
+  const docDir = "/root/orchestrator-panel/storage/recette-docs";
   const fs = await import("node:fs");
   fs.mkdirSync(docDir, { recursive: true });
   const safeName = String(filename).replace(/[^\w.\-]+/g, "_");

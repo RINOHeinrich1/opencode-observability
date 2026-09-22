@@ -5,6 +5,33 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## 2026-09-22 · Renommage des dossiers racines de stockage (`storage/`) — alignement ADR-004 (v0.9.74)
+
+Les **dossiers racines** de `storage/` conservaient l'ancienne appellation
+ADR-004 et étaient **trompeurs** : `storage/recette-docs/` contenait en réalité
+les documents d'un **CADRAGE** et `storage/evaluation-docs/` les pièces d'une
+**RECETTE**. Décision tracée : **renommer** les racines — voir le nouveau doc
+[`17-convention-stockage.md`](17-convention-stockage.md). **Aucune suppression**
+(renommage uniquement).
+
+- **Racines renommées** (ordre imposé anti-collision) : `recette-docs →
+  cadrage-docs` ; `evaluation-docs → recette-docs` ; `evaluation-maquettes →
+  recette-maquettes` ; `evaluation-perf → recette-perf`. Racines inchangées :
+  `ref-docs/`, `e2e/`.
+- **Code aligné** : `server.mjs` (`RECETTE_DOC_DIR`, `RECETTE_MAQUETTE_DIR`,
+  `RECETTE_PERF_DIR` + usages), `pilot.mjs` (`addCadrageDocument` →
+  `cadrage-docs` ; `addRecetteDocument` → `recette-docs`), MCP `db.mjs`
+  (`RECETTE_MAQUETTE_DIR`) et MCP `index.mjs` (`RECETTE_PERF_DIR`).
+- **Compatibilité env** : les variables legacy `EVALUATION_MAQUETTE_DIR` /
+  `EVALUATION_PERF_DIR` sont conservées en **fallback** une release ; les
+  nouvelles `RECETTE_MAQUETTE_DIR` / `RECETTE_PERF_DIR` deviennent canoniques.
+- **CLI `scripts/rename-storage-roots.mjs`** : **idempotent**, **réversible**
+  (`--revert`), **audité** (journal JSON), **`--dry-run` par défaut**, **ordre
+  imposé**. L'application effective (`--apply`) est une **décision humaine**.
+- **`.gitignore`** aligné sur les 4 nouvelles racines (+ journal d'audit).
+- **Fenêtre de maintenance** : renommage des racines + code doivent être déployés
+  ensemble (redémarrage du panneau — acte d'orchestration).
+
 ## 2026-09-22 · Harmonisation de la prose des prompts d'agents (« recette » → « cadrage technique ») (v0.9.73)
 
 Correction de la **prose** des définitions d'agents (`opencode-agents`) restée

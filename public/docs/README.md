@@ -26,6 +26,7 @@
 | 13 | [13-adr-et-artefacts.md](13-adr-et-artefacts.md) | **ADR structurées, famille `adr_*`, gouvernance ADR en recette & gestionnaire central d'artefacts** (table polymorphe `artifacts`) |
 | 14 | [14-pieces-client.md](14-pieces-client.md) | **Pièces client par projet** — natures admises (md/pdf/docx/lien Drive public), garde photo/vidéo, requalification sans perte des docs ADR-12, émergence, **limite de sécurité du lien public** |
 | 16 | [16-migration-role-user.md](16-migration-role-user.md) | **Migration et suppression du rôle `user`** (ADR-002) : migration idempotente / réversible / tracée (Ronald → exécuteur), retrait du parcours de création, fail-safe legacy `user` → `executeur` |
+| 17 | [17-convention-stockage.md](17-convention-stockage.md) | **Convention de nommage du stockage** (`storage/`) alignée sur ADR-004 : racines `cadrage-docs`, `recette-docs`, `recette-maquettes`, `recette-perf` + script de renommage |
 | — | [nomenclature-doc-type.md](nomenclature-doc-type.md) | **Nomenclature `doc_type`** — taxonomie du gestionnaire central d'artefacts (référentiel) |
 | — | [CHANGELOG.md](CHANGELOG.md) | Historique des versions / Version history |
 

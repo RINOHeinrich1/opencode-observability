@@ -16,8 +16,15 @@ panel.db-wal
 npm-debug.log*
 .DS_Store
 
-# Documents uploadés par les sessions recette (données runtime, hors versioning)
+# Dossiers racines de stockage runtime (documents de cadrage, pièces/maquettes/
+# rapports de recette) — données runtime, hors versioning (ADR-004, doc 17).
+storage/cadrage-docs/
 storage/recette-docs/
+storage/recette-maquettes/
+storage/recette-perf/
+
+# Journal d'audit du script de renommage des racines (données runtime)
+storage/.rename-storage-roots/
 
 # Résultats E2E Playwright (runs/vidéos — données runtime)
 storage/e2e/

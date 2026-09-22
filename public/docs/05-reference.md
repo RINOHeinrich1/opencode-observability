@@ -160,7 +160,7 @@ contexte d'un cadrage), `POST|PATCH|DELETE /api/recettes/:id/items[/:itemId]`,
 `a_traiter`/`non_retenu`), `POST /api/recettes/:id/verdicts`,
 `POST|DELETE /api/recettes/:id/documents[/:docId]` (`itemId` optionnel : pièce
 par élément), `GET /api/recettes/:id/documents/:docId/view`,
-`GET /api/recettes/file` (binaire + range, `storage/evaluation-docs`),
+`GET /api/recettes/file` (binaire + range, `storage/recette-docs`),
 `POST /api/recettes/:id/finish` (clôture **sans** tâches).
 **Reprise en cadrage** : `POST|DELETE /api/cadrages/:id/recette-items[/:itemId]` —
 `recetteItems` exposé sur `GET /api/cadrages/:id`.

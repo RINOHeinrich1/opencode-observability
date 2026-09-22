@@ -180,55 +180,34 @@ const EXECUTEUR_PROJECT_TABS = [
 const EXECUTEUR_ALLOWED_TABS = ['projects', 'overview', 'tasks', 'recettes', 'evaluations', 'e2etests', 'features', 'decisions', 'adr', 'workspaces'];
 
 // --- Terminologie « Cadrage technique » (ADR-001) --------------------------
-// Du point de vue de l'EXÉCUTEUR, l'entité historique « Recette » est un
-// « Cadrage technique » et ses éléments convertibles en tâches sont des
-// « éléments de cadrage ». Les autres rôles (évaluateur/admin/superviseur)
-// conservent la terminologie « Recette » tant que la page Recette de
-// l'évaluateur n'existe pas — aucune régression d'UX (libellés CONDITIONNELS).
+// L'entité historique « Recette » est un « Cadrage technique » (onglet
+// `recettes`) et ses éléments convertibles en tâches sont des « éléments de
+// cadrage ». Terminologie UNIQUE pour TOUS les rôles (admin / superviseur /
+// évaluateur / exécuteur) : plus aucune branche conditionnelle par rôle.
+// La page « Recette » de l'ÉVALUATEUR est DISTINCTE (`evaluations`) et garde sa
+// terminologie propre (aucun terme ici ne la concerne).
 function cadrageTerms() {
-  return IS_EXECUTEUR
-    ? {
-        entity: 'Cadrage technique',
-        entityLower: 'cadrage technique',
-        theEntity: 'le cadrage technique',
-        entities: 'Cadrages techniques',
-        entitiesLower: 'cadrages techniques',
-        newEntity: 'Nouveau cadrage',
-        empty: 'Aucun cadrage.',
-        finish: 'Terminer le cadrage',
-        detail: 'Détail du cadrage',
-        session: 'Session du cadrage',
-        sessionHint: 'Démarrer la session de cadrage (un cadrage = une session)',
-        sessionResume: 'Reprendre la session de cadrage en cours',
-        element: 'élément de cadrage',
-        elements: 'éléments de cadrage',
-        elementsCap: 'Éléments de cadrage',
-        docTitle: 'Documents du cadrage',
-        docAddTitle: 'Ajouter un document au cadrage',
-        docTo: 'au cadrage technique',
-        doneNoTasks: 'Cadrage terminé (aucune tâche créée).',
-      }
-    : {
-        entity: 'Recette',
-        entityLower: 'recette',
-        theEntity: 'la recette',
-        entities: 'Recettes',
-        entitiesLower: 'recettes',
-        newEntity: 'Nouvelle recette',
-        empty: 'Aucune recette.',
-        finish: 'Terminer la recette',
-        detail: 'Détail de la recette',
-        session: 'Session de la recette',
-        sessionHint: 'Démarrer la session de recette (une recette = une session)',
-        sessionResume: 'Reprendre la session de recette en cours',
-        element: 'élément de recette',
-        elements: 'éléments de recette',
-        elementsCap: 'Éléments',
-        docTitle: 'Documents de la recette',
-        docAddTitle: 'Ajouter un document à la recette',
-        docTo: 'à la recette',
-        doneNoTasks: 'Recette terminée (aucune tâche créée).',
-      };
+  return {
+    entity: 'Cadrage technique',
+    entityLower: 'cadrage technique',
+    theEntity: 'le cadrage technique',
+    entities: 'Cadrages techniques',
+    entitiesLower: 'cadrages techniques',
+    newEntity: 'Nouveau cadrage',
+    empty: 'Aucun cadrage.',
+    finish: 'Terminer le cadrage',
+    detail: 'Détail du cadrage',
+    session: 'Session du cadrage',
+    sessionHint: 'Démarrer la session de cadrage (un cadrage = une session)',
+    sessionResume: 'Reprendre la session de cadrage en cours',
+    element: 'élément de cadrage',
+    elements: 'éléments de cadrage',
+    elementsCap: 'Éléments de cadrage',
+    docTitle: 'Documents du cadrage',
+    docAddTitle: 'Ajouter un document au cadrage',
+    docTo: 'au cadrage technique',
+    doneNoTasks: 'Cadrage terminé (aucune tâche créée).',
+  };
 }
 
 // Base des routes « recettes » : l'exécuteur consomme l'ALIAS ADDITIF
@@ -569,7 +548,7 @@ async function loadAdrVigilances() {
     </tr>`;
   }).join('');
   box.innerHTML = `<table class="adr-vig-list"><thead><tr>
-      <th>Détection</th><th>Projet</th><th>Recette</th><th>Type</th><th>Entité / ADR</th><th>Raison</th><th>Statut</th><th>Résolution</th><th></th>
+      <th>Détection</th><th>Projet</th><th>Cadrage</th><th>Type</th><th>Entité / ADR</th><th>Raison</th><th>Statut</th><th>Résolution</th><th></th>
     </tr></thead><tbody>${rows}</tbody></table>`;
   box.querySelectorAll('[data-adr-vig-resolve]').forEach((b) => {
     b.addEventListener('click', async () => {
@@ -629,11 +608,11 @@ async function renderOverview() {
     `<div class="muted-sm">Registre : ${s.byStatus && Object.keys(s.byStatus).length ? 'connecté' : 'vide / non initialisé'}</div>` +
     cardinalitySectionHtml() +
     `<div class="section adr-vig-section">
-      <h3>Vigilances ADR (recettes)</h3>
-      <div class="muted-sm">Historique append-only des ADR manquantes / conflits remontés par les recettes et les tests. Un point OUVERT bloque « Terminer la recette ».</div>
+      <h3>Vigilances ADR (cadrages techniques)</h3>
+      <div class="muted-sm">Historique append-only des ADR manquantes / conflits remontés par les cadrages techniques et les tests. Un point OUVERT bloque « Terminer le cadrage ».</div>
       <div class="filters adr-vig-filters">
         ${currentProject ? '' : '<select id="adv-project" title="Filtrer par projet"></select>'}
-        <input id="adv-recette" placeholder="Recette (RECT-…)" value="${esc(adrVigFilters.recetteId)}">
+        <input id="adv-recette" placeholder="Cadrage (RECT-…)" value="${esc(adrVigFilters.recetteId)}">
         <select id="adv-type"><option value="">Type : tous</option><option value="missing">manquant</option><option value="conflict">conflit</option></select>
         <select id="adv-status"><option value="">Statut : tous</option><option value="open">ouvert</option><option value="resolved">résolu</option></select>
         <span class="date-filter"><span class="tagfilter-label">Détecté du</span><input type="date" id="adv-from" value="${esc(adrVigFilters.from)}"><span class="tagfilter-label">au</span><input type="date" id="adv-to" value="${esc(adrVigFilters.to)}"></span>
@@ -1666,7 +1645,7 @@ function e2eBadgeCell(t) {
 function recetteScopeChips(rec) {
   const project = (rec && rec.project) ? rec.project : '';
   const repos = (rec && Array.isArray(rec.repos)) ? rec.repos : [];
-  const projChip = project ? `<code class="chip-project" title="Projet (produit) de la recette">${esc(project)}</code>` : '';
+  const projChip = project ? `<code class="chip-project" title="Projet (produit) du cadrage">${esc(project)}</code>` : '';
   const repoChips = repos.length
     ? repos.map((rp) => `<code class="chip-repo" title="Repo transverse du projet (portée)">${esc(rp.repoId || rp.id || rp)}</code>`).join(' ')
     : '';
@@ -2842,7 +2821,7 @@ async function renderRecettes() {
   }
   document.getElementById('pane-recettes').innerHTML = `
     <h2>${T.entities}</h2>
-    <p class="muted-sm">${IS_EXECUTEUR ? 'Cadrages techniques — chaque cadrage couvre UN projet (produit) et 0..N tâches de ce projet ; les repos transverses du projet sont sa portée réelle. Titre et session dédiée.' : 'Opérations de vérification — chaque recette couvre UN projet (produit) et 0..N tâches de ce projet ; les repos transverses du projet sont sa portée réelle. Titre et session dédiée.'}</p>
+    <p class="muted-sm">Cadrages techniques — chaque cadrage couvre UN projet (produit) et 0..N tâches de ce projet ; les repos transverses du projet sont sa portée réelle. Titre et session dédiée.</p>
     ${batches.length ? `<div class="actions-section"><h3>Batches d'orchestration actifs <span class="muted-sm">(${batches.length})</span></h3><div class="project-cards">${batches.map(batchCard).join('')}</div></div>` : ''}
     <div class="filters">
       ${IS_EVALUATEUR ? '' : `<div class="status-tagfilter" id="rec-user-tagfilter" title="Afficher les ${T.entitiesLower} des utilisateurs sélectionnés (multi)">
@@ -3804,7 +3783,7 @@ async function recetteDetailModal(recetteId) {
         return `<div class="recette-item"><code class="muted-sm">${esc(tid)}</code><div class="recette-task">${tproj ? `<code class="chip-project">${esc(tproj)}</code>` : ''}<strong>${esc(ttl)}</strong>${req ? `<p class="muted-sm">${esc(req)}</p>` : ''}</div>${canEditRec ? `<button type="button" class="ghost rec-task-del" data-rec-task-del="${esc(tid)}" title="Détacher cette tâche (elle reste intacte)">✕ retirer</button>` : ''}</div>`;
       }).join('')}</div>${canEditRec ? `<div class="rec-tasks-add"><select id="rec-task-add"><option value="">+ Ajouter une tâche couverte…</option></select></div>` : ''}</div></div>` : `<p class="muted-sm">Aucune tâche couverte (${T.entityLower} exploratoire).</p>`}
       ${items.length ? `<div class="actions-section"><h3>${T.elementsCap} (${items.length})</h3><div class="recette-list">${items.map((it) => `<div class="recette-item"><span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span>${it.project ? `<code class="chip-project">${esc(it.project)}</code>` : ''}${it.execOrder != null ? `<span class="badge order-badge" title="Ordre d'exécution">ordre ${esc(it.execOrder)}</span>` : ''}${testIntentBadge(it)}${docIntentBadge(it)}${it.vigilance ? `<span class="badge danger" title="${esc(it.vigilance)}">⚠ vigilance</span>` : ''}<span>${esc(it.title || it.content.slice(0, 80))}</span>${canEditRec && it.status !== 'task_created' ? `<button type="button" class="ghost rec-item-del" data-rec-item-del="${it.id}" title="Retirer cet élément (fusion/consolidation)">✕</button>` : ''}</div>`).join('')}</div></div>` : ''}
-      ${(IS_EXECUTEUR || IS_ADMIN || IS_SUPERVISOR) ? `<div class="actions-section"><h3>Éléments de recette à traiter</h3><div class="recette-list">${(rec.evaluationItems || []).map((it) => `<div class="recette-item">${evalCategoryBadge(it.category)} ${evalSeverityBadge(it.severity)}<span>${esc(it.content)}</span><span class="muted-sm">repris par ce cadrage</span>${canEditRec ? `<button type="button" class="ghost rec-eval-item-del" data-rec-eval-item-del="${it.itemId}" title="Retirer la reprise (l'élément reste « à traiter »)">✕ retirer</button>` : ''}</div>`).join('') || '<p class="muted-sm">Aucun élément de recette évaluateur repris dans ce cadrage.</p>'}</div>${canEditRec ? `<div class="rec-tasks-add"><select id="rec-eval-item-add"><option value="">+ Reprendre un élément « à traiter »…</option></select></div>` : ''}</div>` : ''}
+      ${(IS_EXECUTEUR || IS_ADMIN || IS_SUPERVISOR) ? `<div class="actions-section"><h3>Éléments évaluateur à traiter</h3><div class="recette-list">${(rec.evaluationItems || []).map((it) => `<div class="recette-item">${evalCategoryBadge(it.category)} ${evalSeverityBadge(it.severity)}<span>${esc(it.content)}</span><span class="muted-sm">repris par ce cadrage</span>${canEditRec ? `<button type="button" class="ghost rec-eval-item-del" data-rec-eval-item-del="${it.itemId}" title="Retirer la reprise (l'élément reste « à traiter »)">✕ retirer</button>` : ''}</div>`).join('') || '<p class="muted-sm">Aucun élément évaluateur repris dans ce cadrage.</p>'}</div>${canEditRec ? `<div class="rec-tasks-add"><select id="rec-eval-item-add"><option value="">+ Reprendre un élément « à traiter »…</option></select></div>` : ''}</div>` : ''}
       <div class="actions-section"><h3>Fonctionnalités &amp; règles métier rattachées</h3>
         <div class="recette-list">
           ${recFeatures.map((f) => `<div class="recette-item"><code class="chip">${esc(f.ref || f.id)}</code>${f.emergent ? ` <span class="chip" title="Créé depuis ${T.theEntity} — marqué émergent">émergent</span>` : ''}<span>${esc((f.userStory || '').slice(0, 90))}</span></div>`).join('') || '<p class="muted-sm">Aucune fonctionnalité rattachée.</p>'}
@@ -4035,7 +4014,7 @@ async function recetteCreateModal() {
           <legend>Règles métier rattachées ${T.docTo} — contexte de l'agent <span class="muted-sm">(sélection multi-lignes ; bloc « Règles métier de référence » injecté). Toutes cochées par défaut.</span></legend>
           <div id="rm-rule-pick"><p class="muted-sm">Choisissez un projet pour afficher ses règles métier.</p></div>
         </fieldset>
-        <input id="rm-title" placeholder="${IS_EXECUTEUR ? 'titre court (ex: Cadrage technique du module chatbot)' : 'titre court (ex: Recette du module chatbot)'}" required>
+        <input id="rm-title" placeholder="titre court (ex: Cadrage technique du module chatbot)" required>
         <textarea id="rm-description" class="modal-textarea" placeholder="description longue (détail du périmètre vérifié) — optionnel"></textarea>
         <label class="modal-field">Tâches couvertes <span class="muted-sm">(0..N — tâches non encore recettées du projet)</span></label>
         <div id="rm-candidates" class="recette-candidates"><p class="muted-sm">Choisissez un projet puis « Charger les tâches disponibles ».</p></div>
@@ -4122,10 +4101,10 @@ async function recetteCreateModal() {
       ...features.map((x) => x.role).filter(Boolean),
       ...rules.flatMap((x) => x.roles || []),
     ])].sort();
-    featureBox.innerHTML = frSelectorHtml('feature', features, { prefix: 'rm-feature-pick', roles, projectId: proj, fromRecette: true });
-    bindFrSelector('rm-feature-pick', { projectId: proj, projectRoles: roles });
-    ruleBox.innerHTML = frSelectorHtml('rule', rules, { prefix: 'rm-rule-pick', roles, projectId: proj, fromRecette: true });
-    bindFrSelector('rm-rule-pick', { projectId: proj, projectRoles: roles });
+    featureBox.innerHTML = frSelectorHtml('feature', features, { prefix: 'rm-feature-pick', roles, projectId: proj, fromRecette: true, entityWord: 'cadrage' });
+    bindFrSelector('rm-feature-pick', { projectId: proj, projectRoles: roles, entityWord: 'cadrage' });
+    ruleBox.innerHTML = frSelectorHtml('rule', rules, { prefix: 'rm-rule-pick', roles, projectId: proj, fromRecette: true, entityWord: 'cadrage' });
+    bindFrSelector('rm-rule-pick', { projectId: proj, projectRoles: roles, entityWord: 'cadrage' });
   };
   const renderReposHint = () => {
     const proj = projects.find((p) => p.id === currentProject());
@@ -4284,11 +4263,11 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
   </div>`;
   const intro = readOnly
     ? (items.length
-      ? `<p>Éléments relevés lors ${IS_EXECUTEUR ? 'du cadrage technique' : 'de la recette'} (lecture seule) :</p>`
+      ? '<p>Éléments relevés lors du cadrage technique (lecture seule) :</p>'
       : '<p class="muted-sm">Aucun élément relevé.</p>')
     : (items.length
-      ? `<p>Éléments relevés — tu peux les <strong>modifier</strong> ou les <strong>supprimer</strong> avant de clôturer. À la confirmation, ils sont transformés en <strong>nouvelles tâches</strong> (titre + demande + critère d'acceptation) — ou termine ${IS_EXECUTEUR ? 'le cadrage' : 'la recette'} sans créer de tâche.</p>`
-      : `<p class="muted-sm">Aucun élément relevé : ${IS_EXECUTEUR ? 'le cadrage sera clôturé' : 'la recette sera clôturée'} sans créer de tâche.</p>`);
+      ? '<p>Éléments relevés — tu peux les <strong>modifier</strong> ou les <strong>supprimer</strong> avant de clôturer. À la confirmation, ils sont transformés en <strong>nouvelles tâches</strong> (titre + demande + critère d\'acceptation) — ou termine le cadrage sans créer de tâche.</p>'
+      : '<p class="muted-sm">Aucun élément relevé : le cadrage sera clôturé sans créer de tâche.</p>');
   const launchModeBlock = readOnly ? '' : `
     <fieldset class="pilot-fieldset" style="margin-top:12px">
       <legend>Lancement des tâches créées</legend>
@@ -4313,7 +4292,7 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
         ${readOnly
           ? '<button class="ghost" id="modal-cancel">Fermer</button>'
           : `<button class="ghost" id="modal-cancel">Annuler</button>
-             <button class="ghost" id="modal-finish-notasks" title="Clôturer la recette sans générer de tâches">Terminer sans créer de tâches</button>
+             <button class="ghost" id="modal-finish-notasks" title="Clôturer le cadrage sans générer de tâches">Terminer sans créer de tâches</button>
              <button class="approve" id="modal-confirm">Confirmer & terminer</button>`}
       </div>
       <div id="recette-finish-msg" class="msg"></div>
@@ -4461,7 +4440,7 @@ async function recetteItemsModal(recetteId, mode = 'finish') {
   noTasksBtn.onclick = async () => {
     const msg = document.getElementById('recette-finish-msg');
     if (hasOpenEdit()) { msg.textContent = 'Un élément est en cours d\'édition : enregistre-le ou annule-le avant de terminer.'; msg.className = 'msg error'; return; }
-    if (!confirm(`Clôturer ${T.theEntity} SANS générer de tâches ?\n\nLes éléments relevés restent consultables dans ${IS_EXECUTEUR ? 'le détail du cadrage' : 'le détail de la recette'}.`)) return;
+    if (!confirm(`Clôturer ${T.theEntity} SANS générer de tâches ?\n\nLes éléments relevés restent consultables dans le détail du cadrage.`)) return;
     const original = noTasksBtn.innerHTML;
     setBtnBusy(noTasksBtn, 'Clôture');
     if (confirmBtn) confirmBtn.disabled = true;
@@ -7363,7 +7342,7 @@ function frSelectorHtml(kind, items, opts = {}) {
   // Bouton « ＋ Créer une … manquante » : ADMIN uniquement (ADR-001). Le clic est
   // câblé par `bindFrSelector` (ouvre la modale de création puis coche l'élément).
   const createBtn = IS_ADMIN
-    ? `<button type="button" class="ghost" data-fr-create="${isRule ? 'rule' : 'feature'}" title="Créer une ${label} manquante (marquée émergente, rattachée à la recette/cadrage)">＋ Créer une ${label} manquante</button>`
+    ? `<button type="button" class="ghost" data-fr-create="${isRule ? 'rule' : 'feature'}" title="Créer une ${label} manquante (marquée émergente, rattachée à ${opts.entityWord ? `ce ${opts.entityWord}` : 'la recette/cadrage'})">＋ Créer une ${label} manquante</button>`
     : '';
   return `
     <div class="adr-pick" id="${esc(prefix)}" data-unit="${esc(unit)}" data-project-id="${esc(createProject)}" data-from-recette="${opts.fromRecette ? '1' : '0'}" data-recette-id="${esc(opts.recetteId || '')}">
@@ -7429,7 +7408,7 @@ function bindFrSelector(prefix, opts = {}) {
     row.className = 'adr-pick-row';
     row.dataset.search = [it.ref, meta].join(' ').toLowerCase();
     row.dataset.role = isRule ? (it.roleGlobal ? '__global__' : (Array.isArray(it.roles) ? it.roles.join(' ') : '')) : (it.role || '');
-    row.innerHTML = `<input type="checkbox" class="adr-pick-cb" value="${esc(it.id)}" checked><span class="adr-pick-head"><strong>${esc(ref)}</strong> ${badge} <span class="chip" title="Élément créé depuis la recette/cadrage">émergent</span></span><span class="adr-pick-meta">${meta ? adrCellText(meta, 120) : '<span class="muted-sm">—</span>'}</span>`;
+    row.innerHTML = `<input type="checkbox" class="adr-pick-cb" value="${esc(it.id)}" checked><span class="adr-pick-head"><strong>${esc(ref)}</strong> ${badge} <span class="chip" title="Élément créé depuis ${opts.entityWord ? `ce ${opts.entityWord}` : 'la recette/cadrage'}">émergent</span></span><span class="adr-pick-meta">${meta ? adrCellText(meta, 120) : '<span class="muted-sm">—</span>'}</span>`;
     const placeholder = list.querySelector('p.muted-sm');
     if (placeholder) placeholder.remove();
     list.prepend(row);
@@ -8316,7 +8295,7 @@ function recetteSectionHtml(recetteStatus, detail) {
   const rec = detail && detail.recette;
   if (!rec) {
     return `<div class="actions-section"><h3>${T.entity}</h3>
-      <p class="muted-sm">Cette tâche n'est couverte par ${IS_EXECUTEUR ? `aucun cadrage. Créez un cadrage (onglet <a href="#" onclick="goToTab('recettes'); return false;">Cadrage technique</a>)` : `aucune recette. Créez une recette (onglet <a href="#" onclick="goToTab('recettes'); return false;">Cadrage technique</a>)`} pour couvrir plusieurs tâches d'un même périmètre (1 ${T.entityLower} = 1 projet).</p>
+      <p class="muted-sm">Cette tâche n'est couverte par aucun cadrage. Créez un cadrage (onglet <a href="#" onclick="goToTab('recettes'); return false;">Cadrage technique</a>) pour couvrir plusieurs tâches d'un même périmètre (1 ${T.entityLower} = 1 projet).</p>
     </div>`;
   }
   const st = rec.status;

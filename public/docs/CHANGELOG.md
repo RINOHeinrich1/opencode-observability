@@ -5,6 +5,45 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## 2026-09-22 · Page « Recette » de l'évaluateur produit (onglet `evaluations`)
+
+Nouvelle page **dédiée à l'évaluateur produit** (vérification produit : cohérence,
+expérience utilisateur, design, performance), **objet de premier niveau distinct**
+du Cadrage technique (ADR-001/002). L'évaluateur décrit le **parcours évalué**,
+rattache **1..N fonctionnalités** (le **verdict** est porté par le lien, au niveau
+de la fonctionnalité) + **1..N règles métier**, enregistre des **éléments**
+(**recommandation** | **problème** : catégorie + sévérité + statut de suivi) et
+**joint des pièces** (lien, document, photo, vidéo). Cycle de vie à 3 statuts
+(`pending`/`in_progress`/`done`) — **aucune conversion en tâches**.
+
+- **Identifiant de code DISTINCT `evaluations`** (libellé UI « Recette ») : ne
+  réutilise pas l'entité/route `recettes` (ancre du **Cadrage technique** exécuteur).
+  Routes `/api/evaluations*` **additives** (aucune collision avec
+  `/api/recettes*` / `/api/cadrages*`).
+- **Registre / MCP `task-orchestrator`** : 4 tables (`evaluations`,
+  `evaluation_fonctionnalites` avec `verdict`/`verdict_comment`, `evaluation_regles`,
+  `evaluation_items`) — DDL `schema.sql` + `migrate()` ; **`SCHEMA_VERSION`**
+  incrémenté à `2026-09-22-recette-evaluateur` (apply une fois, idempotent). Famille
+  de **14 tools `evaluation_*`** (`evaluation_start/list/get`, `item_add/update/delete`,
+  `feature_link/unlink`, `rule_link/unlink`, `verdict_set`, `doc_add/remove`,
+  `evaluation_confirm`). Pièces via `artifacts` (`doc_type='evaluation_doc'`, famille
+  isolée — photo/vidéo autorisées, sans toucher la garde des pièces client).
+- **Panneau** : routes `/api/evaluations*` (liste/détail/items/verdicts/documents/
+  finish/file) + wrappers `pilot.mjs` (`createEvaluation`, `addEvaluationDocument`,
+  `addEvaluationItem`, `updateEvaluationItem`, `removeEvaluationItem`,
+  `setEvaluationVerdict`, `confirmEvaluation`).
+- **ACL rôle-aware (ADR-002)** : l'**évaluateur** accède à `/api/evaluations*`
+  (écriture limitée à **SES** recettes via `recetteOwnerScope` sur
+  `evaluations.created_by`) ; `/api/recettes*` et `/api/cadrages*` lui sont
+  **interdits** ; l'**exécuteur** voit les recettes évaluateur en **lecture seule** ;
+  **admin/superviseur** voient tout (superviseur en lecture seule).
+- **UI** : onglet **« Recette »** (id `evaluations`) — page liste + création
+  (parcours, fonctionnalités, règles, pièces) + détail (éléments catégorisés,
+  verdicts par fonctionnalité, pièces lien/document/photo/vidéo) ; filtre créateurs
+  **masqué** pour l'évaluateur (il ne voit que ses recettes).
+- **Docs** : `02-composants.md`, `03-workflow.md` (§1bis.ter), `05-reference.md`
+  (modèle de données, familles MCP, endpoints) mis à jour.
+
 ## 2026-09-22 · Bump `SCHEMA_VERSION` + documentation du modèle Sprint / Fonctionnalités / Règles
 
 Documentation d'écosystème mise à jour pour refléter le **code déployé** (MCP

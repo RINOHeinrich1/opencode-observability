@@ -36,12 +36,11 @@ via sa propre table, pas une décision — v0.7.5).
 
 > **ADR-001** — séparation de premier niveau : le **Cadrage technique** est un
 > outil de l'**exécuteur** (analyse du code réel + contexte → liste de tâches
-> techniques). Il est **distinct** de la future page **« Recette »** de
-> l'**évaluateur** (vérification produit). Côté UI, routes et prompt, l'exécuteur
-> voit « Cadrage technique » et ses « **éléments de cadrage** » ; les autres rôles
-> (évaluateur/admin/superviseur) conservent la terminologie « Recette » tant que
-> la page Recette évaluateur n'existe pas. Les tables (`recettes`, `recette_*`) et
-> l'historique sont **conservés** (renommage des surfaces, jamais des données).
+> techniques). Il est **distinct** de la page **« Recette »** de
+> l'**évaluateur** (vérification produit, §1bis.ter). Côté UI, routes et prompt,
+> l'exécuteur voit « Cadrage technique » et ses « **éléments de cadrage** ». Les
+> tables (`recettes`, `recette_*`) et l'historique sont **conservés** (renommage
+> des surfaces, jamais des données).
 
 - Le cadrage technique est un **objet de PROJET** (v0.8.0) : titre propre, session
   dédiée, couvrant **0..N tâches** (ou aucune — cadrage exploratoire). Créé
@@ -97,6 +96,38 @@ la terminaison** du cadrage — jamais de validation silencieuse :
   `GET /api/adr-vigilances` (projet, recette, type, statut, dates).
 
 Voir [`13-adr-et-artefacts.md`](13-adr-et-artefacts.md) §3.
+
+## 1bis.ter. Recette de l'évaluateur produit = phase distincte (v0.9.42)
+
+> **ADR-001/002** — la **Recette de l'évaluateur** est un **objet de premier
+> niveau distinct** du Cadrage technique. Identifiant de code **`evaluations`**
+> (libellé UI **« Recette »**) : elle ne réutilise **pas** l'entité/route
+> `recettes` (ancre du Cadrage technique exécuteur). Tables dédiées
+> `evaluations` / `evaluation_fonctionnalites` / `evaluation_regles` /
+> `evaluation_items`.
+
+- **Rôle** : l'**évaluateur** vérifie la **cohérence produit**, l'**expérience
+  réelle des utilisateurs**, le **design** et la **performance** — il ne se soucie
+  pas de *comment* c'est développé.
+- **Contenu** : l'évaluateur **décrit le parcours évalué** (`description`),
+  **rattache 1..N fonctionnalités** + **1..N règles métier**, **enregistre des
+  éléments** — **recommandations** ou **problèmes** (catégorie, **sévérité**
+  `low|medium|high|critical`, statut de suivi `open|treated|dismissed`) — et
+  **joint des pièces** : **lien**, **document**, **photo**, **vidéo**.
+- **Verdicts au niveau des fonctionnalités** : le verdict (`conforme` /
+  `non_conforme` / `a_ameliorer`) est **porté par le lien**
+  `evaluation_fonctionnalites` (il n'altère pas la table `fonctionnalites`).
+- **Cycle de vie** : 3 statuts — `pending` → `in_progress` → `done`
+  (`evaluation_confirm`). **AUCUNE conversion directe en tâches** : les éléments
+  restent attachés à la recette.
+- **Visibilité** (ADR-002) : l'évaluateur ne voit que **SES** recettes (filtre
+  `recetteOwnerScope` sur `evaluations.created_by`) ; **admin/superviseur** voient
+  **toutes** les recettes (superviseur en **lecture seule**) ; l'**exécuteur** les
+  voit en **lecture seule** (`/api/evaluations` en GET).
+- **Routes** : `/api/evaluations*` (liste, création, détail, `items`, `verdicts`,
+  `documents`, `finish`, `file`) — **additives**, sans collision avec
+  `/api/recettes*` / `/api/cadrages*`.
+- **MCP** : famille `evaluation_*` (voir `05-reference.md` §1bis).
 
 ## 1ter. Sprints, émergence et cardinalités (ADR-001)
 

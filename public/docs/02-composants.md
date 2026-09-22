@@ -20,9 +20,15 @@ les tâches, sans jamais écrire directement dans le registre.
 
 **Onglets** — *globaux* (aucun projet ouvert, `GLOBAL_TABS`) : Projets,
 Vue d'ensemble, Écosystème, Workspaces (admin), Utilisateurs (admin). *D'un
-projet ouvert* (`PROJECT_TABS`) : Vue d'ensemble, Tâches, Recettes, Tests E2E,
-Décisions, **Artefacts**, **ADR**, **Sprints**, **Fonctionnalités & Règles**,
-Vars & Secrets E2E, Archives.
+projet ouvert* (`PROJECT_TABS`) : Vue d'ensemble, Tâches, Recettes, **Recette**
+(évaluateur — id de code `evaluations`), Tests E2E, Décisions, **Artefacts**,
+**ADR**, **Sprints**, **Fonctionnalités & Règles**, Vars & Secrets E2E, Archives.
+
+> **Deux entités distinctes** (ADR-001) : l'onglet **Recettes** (`recettes`) porte
+> le **Cadrage technique** (exécuteur) ; le nouvel onglet **Recette**
+> (id de code **`evaluations`**, libellé UI « Recette ») porte la **recette de
+> l'ÉVALUATEUR PRODUIT** — objet de premier niveau distinct, sans conversion en
+> tâches. Ne pas confondre les identifiants de code (`recettes` vs `evaluations`).
 
 > Les onglets **Déploiements**, **Événements** et **Plans** ne figurent plus dans
 > la barre : ils sont accessibles via la section **« Consulter »** du **modal de
@@ -61,6 +67,21 @@ sélecteurs multi-lignes (toutes les options cochées par défaut) pour les **AD
 bloc « Fonctionnalités de référence ») et les **Règles métier** (`ruleIds` → bloc
 « Règles métier de référence ») ; ils sont rattachés à la recette et injectés dans
 le prompt de la session `agent-recette`.
+
+**Page « Recette » de l'évaluateur produit (v0.9.42, onglet `evaluations`)** :
+page **dédiée** à l'**évaluateur** (`ROLE_ACL.evaluateur`), **distincte** du
+Cadrage technique. L'évaluateur y **décrit le parcours évalué**, **rattache 1..N
+fonctionnalités** (le **verdict** — `conforme` / `non_conforme` / `a_ameliorer` —
+est porté par le lien, au niveau de la fonctionnalité) **et 1..N règles métier**,
+**enregistre des éléments** (recommandation | problème, catégorie + sévérité +
+statut de suivi) et **joint des pièces** (lien, document, photo, vidéo). Cycle de
+vie conservé : `pending` → `in_progress` → `done` — **aucune conversion en
+tâches**. **Visibilité** (ADR-002) : l'évaluateur ne voit que **SES** recettes
+(filtre `recetteOwnerScope` sur `evaluations.created_by`) ; admin/superviseur
+voient **toutes** les recettes (superviseur en lecture seule) ; l'**exécuteur**
+les voit en **lecture seule** (`/api/evaluations` en GET). Modales : création
+(parcours + fonctionnalités + règles + pièces), détail (éléments + verdicts +
+pièces), élément, pièces.
 
 **Observabilité** (v0.2.0 → v0.4.0) : dashboard KPI système (Flow ·
 Orchestration · Agents · Quality) — KPI cards (Lead Time P50/moyen/P95, Cycle
@@ -139,6 +160,8 @@ Git.
   polymorphe) + `artifact_projects` / `artifact_repos`, `plans`, `plan_steps`,
   `plan_incidents`, `plan_inconsistencies`, `plan_counters`, `plan_executions`,
   `plan_commits`, `recettes`, `recette_items`, `recette_tasks`, `e2e_tests`,
+  **`evaluations`**, **`evaluation_fonctionnalites`** (verdict par fonctionnalité),
+  **`evaluation_regles`**, **`evaluation_items`** (recommandation/problème),
   `e2e_test_projects` / `e2e_test_repos` / `e2e_test_params` / `e2e_vars`,
   `task_e2e`, `e2e_executions`, **`adr_conflicts`**, **`adr_vigilances`**,
   **`sprints`**, **`fonctionnalites`**, **`regles_metier`**, **`cardinality_signals`**,
@@ -170,6 +193,12 @@ lien sprint, `roles`/`role_global`), `migration_*` (`migration_start`/`_get`/`_l
 `recette_rule_link`/`recette_rule_unlink` (et `recette_feature_link` /
 `recette_adr_link` / `recette_sprint_link`). Voir
 [`13-adr-et-artefacts.md`](13-adr-et-artefacts.md) §2 et §4.
+
+**Famille MCP `evaluation_*`** (recette évaluateur, v0.9.42) : `evaluation_start`,
+`evaluation_list`, `evaluation_get`, `evaluation_item_add` / `_update` / `_delete`,
+`evaluation_feature_link` / `_unlink`, `evaluation_rule_link` / `_unlink`,
+`evaluation_verdict_set`, `evaluation_doc_add` / `_remove`, `evaluation_confirm`
+(clôture **sans** conversion en tâches). Détail : `05-reference.md` §1bis.
 
 ## 5. MCP métier & Skills
 

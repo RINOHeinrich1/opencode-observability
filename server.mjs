@@ -2958,8 +2958,10 @@ const server = createServer(async (req, res) => {
       const abs = normalize(join(EVALUATION_STORAGE_DIR, rel));
       if (!abs.startsWith(EVALUATION_STORAGE_DIR + "/") || !existsSync(abs)) return sendJson(res, 404, { error: "introuvable" });
       const ext = extname(abs).toLowerCase();
-      const type = /^\.(webm|mp4)$/.test(ext) ? (ext === ".mp4" ? "video/mp4" : "video/webm")
-        : (/^\.(png|jpe?g|gif|webp)$/.test(ext) ? `image/${ext === ".jpg" || ext === ".jpeg" ? "jpeg" : ext.slice(1)}`
+      // MIME photo/vidéo étendus : vidéos de parcours (iPhone .mov, .avi, .mkv,
+      // .m4v) et images (.heic, .bmp, .tiff) servies *inline* comme .mp4/.webm.
+      const VIDEO_MIME = { ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".avi": "video/x-msvideo", ".mkv": "video/x-matroska", ".m4v": "video/x-m4v" };
+      const type = VIDEO_MIME[ext] || (/^\.(png|jpe?g|gif|webp|heic|bmp|tiff)$/.test(ext) ? `image/${ext === ".jpg" || ext === ".jpeg" ? "jpeg" : ext.slice(1)}`
         : (/^\.pdf$/.test(ext) ? "application/pdf"
         : (/^\.json$/.test(ext) ? "application/json; charset=utf-8" : "application/octet-stream")));
       res.setHeader("Content-Type", type);

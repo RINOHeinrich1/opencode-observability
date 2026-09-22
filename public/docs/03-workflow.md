@@ -129,6 +129,41 @@ Voir [`13-adr-et-artefacts.md`](13-adr-et-artefacts.md) §3.
   `/api/recettes*` / `/api/cadrages*`.
 - **MCP** : famille `evaluation_*` (voir `05-reference.md` §1bis).
 
+### Workflow admin → exécuteur des éléments de recette (v0.9.66)
+
+> **ADR-001/002** — les éléments de recette de l'évaluateur (recommandations /
+> problèmes) **ne sont plus convertis automatiquement en tâches**. L'**admin**
+> marque chaque élément « **à traiter** » (décision tracée, **distincte** du statut
+> de suivi) ; l'**exécuteur** n'accède **qu'aux éléments « à traiter »**, qu'il
+> **reprend en contexte** d'un **cadrage technique** — c'est le cadrage qui produit
+> les tâches techniques.
+
+- **Décision admin** : `POST /api/evaluations/:id/items/:itemId/decision`
+  (**ADMIN-ONLY**, 403 sinon) → tool `evaluation_item_decision`
+  (`pending` | `a_traiter` | `non_retenu`), `decided_at`/`decided_by` tracés.
+  L'évaluateur **informe** (il ne décide pas) ; le **statut de suivi**
+  (`open`/`treated`/`dismissed`) reste **distinct** de la **décision**.
+- **Exécuteur (lecture seule, ADR-002)** : la page « Recette » lui est accessible
+  en **lecture seule** (onglet `evaluations`) ; `GET /api/evaluations/:id` **filtre
+  côté serveur** les éléments pour ne renvoyer que `decision='a_traiter'`. La liste
+  `GET /api/evaluations` expose `treatable_count` (compteur « à traiter ») et
+  `GET /api/evaluations/treatable?project=` liste les éléments à traiter (entrée de
+  sélection d'un cadrage).
+- **Reprise en cadrage technique** : `POST /api/recettes/:id/evaluation-items`
+  (alias `/api/cadrages/:id/evaluation-items`) rattache un élément « à traiter »
+  au cadrage ; `DELETE …/evaluation-items/:itemId` le détache. La **garde
+  « a_traiter »** est portée par le registre (un élément non « à traiter » est
+  refusé). Le cadrage expose ses éléments repris (`evaluationItems` sur
+  `GET /api/recettes/:id`) et le traçage « **repris par le cadrage X** »
+  (`reprisPar` par élément dans le détail de l'évaluation).
+- **Pièces par élément** : `POST /api/evaluations/:id/documents` accepte `itemId`
+  (pièce rattachée à un **élément** précis — `meta.itemId`), sans table nouvelle.
+- **Prompt de cadrage** : `buildRecettePrompt` injecte un bloc « **Éléments de
+  recette évaluateur repris en contexte** » (itemId, catégorie, sévérité, contenu,
+  pièces) + la consigne que c'est **le cadrage** qui définit les tâches techniques.
+- **MCP** : `evaluation_item_decision`, `evaluation_items_treatable`,
+  `cadrage_evaluation_item_link`/`_unlink`/`_list` (voir `05-reference.md` §1bis).
+
 ## 1ter. Sprints, émergence et cardinalités (ADR-001)
 
 ### Cycle de vie d'un sprint

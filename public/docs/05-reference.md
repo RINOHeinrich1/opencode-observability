@@ -34,7 +34,8 @@ Base `task_registry` :
 | `evaluations` | **Recette de l'ÉVALUATEUR produit** (v0.9.42, objet distinct du cadrage) | `evaluation_id` (`EVAL-…`), `project`, `title`, `description` (**parcours évalué**), `status` (pending/in_progress/done), `confirmed_at`, `created_by` (propriétaire — filtre évaluateur) |
 | `evaluation_fonctionnalites` | Fonctionnalités évaluées (1..N) — **le VERDICT est porté par le lien** | `evaluation_id`, `fonctionnalite_id`, `verdict` (conforme/non_conforme/a_ameliorer), `verdict_comment` |
 | `evaluation_regles` | Règles métier évaluées (1..N) | `evaluation_id`, `regle_id` |
-| `evaluation_items` | Éléments de la recette évaluateur (**recommandation** \| **problème**) | `id`, `evaluation_id`, `content`, `category` (recommandation/probleme), `severity` (low/medium/high/critical), `discussion`, `status` (open/treated/dismissed) |
+| `evaluation_items` | Éléments de la recette évaluateur (**recommandation** \| **problème**) | `id`, `evaluation_id`, `content`, `category` (recommandation/probleme), `severity` (low/medium/high/critical), `discussion`, `status` (open/treated/dismissed), **`decision`** (pending/a_traiter/non_retenu — décision admin, v0.9.66), `decided_at`, `decided_by` |
+| `cadrage_evaluation_items` | **Reprise** d'un élément de recette évaluateur par un **cadrage technique** (traçage « repris par le cadrage X », v0.9.66) | `recette_id` (cadrage), `evaluation_item_id`, `created_at`, `taken_by` — unicité `(recette_id, evaluation_item_id)` |
 | `notifier_state` | High-water marks du notifier (v0.1.0) | `stream`, `last_id`, `last_ts` |
 | `notifier_dedup` | Déduplication des envois (v0.1.0) | `stream`, `key`, `sent_at` |
 | `audit_notifications` | Miroir des incidents/incohérences d'audit (v0.1.0) | `id`, `kind`, `audit_id`, `status`, `resolved_at` |
@@ -78,7 +79,7 @@ Base `task_registry` :
 | `adr_conversion_*` | `adr_convert`, `adr_conversion_link`, `adr_conversion_list` | Conversion ADR monolithique → ADR atomique (l'origine reste intacte) + lien historique |
 | `cardinality_*` | `cardinality_report`, `cardinality_signals_list`, `cardinality_signal_resolve` | Agrégat de traçage des cardinalités heuristiques (vues « sans ADR / sans fonctionnalité / sans sprint », émergents) + signaux (clôture **tracée**, raison obligatoire) |
 | `recette_rule_link` / `recette_rule_unlink` | (idem `recette_feature_link`/`_unlink`, `recette_adr_link`/`_unlink`, `recette_sprint_link`/`_unlink`) | Rattachement d'une recette à ses règles / fonctionnalités / ADR / sprints (contexte de la session `agent-recette`) |
-| `evaluation_*` | `evaluation_start`, `evaluation_list`, `evaluation_get`, `evaluation_item_add`/`_update`/`_delete`, `evaluation_feature_link`/`_unlink`, `evaluation_rule_link`/`_unlink`, `evaluation_verdict_set`, `evaluation_doc_add`/`_remove`, `evaluation_confirm` | **Recette de l'évaluateur produit** (v0.9.42) — objet distinct du cadrage : parcours évalué, fonctionnalités (verdict au niveau du lien) + règles métier, éléments recommandation/problème, pièces (lien/document/photo/vidéo), clôture **sans** conversion en tâches |
+| `evaluation_*` | `evaluation_start`, `evaluation_list`, `evaluation_get`, `evaluation_item_add`/`_update`/`_delete`, `evaluation_item_decision`, `evaluation_items_treatable`, `cadrage_evaluation_item_link`/`_unlink`/`_list`, `evaluation_feature_link`/`_unlink`, `evaluation_rule_link`/`_unlink`, `evaluation_verdict_set`, `evaluation_doc_add`/`_remove`, `evaluation_confirm` | **Recette de l'évaluateur produit** (v0.9.42 ; workflow admin → exécuteur v0.9.66) — objet distinct du cadrage : parcours évalué, fonctionnalités (verdict au niveau du lien) + règles métier, éléments recommandation/problème, **décision admin « à traiter »** + **reprise en cadrage technique**, pièces (lien/document/photo/vidéo), clôture **sans** conversion en tâches |
 | `*_delete` | `sprint_delete`, `feature_delete`, `rule_delete` (aussi `project_delete`, `repo_delete`, `doc_delete`, `piece_delete`, `task_delete`) | Suppression explicite (le `sprint_delete` est refusé sur le sprint par défaut ; cascade ADR sur double confirmation) |
 | `*_mark_implemented` | `feature_mark_implemented`, `rule_mark_implemented` | Qualification d'implémentation avec **origine** requise (`ecosystem` / `hors_ecosystem`) — idempotent, n'écrit jamais l'émergence |
 
@@ -143,15 +144,24 @@ Statut initial **`Proposé`** ; l'**acceptation est une décision humaine**.
 tâches générées, durée moyenne). Consommation : `GET /api/tasks/<id>/consumption`.
 Recette : `POST /api/tasks/<id>/recette-session` · `POST /api/tasks/<id>/recette-finish`.
 
-**Recette évaluateur** (v0.9.42) — routes `/api/evaluations*` (ACL rôle-aware) :
+**Recette évaluateur** (v0.9.42 ; workflow admin → exécuteur v0.9.66) — routes
+`/api/evaluations*` (ACL rôle-aware) :
 `GET /api/evaluations` (liste — filtre `recetteOwnerScope` : l'évaluateur ne voit
-que **ses** recettes), `POST /api/evaluations` (création), `GET /api/evaluations/:id`
-(détail : éléments + verdicts + règles + pièces), `POST|PATCH|DELETE
-/api/evaluations/:id/items[/:itemId]`, `POST /api/evaluations/:id/verdicts`,
-`POST|DELETE /api/evaluations/:id/documents[/:docId]`,
-`GET /api/evaluations/:id/documents/:docId/view`, `GET /api/evaluations/file`
-(binaire + range, `storage/evaluation-docs`), `POST /api/evaluations/:id/finish`
-(clôture **sans** tâches).
+que **ses** recettes ; champ **`treatable_count`**), `POST /api/evaluations`
+(création), `GET /api/evaluations/:id` (détail : éléments + verdicts + règles +
+pièces ; **rôle-aware** — l'exécuteur ne reçoit que les éléments `a_traiter`, avec
+`decision`/`decidedAt`/`decidedBy`, `reprisPar` et `itemId` sur les pièces),
+`GET /api/evaluations/treatable?project=` (éléments « à traiter » — entrée de
+contexte d'un cadrage), `POST|PATCH|DELETE /api/evaluations/:id/items[/:itemId]`,
+`POST /api/evaluations/:id/items/:itemId/decision` (**ADMIN-ONLY** — décision
+`a_traiter`/`non_retenu`), `POST /api/evaluations/:id/verdicts`,
+`POST|DELETE /api/evaluations/:id/documents[/:docId]` (`itemId` optionnel : pièce
+par élément), `GET /api/evaluations/:id/documents/:docId/view`,
+`GET /api/evaluations/file` (binaire + range, `storage/evaluation-docs`),
+`POST /api/evaluations/:id/finish` (clôture **sans** tâches).
+**Reprise en cadrage** : `POST|DELETE /api/recettes/:id/evaluation-items[/:itemId]`
+(alias `/api/cadrages/:id/evaluation-items[/:itemId]`) — `evaluationItems` exposé
+sur `GET /api/recettes/:id`.
 
 ## 4. Configuration
 

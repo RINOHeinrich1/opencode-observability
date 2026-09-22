@@ -5,6 +5,40 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## 2026-09-22 · Workflow admin → exécuteur des éléments de recette évaluateur (v0.9.66)
+
+Les éléments de recette de l'**évaluateur produit** (recommandations / problèmes)
+**ne sont plus convertis automatiquement en tâches**. L'**admin** marque chaque
+élément « **à traiter** » ou non (décision tracée, **distincte** du statut de
+suivi) ; l'**exécuteur** n'accède **qu'aux éléments « à traiter »** et les
+**reprend en contexte** d'un **cadrage technique** — c'est le cadrage qui produit
+les tâches techniques (ADR-001/002).
+
+- **Registre / MCP `task-orchestrator`** : `evaluation_items` gagne
+  **`decision`** (`pending`/`a_traiter`/`non_retenu`), `decided_at`, `decided_by` ;
+  nouvelle table **`cadrage_evaluation_items`** (reprise cadrage ↔ élément).
+  Nouveaux tools : **`evaluation_item_decision`**, **`evaluation_items_treatable`**,
+  **`cadrage_evaluation_item_link`**/`_unlink`/`_list` ; `evaluation_doc_add`
+  accepte **`itemId`** (pièce par élément) ; `evaluation_get` expose
+  `decision`/`decidedAt`/`decidedBy`/`reprisPar` et `cadrage_get` expose
+  `evaluationItems`.
+- **Panneau** : route **`POST /api/evaluations/:id/items/:itemId/decision`
+  ADMIN-ONLY** (garde explicite `user.role !== "admin" → 403`, car le pattern
+  d'écriture évaluateur matcherait sinon) ; **`GET /api/evaluations/treatable?project=`** ;
+  **`POST|DELETE /api/recettes/:id/evaluation-items[/:itemId]`** (alias
+  `/api/cadrages/...`) + ACL exécuteur ; `GET /api/evaluations/:id` **rôle-aware**
+  (l'exécuteur ne reçoit que les éléments `a_traiter`) ; `treatable_count` sur la
+  liste ; `evaluationItems` sur `GET /api/recettes/:id`.
+- **UI** : badge de **décision admin** + boutons **À traiter / Non retenu** (admin) ;
+  badge « **repris par le cadrage X** » ; **pièces par élément** ; section
+  « **Éléments de recette à traiter** » dans la modale de cadrage (reprendre /
+  retirer) ; onglet **Recette en lecture seule** pour l'exécuteur (compteur
+  « à traiter »).
+- **Prompt** : `buildRecettePrompt` injecte le bloc « **Éléments de recette
+  évaluateur repris en contexte** » (catégorie, sévérité, contenu, pièces).
+- **Docs** : `03-workflow.md` (§1bis.ter — workflow admin → exécuteur),
+  `05-reference.md` (table `cadrage_evaluation_items`, décision, routes/tools).
+
 ## 2026-09-22 · Page « Recette » de l'évaluateur produit (onglet `evaluations`)
 
 Nouvelle page **dédiée à l'évaluateur produit** (vérification produit : cohérence,

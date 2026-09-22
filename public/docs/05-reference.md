@@ -48,8 +48,8 @@ Base `task_registry` :
 | Table | Rôle | Colonnes clés |
 |---|---|---|
 | `sprints` | **Sprint** = unité de temps du projet | `id` (`SPRINT-…`), `project`, `title`, `start_date`, `end_date` (échéance → clôture **auto** si `auto_close`), `status` (`open`/`close`), `is_default` (au plus 1 par projet, index partiel unique), `auto_close`, `closed_at`, `close_reason` (`auto_echeance`/`manuel`), `reopened_at`, `session_id` (session IA `agent-sprint`) |
-| `fonctionnalites` | **Fonctionnalité** (`US-xxx`) | `id` (`FEAT-…`), `project`, `ref` (unique par projet), `role`, `user_story`, `sourced_piece_id` (pièce client source), `emergent`/`emergent_origin`, `implemented`/`implemented_origin`/`implemented_at`/`implemented_by`/`implemented_note` |
-| `regles_metier` | **Règle métier** (`RM-xxxx`) | `id` (`RMET-…`), `project`, `ref` (unique par projet), `content`, `sourced_piece_id`, `emergent`/`emergent_origin`, `implemented*`, **`roles`** (`TEXT[]`, association explicite 1..N), **`role_global`** (1 = s'applique à tous les rôles) |
+| `fonctionnalites` | **Fonctionnalité** (`US-xxx`) | `id` (`FEAT-…`), `project`, `ref` (unique par projet), `role`, `user_story`, `sourced_piece_id` (pièce client source), `emergent`/`emergent_origin`, `implemented`/`implemented_origin`/`implemented_at`/`implemented_by`/`implemented_note` (**axe Intégration**), **`dev_status`**/**`dev_status_source`**/**`dev_status_note`**/**`dev_status_at`**/**`dev_status_by`** (**axe Développement**, analyse du code — voir [`15-statuts-fonctionnalites-regles.md`](15-statuts-fonctionnalites-regles.md)) |
+| `regles_metier` | **Règle métier** (`RM-xxxx`) | `id` (`RMET-…`), `project`, `ref` (unique par projet), `content`, `sourced_piece_id`, `emergent`/`emergent_origin`, `implemented*`, **`respect_status`**/**`respect_status_note`**/**`respect_status_at`**/**`respect_status_by`** (**statut de RESPECT**, axe dédié), **`roles`** (`TEXT[]`, association explicite 1..N), **`role_global`** (1 = s'applique à tous les rôles) |
 | `cardinality_signals` | **Signaux de cardinalité heuristiques** (T6, append-only, **NON bloquants**) | `signal_id`, `project`, `entity_type` (recette/task/adr/sprint), `entity_id`, `missing`, `detail`, `status` (`open`/`resolved`), `origin`, `resolution`, `resolved_at`, `resolved_by` — index partiel unique « **1 seul signal open par entité** » |
 | `migrations` | **Session de migration** des anciens sprints (ADR-001 §6) | `migration_id`, `project` (unique), `sprint_id` (= **sprint par défaut** / ancien sprint), `session_id`, `status` (`open`/`in_progress`/`done`/`aborted`), `title`, `finished_at` |
 | `adr_conversions` | Lien **historique** ADR monolithique d'origine ↔ ADR atomique convertie (N converties pour 1 origine) | `conversion_id`, `original_adr_id`, `converted_adr_id`, unique par couple |
@@ -73,8 +73,8 @@ Base `task_registry` :
 | Famille | Outils | Objet |
 |---|---|---|
 | `sprint_*` | `sprint_start`, `sprint_list`, `sprint_get`, `sprint_close`, `sprint_reopen`, `sprint_report`, `sprint_attach_pieces`, `sprint_session_set`, `sprint_delete`, `sprint_migrate_elements` | Cycle de vie du sprint (durée paramétrable, clôture auto à l'échéance, reprise), rattachement de pièces, session `agent-sprint`, rapport, migration des éléments hérités (sans faux émergent) |
-| `feature_*` | `feature_register`, `feature_list`, `feature_get`, `feature_update`, `feature_delete`, `feature_mark_implemented`, `feature_context`, `feature_rule_link`/`_unlink`, `feature_gherkin_link`/`_unlink`, `feature_adr_link`/`_unlink`, `feature_sprint_link`/`_unlink` | CRUD fonctionnalités + liens N:N (règles, Gherkin, ADR, sprint), qualification d'implémentation (`ecosystem`/`hors_ecosystem`), bloc de contexte |
-| `rule_*` | `rule_register`, `rule_list`, `rule_get`, `rule_update`, `rule_delete`, `rule_mark_implemented`, `rule_context`, `rule_sprint_link`/`_unlink` | CRUD règles métier (dont `roles`/`role_global`) + liens sprint, qualification d'implémentation, bloc de contexte |
+| `feature_*` | `feature_register`, `feature_list`, `feature_get`, `feature_update`, `feature_delete`, `feature_mark_implemented`, **`feature_dev_status_set`**, `feature_context`, `feature_rule_link`/`_unlink`, `feature_gherkin_link`/`_unlink`, `feature_adr_link`/`_unlink`, `feature_sprint_link`/`_unlink` | CRUD fonctionnalités + liens N:N (règles, Gherkin, ADR, sprint), qualification d'implémentation (**axe Intégration**, `ecosystem`/`hors_ecosystem`), **statut de développement** (`feature_update`/`feature_dev_status_set`), `feature_list` expose **`gherkinTests`** (liens E2E 1..N, bulk) et `feature_get` expose **`evaluationVerdicts`** (lecture seule), bloc de contexte |
+| `rule_*` | `rule_register`, `rule_list`, `rule_get`, `rule_update`, `rule_delete`, `rule_mark_implemented`, **`rule_respect_status_set`**, `rule_context`, `rule_sprint_link`/`_unlink` | CRUD règles métier (dont `roles`/`role_global`) + liens sprint, qualification d'implémentation, **statut de RESPECT** (`rule_update`/`rule_respect_status_set`), bloc de contexte |
 | `migration_*` | `migration_start`, `migration_get`, `migration_list`, `migration_finish`, `migration_session_set` | Session de migration des anciens sprints (idempotente : 1 par projet), rattachement de la session IA |
 | `adr_conversion_*` | `adr_convert`, `adr_conversion_link`, `adr_conversion_list` | Conversion ADR monolithique → ADR atomique (l'origine reste intacte) + lien historique |
 | `cardinality_*` | `cardinality_report`, `cardinality_signals_list`, `cardinality_signal_resolve` | Agrégat de traçage des cardinalités heuristiques (vues « sans ADR / sans fonctionnalité / sans sprint », émergents) + signaux (clôture **tracée**, raison obligatoire) |
@@ -82,6 +82,7 @@ Base `task_registry` :
 | `evaluation_*` | `evaluation_start`, `evaluation_list`, `evaluation_get`, `evaluation_item_add`/`_update`/`_delete`, `evaluation_item_decision`, `evaluation_items_treatable`, `cadrage_evaluation_item_link`/`_unlink`/`_list`, `evaluation_feature_link`/`_unlink`, `evaluation_rule_link`/`_unlink`, `evaluation_verdict_set`, `evaluation_doc_add`/`_remove`, `evaluation_maquette_add`, **`evaluation_perf_run`** (tests standard), `evaluation_confirm` | **Recette de l'évaluateur produit** (v0.9.42 ; workflow admin → exécuteur v0.9.66 ; **tests standard** v0.9.68) — objet distinct du cadrage : parcours évalué, fonctionnalités (verdict au niveau du lien) + règles métier, éléments recommandation/problème, **décision admin « à traiter »** + **reprise en cadrage technique**, pièces (lien/document/photo/vidéo/**maquette**/**performance**), **tests standard** (parcours + erreurs console/réseau + Core Web Vitals + stress routes d'API, ADR-003) **distincts** des tests E2E, clôture **sans** conversion en tâches |
 | `*_delete` | `sprint_delete`, `feature_delete`, `rule_delete` (aussi `project_delete`, `repo_delete`, `doc_delete`, `piece_delete`, `task_delete`) | Suppression explicite (le `sprint_delete` est refusé sur le sprint par défaut ; cascade ADR sur double confirmation) |
 | `*_mark_implemented` | `feature_mark_implemented`, `rule_mark_implemented` | Qualification d'implémentation avec **origine** requise (`ecosystem` / `hors_ecosystem`) — idempotent, n'écrit jamais l'émergence |
+| `*_status_set` | `feature_dev_status_set` (**statut de développement** : `complet`/`non_demarre`/`partiel`/`incoherent` + **source** requise `analyse_code`/`evaluateur`/`agent`/`humain`), `rule_respect_status_set` (**statut de respect** : `respectee`/`non_respectee`) | Statuts **distincts** de l'implémentation et du verdict d'évaluation — idempotents, traçabilité `*_at`/`*_by` |
 
 > **Règle d'or** : à la création, l'agent **propose** (`featureIds`, `adrIds` en
 > `propose`) ; la **validation est HUMAINE** (en recette). Aucune auto-validation,
@@ -241,8 +242,8 @@ en cache au démarrage, le `--model` explicite garantit la prise en compte).
 | Table | Role | Key columns |
 |---|---|---|
 | `sprints` | **Sprint** = the project's unit of time | `id` (`SPRINT-…`), `project`, `title`, `start_date`, `end_date` (deadline → **auto** close if `auto_close`), `status` (`open`/`close`), `is_default` (at most 1 per project), `auto_close`, `closed_at`, `close_reason` (`auto_echeance`/`manuel`), `reopened_at`, `session_id` (`agent-sprint` session) |
-| `fonctionnalites` | **Feature** (`US-xxx`) | `id` (`FEAT-…`), `project`, `ref` (unique per project), `role`, `user_story`, `sourced_piece_id`, `emergent`/`emergent_origin`, `implemented`/`implemented_origin`/`implemented_at`/`implemented_by`/`implemented_note` |
-| `regles_metier` | **Business rule** (`RM-xxxx`) | `id` (`RMET-…`), `project`, `ref`, `content`, `sourced_piece_id`, `emergent`/`emergent_origin`, `implemented*`, **`roles`** (`TEXT[]`), **`role_global`** (1 = applies to all roles) |
+| `fonctionnalites` | **Feature** (`US-xxx`) | `id` (`FEAT-…`), `project`, `ref` (unique per project), `role`, `user_story`, `sourced_piece_id`, `emergent`/`emergent_origin`, `implemented`/`implemented_origin`/`implemented_at`/`implemented_by`/`implemented_note` (**Integration axis**), **`dev_status`**/**`dev_status_source`**/**`dev_status_note`**/**`dev_status_at`**/**`dev_status_by`** (**Development axis**, code analysis) |
+| `regles_metier` | **Business rule** (`RM-xxxx`) | `id` (`RMET-…`), `project`, `ref`, `content`, `sourced_piece_id`, `emergent`/`emergent_origin`, `implemented*`, **`respect_status`**/**`respect_status_note`**/**`respect_status_at`**/**`respect_status_by`** (**RESPECT status**, dedicated axis), **`roles`** (`TEXT[]`), **`role_global`** (1 = applies to all roles) |
 | `cardinality_signals` | **Heuristic cardinality signals** (append-only, **non-blocking**) | `signal_id`, `project`, `entity_type` (recette/task/adr/sprint), `entity_id`, `missing`, `detail`, `status` (`open`/`resolved`), `origin`, `resolution`, `resolved_at`, `resolved_by` — partial unique index "**one open signal per entity**" |
 | `migrations` | **Migration session** of legacy sprints (ADR-001 §6) | `migration_id`, `project` (unique), `sprint_id` (= default/legacy sprint), `session_id`, `status` (`open`/`in_progress`/`done`/`aborted`), `title`, `finished_at` |
 | `adr_conversions` | **Historical** link monolithic ADR ↔ converted atomic ADR | `conversion_id`, `original_adr_id`, `converted_adr_id`, unique per pair |
@@ -261,13 +262,15 @@ en cache au démarrage, le `--model` explicite garantit la prise en compte).
 
 **1bis. MCP tool families (registry)** — `sprint_*` (start/list/get/close/reopen/
 report/attach_pieces/session_set/delete/migrate_elements), `feature_*` (CRUD +
-`feature_mark_implemented`, `feature_context`, links rule/gherkin/adr/sprint),
-`rule_*` (CRUD + `rule_mark_implemented`, `rule_context`, sprint link, `roles`/
+`feature_mark_implemented`, **`feature_dev_status_set`**, `feature_context`, links
+rule/gherkin/adr/sprint), `rule_*` (CRUD + `rule_mark_implemented`,
+**`rule_respect_status_set`**, `rule_context`, sprint link, `roles`/
 `role_global`), `migration_*` (start/get/list/finish/session_set),
 `adr_conversion_*` (`adr_convert`, `adr_conversion_link`, `adr_conversion_list`),
 `cardinality_*` (report/signals_list/signal_resolve), `recette_rule_link`/
 `recette_rule_unlink` (and `recette_feature_link`/`recette_adr_link`/…), `*_delete`,
-`*_mark_implemented`. Agents **propose**, humans **validate** (never auto-validated).
+`*_mark_implemented`, **`*_status_set`** (development / respect). Agents **propose**,
+humans **validate** (never auto-validated).
 
 > **Legacy tables neutralized** (`legacy_*`, never dropped): `docs`,
 > `doc_projects`, `doc_repos`, `doc_attachments`, `recette_documents` — merged

@@ -33,7 +33,7 @@
 
 | Dépôt | Chemin hôte | Version actuelle |
 |---|---|---|
-| `opencode-observability` (panneau + docs) | `/root/orchestrator-panel` | `0.9.17` |
+| `opencode-observability` (panneau + docs) | `/root/orchestrator-panel` | `0.9.69` |
 | `opencode-agents` | `~/.config/opencode/agent` | `0.6.7` |
 | `opencode-notifier` | `~/.config/opencode/notifier` | `0.1.0` |
 | `opencode-mcp-task-orchestrator` | `~/.config/opencode/mcp/task-orchestrator` | `0.8.18` |
@@ -58,5 +58,6 @@
 
 ## 5. Version actuelle
 
-Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.9.17** (2026-09-06,
-Mécanisme de déploiement CI/CD par repo (champ deploy).)
+Voir [CHANGELOG.md](CHANGELOG.md) — dernière entrée : **v0.9.69** (2026-09-22,
+Statuts non ambigus des Fonctionnalités (Intégration / Développement / Tests E2E)
+et des Règles (Respect).)

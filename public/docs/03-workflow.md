@@ -117,6 +117,13 @@ Voir [`13-adr-et-artefacts.md`](13-adr-et-artefacts.md) §3.
 - **Verdicts au niveau des fonctionnalités** : le verdict (`conforme` /
   `non_conforme` / `a_ameliorer`) est **porté par le lien**
   `evaluation_fonctionnalites` (il n'altère pas la table `fonctionnalites`).
+- **Distinction verdict ↔ statut de développement** : le **verdict d'évaluation**
+  (conformité **produit**) et le **statut de développement**
+  (`complet`/`partiel`/`non_demarre`/`incoherent`, **analyse du code**, colonne
+  `fonctionnalites.dev_status`) sont **DEUX AXES DISTINCTS** — jamais fusionnés.
+  `feature_get` expose les verdicts en **lecture seule** (`evaluationVerdicts`) à
+  côté du statut de développement ; voir
+  [`15-statuts-fonctionnalites-regles.md`](15-statuts-fonctionnalites-regles.md).
 - **Cycle de vie** : 3 statuts — `pending` → `in_progress` → `done`
   (`evaluation_confirm`). **AUCUNE conversion directe en tâches** : les éléments
   restent attachés à la recette.

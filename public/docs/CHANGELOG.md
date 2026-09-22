@@ -5,6 +5,45 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## 2026-09-22 · Statuts non ambigus des Fonctionnalités (Intégration / Développement / Tests E2E) et des Règles (Respect) (v0.9.69)
+
+Le statut du référentiel **Fonctionnalités / Règles** (jugé ambigu : « on a juste
+État ») est **éclaté en axes distincts, non fusionnables** — voir le nouveau doc
+[`15-statuts-fonctionnalites-regles.md`](15-statuts-fonctionnalites-regles.md).
+
+- **Registre / MCP `task-orchestrator`** : colonnes **additives**
+  `fonctionnalites.dev_status` / `dev_status_source` / `dev_status_note` /
+  `dev_status_at` / `dev_status_by` (**statut de développement**, analyse du code)
+  et `regles_metier.respect_status` / `respect_status_note` / `respect_status_at` /
+  `respect_status_by` (**statut de RESPECT**) — `migrate()` **et** `schema.sql`,
+  `SCHEMA_VERSION` bumpé `2026-09-22-feature-rule-statuses`. Constantes
+  `DEV_STATUSES` / `DEV_STATUS_SOURCES` / `RESPECT_STATUSES` ; helpers
+  `applyDevStatusQualification` / `applyRespectStatusQualification` (source
+  **obligatoire**), fonctions `markFeatureDevStatus` / `markRuleRespectStatus` ;
+  `updateFeature` / `updateRule` étendus. `feature_list` expose **`gherkinTests`**
+  (liens E2E 1..N, **bulk, 0 N+1**) ; `feature_get` expose **`evaluationVerdicts`**
+  (lecture seule, axe distinct). Nouveaux tools **`feature_dev_status_set`** /
+  **`rule_respect_status_set`** ; descriptions `feature_get`/`feature_list`/
+  `rule_get`/`rule_list` mises à jour. **Réutilisation** de l'existant :
+  l'axe **Intégration** reste `implemented`/`implemented_origin` (**aucune colonne
+  dupliquée**).
+- **Panneau** : `pilot.updateFeature`/`updateRule` (passe-plats) + routes
+  `PUT /api/features/:id` / `PUT /api/rules/:id` (relais des champs).
+- **UI** : sous-onglet **Fonctionnalités** — colonnes **Intégration**,
+  **Développement**, **Tests E2E** (liens **cliquables** `data-fr-e2e` →
+  `e2eDetailModal`) + filtre `fr-f-dev` ; sous-onglet **Règles** — colonne
+  **Respect** (remplace « État ») + filtre `fr-r-respect` ; modales
+  création/édition (statut de développement + source/note ; statut de respect +
+  note) et modales détail (axes + **verdicts d'évaluation** en lecture seule,
+  distinction visible).
+- **Tests** : `scripts/test-feature-rule-statuses.mjs` (repo MCP, **base
+  PostgreSQL jetable**, 21 assertions) — pose/validation/effacement, **source
+  obligatoire**, **rétrocompatibilité stricte** de `implemented`, exposition bulk
+  `gherkinTests` et `evaluationVerdicts`.
+- **Docs** : nouveau `15-statuts-fonctionnalites-regles.md` ; `05-reference.md`
+  (colonnes + tools `*_status_set`), `02-composants.md` (onglet enrichi),
+  `03-workflow.md` (distinction verdict ↔ statut de développement).
+
 ## 2026-09-22 · Workflow admin → exécuteur des éléments de recette évaluateur (v0.9.66)
 
 Les éléments de recette de l'**évaluateur produit** (recommandations / problèmes)

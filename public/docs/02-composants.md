@@ -51,8 +51,17 @@ projet ouvert* (`PROJECT_TABS`) : Vue d'ensemble, Tâches, Recettes, **Recette**
 - Onglet **Fonctionnalités & Règles** : **2 sous-onglets** (`frSubTab`) —
   **Fonctionnalités** (`US-xxx`) et **Règles métier** (`RM-xxxx`) — chacun avec ses
   propres **filtres** (recherche, **rôle**, **sprint**, **émergence**,
-  **implémentation**, **lien manquant**) et son CRUD. Le sous-onglet Règles gère
-  l'**association explicite de rôles** (`roles`) et le **rôle global**
+  **implémentation**, **lien manquant**) et son CRUD. Le sous-onglet
+  **Fonctionnalités** expose **3 axes de statut distincts** : **Intégration**
+  (implémentée `ecosystem`/`hors_ecosystem`), **Développement**
+  (`complet`/`partiel`/`non_demarre`/`incoherent`, analyse du code, **source**
+  tracée) et **Tests E2E** (liens **cliquables** 1..N) — plus les **verdicts
+  d'évaluation** en lecture seule (axe distinct, voir
+  [`15-statuts-fonctionnalites-regles.md`](15-statuts-fonctionnalites-regles.md)) ;
+  filtre `fr-f-dev` par statut de développement. Le sous-onglet **Règles métier**
+  expose le **statut de RESPECT** (`respectee`/`non_respectee`, colonne
+  « Respect », filtre `fr-r-respect`) — **distinct** d'un statut de développement —
+  et gère l'**association explicite de rôles** (`roles`) et le **rôle global**
   (`role_global`).
 
 **Modale « Détail projet »** : onglets **Projet / Repos / Pièces client**

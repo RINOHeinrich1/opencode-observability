@@ -31,6 +31,10 @@ let tasksDateTo = localStorage.getItem('panel_task_date_to') || '';          // 
 let tasksMissingFilter = localStorage.getItem('panel_task_missing') || '';    // '' | tache_sans_adr | tache_sans_fonctionnalite | tache_sans_sprint | emergents
 let recettesMissingFilter = localStorage.getItem('panel_recette_missing') || ''; // '' | recette_sans_adr | recette_sans_fonctionnalite | recette_sans_sprint
 let sprintsMissingFilter = localStorage.getItem('panel_sprint_missing') || '';   // '' | sprint_sans_fonctionnalite | sprint_sans_regle
+// Filtre « créateurs » de la page Recette ÉVALUATEUR (masqué pour l'évaluateur :
+// il ne voit que SES recettes, le filtre n'a pas de sens).
+let evaluationsUserFilter = (() => { try { const v = JSON.parse(localStorage.getItem('panel_evaluation_users') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })();
+const persistEvaluationsUsers = () => localStorage.setItem('panel_evaluation_users', JSON.stringify(evaluationsUserFilter));
 const persistTasksMissing = () => { if (tasksMissingFilter) localStorage.setItem('panel_task_missing', tasksMissingFilter); else localStorage.removeItem('panel_task_missing'); };
 const persistRecettesMissing = () => { if (recettesMissingFilter) localStorage.setItem('panel_recette_missing', recettesMissingFilter); else localStorage.removeItem('panel_recette_missing'); };
 const persistSprintsMissing = () => { if (sprintsMissingFilter) localStorage.setItem('panel_sprint_missing', sprintsMissingFilter); else localStorage.removeItem('panel_sprint_missing'); };
@@ -129,6 +133,7 @@ const PROJECT_TABS = [
   ['overview', "Vue d'ensemble"],
   ['tasks', 'Tâches'],
   ['recettes', 'Recettes'],
+  ['evaluations', 'Recette'],
   ['e2etests', 'Tests E2E'],
   ['decisions', 'Décisions'],
   ['artifacts', 'Artefacts'],
@@ -140,7 +145,8 @@ const PROJECT_TABS = [
 ];
 
 // Rôle ÉVALUATEUR (ADR-002) : onglets restreints. Global = Projets (pour choisir
-// un projet) ; projet ouvert = Fonctionnalités & Règles, Tests E2E, Recettes.
+// un projet) ; projet ouvert = Fonctionnalités & Règles, Tests E2E, Recette
+// (évaluations — SA page, distincte du Cadrage technique exécuteur).
 // La page d'atterrissage est `features` (jamais `overview`).
 const EVALUATEUR_GLOBAL_TABS = [
   ['projects', 'Projets'],
@@ -148,9 +154,9 @@ const EVALUATEUR_GLOBAL_TABS = [
 const EVALUATEUR_PROJECT_TABS = [
   ['features', 'Fonctionnalités & Règles'],
   ['e2etests', 'Tests E2E'],
-  ['recettes', 'Recettes'],
+  ['evaluations', 'Recette'],
 ];
-const EVALUATEUR_ALLOWED_TABS = ['projects', 'features', 'e2etests', 'recettes'];
+const EVALUATEUR_ALLOWED_TABS = ['projects', 'features', 'e2etests', 'evaluations'];
 
 // Rôle EXÉCUTEUR (ADR-001/002) : Vue d'ensemble, Tâches, Cadrage technique
 // (onglet `recettes`), Tests E2E, Fonctionnalités & Règles, Décisions, ADR et
@@ -2783,6 +2789,473 @@ async function renderRecettes() {
   document.querySelectorAll('#pane-recettes [data-rec-detail]').forEach((b) => b.addEventListener('click', () => recetteDetailModal(b.dataset.recDetail)));
   document.querySelectorAll('#pane-recettes [data-batch-session]').forEach((b) => b.addEventListener('click', () => openBatchSession(b.dataset.batchSession, b)));
   document.querySelectorAll('#pane-recettes [data-batch-detail]').forEach((b) => b.addEventListener('click', () => batchDetailModal(b.dataset.batchDetail)));
+}
+
+// ===========================================================================
+// Page « Recette » de l'ÉVALUATEUR PRODUIT (T-20260922-100650-sbc1) — onglet
+// `evaluations`. Objet DISTINCT du Cadrage technique (`recettes`). L'évaluateur
+// décrit le PARCOURS ÉVALUÉ, rattache fonctionnalités (verdict) + règles métier,
+// enregistre des recommandations/problèmes et joint des pièces. Aucune
+// conversion en tâches. L'évaluateur ne voit que SES recettes.
+// ===========================================================================
+function evaluationsApiBase() { return '/api/evaluations'; }
+
+// Badge de statut d'une évaluation (3 statuts : pending | in_progress | done).
+function evaluationStatusBadge(st) {
+  const map = {
+    done: ['done', 'faite'],
+    in_progress: ['in_progress', 'en cours'],
+    pending: ['queued', 'pas faite'],
+  };
+  const [cls, label] = map[st] || ['queued', st || '—'];
+  return `<span class="badge ${cls}" title="Recette : ${esc(label)}">${esc(label)}</span>`;
+}
+const EVAL_CATEGORY_LABELS = { recommandation: 'Recommandation', probleme: 'Problème' };
+const EVAL_SEVERITY_LABELS = { low: 'faible', medium: 'moyenne', high: 'élevée', critical: 'critique' };
+const EVAL_VERDICT_LABELS = { conforme: 'conforme', non_conforme: 'non conforme', a_ameliorer: 'à améliorer' };
+const EVAL_ITEM_STATUS_LABELS = { open: 'ouvert', treated: 'traité', dismissed: 'écarté' };
+function evalCategoryBadge(c) { return `<span class="badge ${c === 'probleme' ? 'danger' : 'awaiting'}">${esc(EVAL_CATEGORY_LABELS[c] || c || '—')}</span>`; }
+function evalSeverityBadge(s) { return `<span class="badge eval-sev-${esc(s || 'medium')}" title="Sévérité">${esc(EVAL_SEVERITY_LABELS[s] || s || '—')}</span>`; }
+function evalVerdictBadge(v) {
+  if (!v) return '<span class="muted-sm">verdict non posé</span>';
+  const cls = v === 'conforme' ? 'done' : v === 'non_conforme' ? 'rejected' : 'in_progress';
+  return `<span class="badge ${cls}">${esc(EVAL_VERDICT_LABELS[v] || v)}</span>`;
+}
+
+// Carte d'une recette évaluateur.
+function evaluationCard(e) {
+  const canFinish = e.status !== 'done';
+  return `<article class="project-card">
+    <div class="project-card-head">
+      <strong class="recette-title" data-eval-detail="${esc(e.evaluation_id)}" title="Voir le détail">${esc(e.title || e.evaluation_id)}</strong>
+      <span class="rec-card-projs">${(e.repos || []).map((r) => `<code class="chip-repo">${esc(r.repoId || r)}</code>`).join(' ')}</span>
+      ${evaluationStatusBadge(e.status)}
+    </div>
+    <div class="project-card-body">
+      ${e.description ? `<div class="project-kv"><span class="lbl">Parcours évalué</span><span class="muted-sm">${esc(e.description.slice(0, 120))}${e.description.length > 120 ? '…' : ''}</span></div>` : ''}
+      <div class="project-kv"><span class="lbl">Fonctionnalités</span><span>${e.features_count || 0}</span></div>
+      <div class="project-kv"><span class="lbl">Règles métier</span><span>${e.rules_count || 0}</span></div>
+      <div class="project-kv"><span class="lbl">Éléments</span><span>${e.items_count || 0}</span></div>
+      <div class="project-kv"><span class="lbl">Pièces</span><span>${e.documents_count || 0}</span></div>
+      <div class="project-kv"><span class="lbl">Créée par</span><span>${esc(e.created_by || '—')}</span></div>
+    </div>
+    <div class="project-card-actions">
+      <button class="ghost" data-eval-detail="${esc(e.evaluation_id)}">Détail</button>
+      <button class="ghost" data-eval-pieces="${esc(e.evaluation_id)}">Pièces (${e.documents_count || 0})</button>
+      ${canFinish ? `<button class="approve" data-eval-finish="${esc(e.evaluation_id)}">Terminer la recette</button>` : ''}
+    </div>
+  </article>`;
+}
+
+async function renderEvaluations() {
+  const data = await api(evaluationsApiBase() + (currentProject ? `?project=${encodeURIComponent(currentProject)}` : ''));
+  let evals = data.evaluations || [];
+  const allCreators = [...new Set([...evals.map((e) => e.created_by || '—').filter(Boolean), ...evaluationsUserFilter])];
+  const renderUserUI = () => {
+    const box = document.getElementById('eval-user-tags');
+    const sel = document.getElementById('eval-user-add');
+    const clear = document.getElementById('eval-user-clear');
+    if (!box) return;
+    box.innerHTML = evaluationsUserFilter.length
+      ? evaluationsUserFilter.map((u) => `<span class="status-chip"><span class="chip-txt">${esc(u)}</span><button type="button" class="chip-x" data-user="${esc(u)}" title="Retirer « ${esc(u)} »">×</button></span>`).join('')
+      : '<span class="tagfilter-empty">tous les créateurs</span>';
+    sel.innerHTML = `<option value="">+ Ajouter…</option>` + allCreators.filter((u) => !evaluationsUserFilter.includes(u)).map((u) => `<option>${esc(u)}</option>`).join('');
+    clear.hidden = !evaluationsUserFilter.length;
+  };
+  const setUserFilter = (next) => { evaluationsUserFilter = [...new Set(next)]; persistEvaluationsUsers(); refreshActive(); };
+  // D012 : l'évaluateur ne voit que SES recettes → le filtre créateurs est masqué.
+  evals = IS_EVALUATEUR ? evals : evals.filter((e) => !evaluationsUserFilter.length || evaluationsUserFilter.includes(e.created_by || '—'));
+  document.getElementById('pane-evaluations').innerHTML = `
+    <h2>Recettes</h2>
+    <p class="muted-sm">Recette de l'<strong>évaluateur produit</strong> — décrit le parcours évalué, rattache des fonctionnalités (verdict) et des règles métier, enregistre des recommandations/problèmes et joint des pièces (lien, document, photo, vidéo). ${IS_EVALUATEUR ? 'Vous ne voyez que vos recettes.' : 'Admin/superviseur voient toutes les recettes.'}</p>
+    <div class="filters">
+      ${IS_EVALUATEUR ? '' : `<div class="status-tagfilter" id="eval-user-tagfilter" title="Afficher les recettes des évaluateurs sélectionnés (multi)">
+        <span class="tagfilter-label">Créateurs :</span>
+        <span class="tagfilter-tags" id="eval-user-tags"></span>
+        <select id="eval-user-add" title="Ajouter un créateur à filtrer"><option value="">+ Ajouter…</option></select>
+        <button type="button" class="ghost tagfilter-clear" id="eval-user-clear" hidden>tout afficher</button>
+      </div>`}
+      <button id="new-evaluation-btn" class="launch-btn">+ Nouvelle recette</button>
+    </div>
+    <div class="project-cards">${evals.map(evaluationCard).join('') || '<p class="muted">Aucune recette.</p>'}</div>`;
+  renderUserUI();
+  const sel = document.getElementById('eval-user-add');
+  if (sel) sel.addEventListener('change', () => { const v = sel.value; if (v && !evaluationsUserFilter.includes(v)) setUserFilter([...evaluationsUserFilter, v]); sel.value = ''; });
+  const box = document.getElementById('eval-user-tags');
+  if (box) box.addEventListener('click', (ev) => { const x = ev.target.closest('.chip-x'); if (x) setUserFilter(evaluationsUserFilter.filter((u) => u !== x.dataset.user)); });
+  const clear = document.getElementById('eval-user-clear');
+  if (clear) clear.addEventListener('click', () => setUserFilter([]));
+  document.getElementById('new-evaluation-btn').addEventListener('click', () => evaluationCreateModal());
+  document.querySelectorAll('#pane-evaluations [data-eval-detail]').forEach((b) => b.addEventListener('click', () => evaluationDetailModal(b.dataset.evalDetail)));
+  document.querySelectorAll('#pane-evaluations [data-eval-pieces]').forEach((b) => b.addEventListener('click', () => evaluationPiecesModal(b.dataset.evalPieces)));
+  document.querySelectorAll('#pane-evaluations [data-eval-finish]').forEach((b) => b.addEventListener('click', () => evaluationFinishConfirm(b.dataset.evalFinish)));
+}
+
+// Modale de CRÉATION : parcours évalué + fonctionnalités + règles + pièces.
+async function evaluationCreateModal() {
+  let projects = [];
+  try { projects = ((await api('/api/projects')).projects || []); } catch {}
+  const projOptions = projects.map((p) => `<option value="${esc(p.id)}" ${p.id === currentProject ? 'selected' : ''}>${esc(p.name || p.id)}</option>`).join('') || '<option value="">— aucun projet enregistré —</option>';
+  let allArtifacts = [];
+  try { allArtifacts = ((await api('/api/artifacts')).artifacts || []); } catch {}
+  showModal(`
+    <div class="modal modal-wide">
+      <h2>Nouvelle recette (évaluateur)</h2>
+      <form id="eval-modal-form" class="pilot-form">
+        <fieldset class="pilot-fieldset">
+          <legend>Projet <span class="muted-sm">(1 recette = 1 projet produit)</span></legend>
+          <select id="em-project">${projOptions}</select>
+          <div id="em-repos-hint" class="muted-sm" style="margin-top:6px"></div>
+        </fieldset>
+        <input id="em-title" placeholder="titre court (ex: Recette du parcours d'inscription)" required>
+        <textarea id="em-description" class="modal-textarea" placeholder="parcours évalué — ce que l'évaluateur a observé et vérifié (expérience utilisateur, design, performance)" required></textarea>
+        <fieldset class="pilot-fieldset">
+          <legend>Fonctionnalités évaluées <span class="muted-sm">(1..N — le verdict se pose ensuite sur chaque fonctionnalité)</span></legend>
+          <div id="em-feature-pick"><p class="muted-sm">Choisissez un projet pour afficher ses fonctionnalités.</p></div>
+        </fieldset>
+        <fieldset class="pilot-fieldset">
+          <legend>Règles métier évaluées <span class="muted-sm">(1..N)</span></legend>
+          <div id="em-rule-pick"><p class="muted-sm">Choisissez un projet pour afficher ses règles métier.</p></div>
+        </fieldset>
+        <div class="links-editor">
+          <div class="links-head"><label class="modal-field" style="margin:0">Pièces <span class="muted-sm">(lien, document, photo, vidéo)</span></label>
+          <button type="button" class="ghost" id="em-add-piece">+ Ajouter</button></div>
+          <div id="em-pieces-list"></div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="ghost" id="modal-cancel">Annuler</button>
+          <button type="submit" class="launch-btn">Créer</button>
+        </div>
+      </form>
+      <div id="eval-modal-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  const projectSel = document.getElementById('em-project');
+  const reposHint = document.getElementById('em-repos-hint');
+  const featureBox = document.getElementById('em-feature-pick');
+  const ruleBox = document.getElementById('em-rule-pick');
+  const renderReposHint = () => {
+    const proj = projects.find((p) => p.id === projectSel.value);
+    const repos = (proj && proj.repos) || [];
+    reposHint.innerHTML = repos.length
+      ? `Repos transverses du projet (portée réelle) : ${repos.map((r) => `<code class="chip-repo">${esc(r.repoId || r)}</code>`).join(' ')}`
+      : 'Aucun repo rattaché à ce projet.';
+  };
+  const loadFeaturesRules = async () => {
+    const proj = projectSel.value;
+    if (!proj) { featureBox.innerHTML = '<p class="muted-sm">Choisissez un projet.</p>'; ruleBox.innerHTML = '<p class="muted-sm">Choisissez un projet.</p>'; return; }
+    featureBox.innerHTML = '<p class="muted-sm">Chargement…</p>';
+    ruleBox.innerHTML = '<p class="muted-sm">Chargement…</p>';
+    let features = []; let rules = [];
+    try {
+      const [fd, rd] = await Promise.all([
+        api(`/api/features?projectId=${encodeURIComponent(proj)}`),
+        api(`/api/rules?projectId=${encodeURIComponent(proj)}`),
+      ]);
+      features = (fd && fd.features) || [];
+      rules = (rd && rd.rules) || [];
+    } catch {}
+    const roles = [...new Set([...features.map((x) => x.role).filter(Boolean), ...rules.flatMap((x) => x.roles || [])])].sort();
+    featureBox.innerHTML = frSelectorHtml('feature', features, { prefix: 'em-feature-pick', roles, selected: [] });
+    bindFrSelector('em-feature-pick');
+    ruleBox.innerHTML = frSelectorHtml('rule', rules, { prefix: 'em-rule-pick', roles, selected: [] });
+    bindFrSelector('em-rule-pick');
+  };
+  projectSel.addEventListener('change', () => { renderReposHint(); loadFeaturesRules(); });
+  renderReposHint();
+  loadFeaturesRules();
+
+  const piecesList = document.getElementById('em-pieces-list');
+  const addPieceRow = () => {
+    const row = document.createElement('div');
+    row.className = 'link-row';
+    row.innerHTML = `
+      <div class="rd-head">
+        <select class="ep-nature">
+          <option value="lien">Lien</option>
+          <option value="document">Document</option>
+          <option value="photo">Photo</option>
+          <option value="video">Vidéo</option>
+        </select>
+        <input class="ep-title" placeholder="titre (optionnel)">
+        <button type="button" class="ghost ep-del" title="Retirer">✕</button>
+      </div>
+      <select class="ep-mode">
+        <option value="link">Lien (URL)</option>
+        <option value="import">Importer un fichier</option>
+        <option value="artifact">Lier un artefact</option>
+      </select>
+      <input class="ep-url" placeholder="https://… (mode lien)">
+      <input class="ep-file" type="file" hidden>
+      <select class="ep-art" hidden><option value="">— artefact existant —</option>${allArtifacts.map((a) => `<option value="${esc(a.artifact_id)}">${esc((a.title || a.path).slice(0, 60))}</option>`).join('')}</select>`;
+    const modeSel = row.querySelector('.ep-mode');
+    const urlEl = row.querySelector('.ep-url');
+    const fileEl = row.querySelector('.ep-file');
+    const artEl = row.querySelector('.ep-art');
+    const sync = () => {
+      const m = modeSel.value;
+      urlEl.hidden = m !== 'link';
+      fileEl.hidden = m !== 'import';
+      artEl.hidden = m !== 'artifact';
+    };
+    modeSel.addEventListener('change', sync);
+    sync();
+    row.querySelector('.ep-del').addEventListener('click', () => row.remove());
+    piecesList.appendChild(row);
+  };
+  document.getElementById('em-add-piece').addEventListener('click', addPieceRow);
+
+  document.getElementById('eval-modal-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById('eval-modal-msg');
+    try {
+      const proj = projectSel.value;
+      if (!proj) throw new Error('Choisissez un projet.');
+      const documents = [];
+      for (const row of piecesList.querySelectorAll('.link-row')) {
+        const mode = row.querySelector('.ep-mode').value;
+        const nature = row.querySelector('.ep-nature').value;
+        const title = row.querySelector('.ep-title').value.trim() || undefined;
+        if (mode === 'link') {
+          const url = row.querySelector('.ep-url').value.trim();
+          if (url) documents.push({ mode: 'link', url, nature, title });
+        } else if (mode === 'import') {
+          const f = row.querySelector('.ep-file').files[0];
+          if (f) {
+            const buf = await f.arrayBuffer();
+            documents.push({ mode: 'import', filename: f.name, dataBase64: btoa(String.fromCharCode(...new Uint8Array(buf))), nature, title });
+          }
+        } else {
+          const art = row.querySelector('.ep-art').value;
+          if (art) documents.push({ mode: 'artifact', artifactId: art, nature, title });
+        }
+      }
+      await api(evaluationsApiBase(), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        project: proj,
+        title: document.getElementById('em-title').value.trim(),
+        description: document.getElementById('em-description').value.trim() || undefined,
+        featureIds: selectedFrIds('feature', 'em-feature-pick'),
+        ruleIds: selectedFrIds('rule', 'em-rule-pick'),
+        documents,
+        organizationId: currentOrg || undefined,
+      }) });
+      closeModal();
+      refreshActive();
+    } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
+  });
+}
+
+// Modale de DÉTAIL : éléments + verdicts fonctionnalités + règles + pièces.
+async function evaluationDetailModal(evaluationId) {
+  let d;
+  try { d = await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}`); } catch (e) { alert('Impossible de charger la recette : ' + (e.message || e)); return; }
+  const ev = d.evaluation || {};
+  const editable = ev.status !== 'done';
+  const items = ev.items || [];
+  const feats = ev.fonctionnalites || [];
+  const rules = ev.regles || [];
+  const verdictOptions = (cur) => ['', 'conforme', 'non_conforme', 'a_ameliorer'].map((v) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${v ? esc(EVAL_VERDICT_LABELS[v]) : '— verdict —'}</option>`).join('');
+  showModal(`
+    <div class="modal modal-wide">
+      <h2>Détail de la recette</h2>
+      <p class="muted">${esc(ev.title || evaluationId)} — <code>${esc(ev.project || '')}</code> ${evaluationStatusBadge(ev.status)}</p>
+      ${ev.description ? `<div class="eval-block"><span class="lbl">Parcours évalué</span><div class="muted-sm" style="white-space:pre-wrap">${esc(ev.description)}</div></div>` : ''}
+      <h3>Éléments <span class="muted-sm">(recommandations / problèmes)</span></h3>
+      <div class="recette-list" id="eval-items-list">
+        ${items.map((it) => `<div class="recette-item eval-item">
+          ${evalCategoryBadge(it.category)} ${evalSeverityBadge(it.severity)}
+          <span class="eval-item-content">${esc(it.content)}</span>
+          <span class="badge ${it.status === 'treated' ? 'done' : it.status === 'dismissed' ? 'queued' : 'in_progress'}">${esc(EVAL_ITEM_STATUS_LABELS[it.status] || it.status)}</span>
+          ${editable ? `<button class="ghost" data-eval-item-edit="${it.itemId}">Éditer</button><button class="danger" data-eval-item-del="${it.itemId}">Retirer</button>` : ''}
+        </div>`).join('') || '<p class="muted-sm">Aucun élément.</p>'}
+      </div>
+      ${editable ? '<div class="actions-buttons"><button class="launch-btn" id="eval-item-add">+ Ajouter un élément</button></div>' : ''}
+      <h3>Verdicts par fonctionnalité</h3>
+      <div class="recette-list">
+        ${feats.map((f) => `<div class="recette-item eval-verdict-row">
+          <span class="adr-pick-head"><strong>${esc(f.ref || f.id)}</strong> ${f.role ? `<span class="badge">${esc(f.role)}</span>` : ''}</span>
+          <span class="muted-sm">${esc((f.userStory || '').slice(0, 90))}</span>
+          ${editable
+            ? `<select class="eval-verdict-sel" data-eval-verdict="${esc(f.id)}">${verdictOptions(f.verdict)}</select>`
+            : evalVerdictBadge(f.verdict)}
+        </div>`).join('') || '<p class="muted-sm">Aucune fonctionnalité rattachée.</p>'}
+      </div>
+      <h3>Règles métier évaluées</h3>
+      <div class="recette-list">
+        ${rules.map((r) => `<div class="recette-item"><strong>${esc(r.ref || r.id)}</strong> <span class="muted-sm">${esc((r.content || '').slice(0, 120))}</span></div>`).join('') || '<p class="muted-sm">Aucune règle métier rattachée.</p>'}
+      </div>
+      <h3>Pièces</h3>
+      <div class="recette-list">
+        ${(ev.documents || []).map((doc) => `<div class="recette-item">
+          <code class="muted-sm">${doc.nature === 'lien' ? '🔗' : doc.nature === 'photo' ? '🖼' : doc.nature === 'video' ? '🎬' : '📄'}</code>
+          <span><strong>${esc(doc.title || (doc.path || '').split('/').pop())}</strong></span>
+          ${doc.nature ? `<span class="muted-sm">${esc(doc.nature)}</span>` : ''}
+        </div>`).join('') || '<p class="muted-sm">Aucune pièce rattachée.</p>'}
+      </div>
+      <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  const addBtn = document.getElementById('eval-item-add');
+  if (addBtn) addBtn.onclick = () => evaluationItemModal(evaluationId, null);
+  document.querySelectorAll('#modal-backdrop [data-eval-item-edit]').forEach((b) => b.addEventListener('click', () => {
+    const it = items.find((x) => String(x.itemId) === String(b.dataset.evalItemEdit));
+    evaluationItemModal(evaluationId, it);
+  }));
+  document.querySelectorAll('#modal-backdrop [data-eval-item-del]').forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm('Retirer cet élément ?')) return;
+    try { await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/items/${b.dataset.evalItemDel}`, { method: 'DELETE' }); evaluationDetailModal(evaluationId); }
+    catch (e) { alert('Échec : ' + (e.message || e)); }
+  }));
+  document.querySelectorAll('#modal-backdrop [data-eval-verdict]').forEach((sel) => sel.addEventListener('change', async () => {
+    try {
+      await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/verdicts`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fonctionnaliteId: sel.dataset.evalVerdict, verdict: sel.value || null }) });
+    } catch (e) { alert('Échec du verdict : ' + (e.message || e)); }
+  }));
+}
+
+// Modale AJOUT / ÉDITION d'un élément (recommandation | problème).
+function evaluationItemModal(evaluationId, item) {
+  const isEdit = !!(item && item.itemId);
+  const cat = (item && item.category) || 'recommandation';
+  const sev = (item && item.severity) || 'medium';
+  const status = (item && item.status) || 'open';
+  showModal(`
+    <div class="modal">
+      <h2>${isEdit ? 'Éditer l\'élément' : 'Nouvel élément'}</h2>
+      <form id="eval-item-form" class="pilot-form">
+        <label class="modal-field">Catégorie
+          <select id="ei-category">
+            ${['recommandation', 'probleme'].map((c) => `<option value="${c}" ${cat === c ? 'selected' : ''}>${esc(EVAL_CATEGORY_LABELS[c])}</option>`).join('')}
+          </select>
+        </label>
+        <label class="modal-field">Sévérité
+          <select id="ei-severity">
+            ${['low', 'medium', 'high', 'critical'].map((s) => `<option value="${s}" ${sev === s ? 'selected' : ''}>${esc(EVAL_SEVERITY_LABELS[s])}</option>`).join('')}
+          </select>
+        </label>
+        <textarea id="ei-content" class="modal-textarea" placeholder="la recommandation ou le problème observé" required>${esc((item && item.content) || '')}</textarea>
+        <textarea id="ei-discussion" class="modal-textarea" rows="2" placeholder="échanges / précisions (optionnel)">${esc((item && item.discussion) || '')}</textarea>
+        ${isEdit ? `<label class="modal-field">Statut de suivi
+          <select id="ei-status">${['open', 'treated', 'dismissed'].map((s) => `<option value="${s}" ${status === s ? 'selected' : ''}>${esc(EVAL_ITEM_STATUS_LABELS[s])}</option>`).join('')}</select>
+        </label>` : ''}
+        <div class="modal-actions">
+          <button type="button" class="ghost" id="modal-cancel">Annuler</button>
+          <button type="submit" class="launch-btn">${isEdit ? 'Enregistrer' : 'Ajouter'}</button>
+        </div>
+      </form>
+      <div id="eval-item-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('eval-item-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById('eval-item-msg');
+    try {
+      const body = {
+        category: document.getElementById('ei-category').value,
+        severity: document.getElementById('ei-severity').value,
+        content: document.getElementById('ei-content').value.trim(),
+        discussion: document.getElementById('ei-discussion').value.trim() || undefined,
+      };
+      if (isEdit) {
+        body.status = document.getElementById('ei-status').value;
+        await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/items/${item.itemId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      } else {
+        await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/items`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      }
+      evaluationDetailModal(evaluationId);
+    } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
+  });
+}
+
+// Modale PIÈCES : liste + ajout (lien / document / photo / vidéo).
+async function evaluationPiecesModal(evaluationId) {
+  let d;
+  try { d = await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}`); } catch (e) { alert('Impossible de charger la recette : ' + (e.message || e)); return; }
+  const ev = d.evaluation || {};
+  const editable = ev.status !== 'done';
+  let allArtifacts = [];
+  try { allArtifacts = ((await api('/api/artifacts')).artifacts || []); } catch {}
+  showModal(`
+    <div class="modal modal-wide">
+      <h2>Pièces de la recette</h2>
+      <p class="muted">${esc(ev.title || evaluationId)}</p>
+      <div class="recette-list">
+        ${(ev.documents || []).map((doc) => `<div class="recette-item">
+          <code class="muted-sm">${doc.nature === 'lien' ? '🔗' : doc.nature === 'photo' ? '🖼' : doc.nature === 'video' ? '🎬' : '📄'}</code>
+          <span><strong>${esc(doc.title || (doc.path || '').split('/').pop())}</strong></span>
+          ${doc.nature ? `<span class="muted-sm">${esc(doc.nature)}</span>` : ''}
+          ${editable ? `<button class="danger" data-eval-doc-del="${esc(doc.documentId || doc.id)}">Retirer</button>` : ''}
+        </div>`).join('') || '<p class="muted-sm">Aucune pièce rattachée.</p>'}
+      </div>
+      ${editable ? `<form id="eval-piece-form" class="pilot-form">
+        <div class="links-head"><label class="modal-field" style="margin:0">Ajouter une pièce</label></div>
+        <select id="ep2-nature">
+          <option value="lien">Lien</option>
+          <option value="document">Document</option>
+          <option value="photo">Photo</option>
+          <option value="video">Vidéo</option>
+        </select>
+        <input id="ep2-title" placeholder="titre (optionnel)">
+        <select id="ep2-mode">
+          <option value="link">Lien (URL)</option>
+          <option value="import">Importer un fichier</option>
+          <option value="artifact">Lier un artefact</option>
+        </select>
+        <input id="ep2-url" placeholder="https://… (mode lien)">
+        <input id="ep2-file" type="file" hidden>
+        <select id="ep2-art" hidden><option value="">— artefact existant —</option>${allArtifacts.map((a) => `<option value="${esc(a.artifact_id)}">${esc((a.title || a.path).slice(0, 60))}</option>`).join('')}</select>
+        <div class="modal-actions"><button type="submit" class="launch-btn">Ajouter</button></div>
+      </form>` : ''}
+      <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
+      <div id="eval-piece-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  const modeSel = document.getElementById('ep2-mode');
+  if (modeSel) {
+    const sync = () => {
+      const m = modeSel.value;
+      document.getElementById('ep2-url').hidden = m !== 'link';
+      document.getElementById('ep2-file').hidden = m !== 'import';
+      document.getElementById('ep2-art').hidden = m !== 'artifact';
+    };
+    modeSel.addEventListener('change', sync); sync();
+  }
+  document.querySelectorAll('#modal-backdrop [data-eval-doc-del]').forEach((b) => b.addEventListener('click', async () => {
+    try { await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/documents/${b.dataset.evalDocDel}`, { method: 'DELETE' }); evaluationPiecesModal(evaluationId); }
+    catch (e) { alert('Échec : ' + (e.message || e)); }
+  }));
+  const form = document.getElementById('eval-piece-form');
+  if (form) form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById('eval-piece-msg');
+    try {
+      const mode = modeSel.value;
+      const body = { mode, nature: document.getElementById('ep2-nature').value, title: document.getElementById('ep2-title').value.trim() || undefined };
+      if (mode === 'link') {
+        body.url = document.getElementById('ep2-url').value.trim();
+        if (!body.url) throw new Error('URL requise');
+      } else if (mode === 'import') {
+        const f = document.getElementById('ep2-file').files[0];
+        if (!f) throw new Error('fichier requis');
+        const buf = await f.arrayBuffer();
+        body.filename = f.name; body.dataBase64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+      } else {
+        body.artifactId = document.getElementById('ep2-art').value;
+        if (!body.artifactId) throw new Error('artefact requis');
+      }
+      await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/documents`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      evaluationPiecesModal(evaluationId);
+    } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
+  });
+}
+
+// Clôture d'une recette évaluateur (aucune tâche créée).
+async function evaluationFinishConfirm(evaluationId) {
+  if (!confirm('Terminer cette recette ? (aucune tâche ne sera créée)')) return;
+  try {
+    await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/finish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+    refreshActive();
+  } catch (e) { alert('Échec : ' + (e.message || e)); }
 }
 
 // --- Batches d'orchestration (v0.9.41) : mode session unique / manuel ---------
@@ -7573,6 +8046,7 @@ function e2eVarModal(project, projects, existingName) {
 
 const RENDER = {
   overview: renderOverview, observability: renderObservability, projects: renderProjects, tasks: renderTasks, e2etests: renderE2ETests, e2esecrets: renderE2ESecrets, recettes: renderRecettes,
+  evaluations: renderEvaluations,
   events: renderEvents, deployments: renderDeployments, decisions: renderDecisions, artifacts: renderArtifacts, adr: renderAdrs, plans: renderPlans, archives: renderArchives, ecosystem: renderEcosystem, workspaces: renderWorkspaces, users: renderUsers,
   sprints: renderSprints, features: renderFeaturesRules,
 };

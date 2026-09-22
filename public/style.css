@@ -1082,3 +1082,17 @@ body.evaluateur .readonly-banner { display: inline-block !important; }
 .fr-subtabs .pd-tab .muted-sm { margin-left: 4px; }
 .fr-filters { flex-wrap: wrap; }
 .fr-filters .adr-search { flex: 1 1 220px; }
+
+/* ===== Page « Recette » de l'ÉVALUATEUR (onglet `evaluations`) =============
+   Éléments catégorisés (recommandation/problème), badges de sévérité et
+   verdicts par fonctionnalité. Classes ADDITIVES (aucune collision). */
+.eval-block { margin: 8px 0 14px; }
+.eval-block .lbl { display: block; color: var(--muted, #9aa4b2); font-size: 12px; font-weight: 600; margin-bottom: 3px; }
+.eval-item { align-items: center; flex-wrap: wrap; gap: 6px; }
+.eval-item-content { flex: 1 1 260px; min-width: 200px; }
+.eval-verdict-row { align-items: center; flex-wrap: wrap; gap: 8px; }
+.eval-verdict-row select { margin-left: auto; }
+.badge.eval-sev-low { background: #2b6a4a; color: #d8f5e6; }
+.badge.eval-sev-medium { background: #6a5a2b; color: #f5eed8; }
+.badge.eval-sev-high { background: #7a4a1e; color: #fbe7d2; }
+.badge.eval-sev-critical { background: #7a1e1e; color: #ffdede; }

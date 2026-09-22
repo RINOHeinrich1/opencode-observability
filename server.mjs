@@ -74,10 +74,10 @@ const EXECUTEUR_WRITE_PATTERNS = [
   /^\/api\/session\/organization$/,
   /^\/api\/pieces$/,
   /^\/api\/recettes$/,
-  /^\/api\/recettes\/[^/]+\/(items|documents|session|finish|tasks)(\/.*)?$/,
+  /^\/api\/recettes\/[^/]+\/(items|documents|session|finish|tasks|evaluation-items)(\/.*)?$/,
   // Alias « Cadrage technique » (ADR-001) — mêmes capacités que /api/recettes*.
   /^\/api\/cadrages$/,
-  /^\/api\/cadrages\/[^/]+\/(items|documents|session|finish|tasks)(\/.*)?$/,
+  /^\/api\/cadrages\/[^/]+\/(items|documents|session|finish|tasks|evaluation-items)(\/.*)?$/,
   /^\/api\/e2e-tests\/[^/]+\/run$/,
   /^\/api\/adr-vigilances\/[^/]+\/resolve$/,
   /^\/api\/tasks$/,
@@ -2846,6 +2846,18 @@ const server = createServer(async (req, res) => {
       const b = await readBody(req);
       return sendJson(res, 200, await pilot.updateRecetteItem({ recetteId: recetteItemEdit[1], itemId: Number(recetteItemEdit[2]), fields: b.fields || b }));
     }
+    // Reprise d'un ÉLÉMENT DE RECETTE ÉVALUATEUR par un CADRAGE technique (traçage
+    // « repris par le cadrage X »). L'écriture est autorisée à l'exécuteur via
+    // EXECUTEUR_WRITE_PATTERNS ; la GARDE « a_traiter » est portée par le registre.
+    const recetteEvalItems = path.match(/^\/api\/recettes\/([^/]+)\/evaluation-items$/);
+    if (recetteEvalItems && req.method === "POST") {
+      const b = await readBody(req);
+      return sendJson(res, 200, await pilot.linkCadrageEvaluationItem({ recetteId: recetteEvalItems[1], itemId: b.itemId, by: user.username }));
+    }
+    const recetteEvalItemDel = path.match(/^\/api\/recettes\/([^/]+)\/evaluation-items\/([0-9]+)$/);
+    if (recetteEvalItemDel && req.method === "DELETE") {
+      return sendJson(res, 200, await pilot.unlinkCadrageEvaluationItem({ recetteId: recetteEvalItemDel[1], itemId: Number(recetteEvalItemDel[2]) }));
+    }
     const recetteDocView = path.match(/^\/api\/recettes\/([^/]+)\/documents\/([0-9]+)\/view$/);
     if (recetteDocView && req.method === "GET") {
       const d = (await registry().query("SELECT * FROM artifacts WHERE id = $1 AND doc_type = ANY($2)", [Number(recetteDocView[2]), RECETTE_DOC_TYPES])).rows[0];
@@ -2874,6 +2886,18 @@ const server = createServer(async (req, res) => {
         "SELECT id, project, content, classification, discussion, scope, title, acceptance, exec_order, vigilance, test_intent, doc_intent, status, created_task_id, created_at FROM recette_items WHERE recette_id = $1 ORDER BY id ASC",
         [r.recette_id],
       )).rows);
+      // Éléments de recette évaluateur REPRIS par ce cadrage technique (traçage
+      // « repris par le cadrage X ») — lecture SQL directe de la table de lien
+      // (`cadrage_evaluation_items`, créée par le plan MCP …-mcp-20260922-113243).
+      const evaluationItems = (await registry().query(
+        `SELECT i.id, i.evaluation_id, i.content, i.category, i.severity, i.discussion, i.status, i.decision, i.created_at,
+                e.title AS evaluation_title
+           FROM cadrage_evaluation_items cei
+           JOIN evaluation_items i ON i.id = cei.evaluation_item_id
+           JOIN evaluations e ON e.evaluation_id = i.evaluation_id
+          WHERE cei.recette_id = $1 ORDER BY i.id ASC`,
+        [r.recette_id],
+      )).rows.map((i) => ({ itemId: Number(i.id), evaluationId: i.evaluation_id, evaluationTitle: i.evaluation_title || null, category: i.category, severity: i.severity, content: i.content, status: i.status, decision: i.decision, createdAt: i.created_at }));
       const tasks = (await registry().query(
         `SELECT rt.task_id, t.project, t.title, t.request FROM recette_tasks rt LEFT JOIN tasks t ON t.id = rt.task_id
          WHERE rt.recette_id = $1 ORDER BY rt.task_id`, [r.recette_id],
@@ -2888,7 +2912,7 @@ const server = createServer(async (req, res) => {
       // BLOQUENT la terminaison (la modale de clôture les affiche avec la raison).
       let adrVigilances = [];
       try { const v = await pilot.listAdrVigilances({ recetteId: r.recette_id }); adrVigilances = (v && v.vigilancess) || []; } catch {}
-      return sendJson(res, 200, { recette: { ...r, repos: await reposOfProject(r.project), tasks, items, documents: docs, adrVigilances, adrVigilancesOpen: adrVigilances.filter((x) => x.status === "open") } });
+      return sendJson(res, 200, { recette: { ...r, repos: await reposOfProject(r.project), tasks, items, evaluationItems, documents: docs, adrVigilances, adrVigilancesOpen: adrVigilances.filter((x) => x.status === "open") } });
     }
     // =========================================================================
     // ÉVALUATIONS — « Recette » de l'ÉVALUATEUR PRODUIT (T-20260922-100650-sbc1).
@@ -2911,6 +2935,7 @@ const server = createServer(async (req, res) => {
       const rows = (await registry().query(
         `SELECT e.*,
            (SELECT COUNT(*) FROM evaluation_items i WHERE i.evaluation_id = e.evaluation_id) AS items_count,
+           (SELECT COUNT(*) FROM evaluation_items i WHERE i.evaluation_id = e.evaluation_id AND i.decision = 'a_traiter') AS treatable_count,
            (SELECT COUNT(*) FROM evaluation_fonctionnalites ef WHERE ef.evaluation_id = e.evaluation_id) AS features_count,
            (SELECT COUNT(*) FROM evaluation_regles er WHERE er.evaluation_id = e.evaluation_id) AS rules_count,
            (SELECT COUNT(*) FROM artifacts a WHERE a.content_id = e.evaluation_id AND a.doc_type = ANY($${params.length})) AS documents_count
@@ -2962,6 +2987,16 @@ const server = createServer(async (req, res) => {
       const b = await readBody(req);
       return sendJson(res, 200, await pilot.addEvaluationItem({ evaluationId: evalItemAdd[1], content: b.content, category: b.category, severity: b.severity, discussion: b.discussion }));
     }
+    // DÉCISION ADMIN d'un élément (« à traiter » / « non retenu »). ADMIN-ONLY :
+    // l'évaluateur INFORME, l'admin décide (ADR-001/002). Garde EXPLICITE requise
+    // car le pattern d'écriture évaluateur `/api/evaluations/:id/items/...`
+    // (EVALUATEUR_WRITE_PATTERNS) matcherait sinon cette route.
+    const evalItemDecision = path.match(/^\/api\/evaluations\/([^/]+)\/items\/([0-9]+)\/decision$/);
+    if (evalItemDecision && req.method === "POST") {
+      if (user.role !== "admin") return sendJson(res, 403, { error: "décision réservée à l'administrateur (ADR-001/002)" });
+      const b = await readBody(req);
+      return sendJson(res, 200, await pilot.setEvaluationItemDecision({ evaluationId: evalItemDecision[1], itemId: Number(evalItemDecision[2]), decision: b.decision, by: user.username }));
+    }
     const evalItemEdit = path.match(/^\/api\/evaluations\/([^/]+)\/items\/([0-9]+)$/);
     if (evalItemEdit && (req.method === "PATCH" || req.method === "POST")) {
       const b = await readBody(req);
@@ -2989,7 +3024,7 @@ const server = createServer(async (req, res) => {
     const evalDocAction = path.match(/^\/api\/evaluations\/([^/]+)\/documents$/);
     if (evalDocAction && req.method === "POST") {
       const b = await readBody(req);
-      return sendJson(res, 200, await pilot.addEvaluationDocument({ evaluationId: evalDocAction[1], mode: b.mode, filename: b.filename, dataBase64: b.dataBase64, artifactId: b.artifactId, url: b.url, path: b.path, nature: b.nature, title: b.title }));
+      return sendJson(res, 200, await pilot.addEvaluationDocument({ evaluationId: evalDocAction[1], mode: b.mode, filename: b.filename, dataBase64: b.dataBase64, artifactId: b.artifactId, url: b.url, path: b.path, nature: b.nature, title: b.title, itemId: b.itemId }));
     }
     const evalDocDel = path.match(/^\/api\/evaluations\/([^/]+)\/documents\/([0-9]+)$/);
     if (evalDocDel && req.method === "DELETE") {
@@ -2999,19 +3034,43 @@ const server = createServer(async (req, res) => {
     if (evalFinish && req.method === "POST") {
       return sendJson(res, 200, await pilot.confirmEvaluation({ evaluationId: evalFinish[1], by: user.username }));
     }
+    // Éléments de recette évaluateur « à traiter » (décision admin) — entrée de
+    // contexte de l'exécuteur pour un cadrage technique. AVANT `/:id` (sinon
+    // « treatable » serait capté comme un id d'évaluation).
+    if (path === "/api/evaluations/treatable" && req.method === "GET") {
+      const project = url.searchParams.get("project") || undefined;
+      return sendJson(res, 200, await pilot.listTreatableEvaluationItems({ project }));
+    }
     const evalDetail = path.match(/^\/api\/evaluations\/([^/]+)$/);
     if (evalDetail && req.method === "GET") {
       const e = (await registry().query("SELECT * FROM evaluations WHERE evaluation_id = $1", [evalDetail[1]])).rows[0];
       if (!e) return sendJson(res, 404, { error: "évaluation inconnue" });
-      const items = (await registry().query(
-        "SELECT id, content, category, severity, discussion, status, created_at FROM evaluation_items WHERE evaluation_id = $1 ORDER BY id ASC",
+      let items = (await registry().query(
+        "SELECT id, content, category, severity, discussion, status, decision, decided_at, decided_by, created_at FROM evaluation_items WHERE evaluation_id = $1 ORDER BY id ASC",
         [e.evaluation_id],
-      )).rows.map((i) => ({ itemId: Number(i.id), content: i.content, category: i.category, severity: i.severity, discussion: i.discussion, status: i.status, createdAt: i.created_at }));
+      )).rows.map((i) => ({ itemId: Number(i.id), content: i.content, category: i.category, severity: i.severity, discussion: i.discussion, status: i.status, decision: i.decision, decidedAt: i.decided_at || null, decidedBy: i.decided_by || null, createdAt: i.created_at }));
+      // Traçage « repris par le cadrage X » (une requête pour tous les éléments).
+      const reprisRows = items.length ? (await registry().query(
+        `SELECT cei.evaluation_item_id, cei.recette_id, cei.created_at, cei.taken_by, r.title
+           FROM cadrage_evaluation_items cei LEFT JOIN recettes r ON r.recette_id = cei.recette_id
+          WHERE cei.evaluation_item_id = ANY($1) ORDER BY cei.created_at ASC`,
+        [items.map((i) => i.itemId)],
+      )).rows : [];
+      const reprisByItem = new Map();
+      for (const x of reprisRows) {
+        const k = Number(x.evaluation_item_id);
+        if (!reprisByItem.has(k)) reprisByItem.set(k, []);
+        reprisByItem.get(k).push({ cadrageId: x.recette_id, title: x.title || null, createdAt: x.created_at, takenBy: x.taken_by || null });
+      }
+      for (const it of items) it.reprisPar = reprisByItem.get(it.itemId) || [];
+      // Rôle-aware (ADR-001/002) : l'exécuteur n'accède QU'aux éléments « à traiter »
+      // — filtrage SERVEUR (défense en profondeur ; l'UI n'est qu'un confort).
+      if (user.role === "executeur") items = items.filter((it) => it.decision === "a_traiter");
       const documents = (await registry().query(
-        `SELECT d.id, d.artifact_id, d.title, d.nature, d.source, d.path, d.created_at, a.title AS artifact_title
+        `SELECT d.id, d.artifact_id, d.title, d.nature, d.source, d.path, d.created_at, (d.meta->>'itemId') AS item_id, a.title AS artifact_title
          FROM artifacts d LEFT JOIN artifacts a ON a.artifact_id = (d.meta->>'artifactId')
          WHERE d.content_id = $1 AND d.doc_type = ANY($2) ORDER BY d.id ASC`, [e.evaluation_id, EVALUATION_DOC_TYPES],
-      )).rows.map((d) => ({ documentId: Number(d.id), artifactId: d.artifact_id, title: d.title || d.artifact_title || (d.path ? d.path.split("/").pop() : null), nature: d.nature, source: d.source, path: d.path, createdAt: d.created_at }));
+      )).rows.map((d) => ({ documentId: Number(d.id), artifactId: d.artifact_id, title: d.title || d.artifact_title || (d.path ? d.path.split("/").pop() : null), nature: d.nature, source: d.source, path: d.path, itemId: d.item_id ? Number(d.item_id) : null, createdAt: d.created_at }));
       const fonctionnalites = (await registry().query(
         `SELECT f.id, f.ref, f.role, f.user_story, ef.verdict, ef.verdict_comment
          FROM fonctionnalites f JOIN evaluation_fonctionnalites ef ON ef.fonctionnalite_id = f.id

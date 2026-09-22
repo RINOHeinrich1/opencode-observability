@@ -4014,6 +4014,10 @@ async function recetteCreateModal() {
           <legend>Règles métier rattachées ${T.docTo} — contexte de l'agent <span class="muted-sm">(sélection multi-lignes ; bloc « Règles métier de référence » injecté). Toutes cochées par défaut.</span></legend>
           <div id="rm-rule-pick"><p class="muted-sm">Choisissez un projet pour afficher ses règles métier.</p></div>
         </fieldset>
+        ${(IS_ADMIN || IS_EXECUTEUR) ? `<fieldset id="rm-eval-item-fieldset" class="pilot-fieldset">
+          <legend>Éléments de recette évaluateur à traiter <span class="muted-sm">(sélection multi-lignes ; les éléments cochés sont repris par le cadrage créé — traçage « repris par ce cadrage »).</span></legend>
+          <div id="rm-eval-item-pick"><p class="muted-sm">Choisissez un projet pour afficher les éléments « à traiter ».</p></div>
+        </fieldset>` : ''}
         <input id="rm-title" placeholder="titre court (ex: Cadrage technique du module chatbot)" required>
         <textarea id="rm-description" class="modal-textarea" placeholder="description longue (détail du périmètre vérifié) — optionnel"></textarea>
         <label class="modal-field">Tâches couvertes <span class="muted-sm">(0..N — tâches non encore recettées du projet)</span></label>
@@ -4106,6 +4110,27 @@ async function recetteCreateModal() {
     ruleBox.innerHTML = frSelectorHtml('rule', rules, { prefix: 'rm-rule-pick', roles, projectId: proj, fromRecette: true, entityWord: 'cadrage' });
     bindFrSelector('rm-rule-pick', { projectId: proj, projectRoles: roles, entityWord: 'cadrage' });
   };
+  // Éléments de recette évaluateur « à traiter » (T-20260922-141007-p4dc) :
+  // candidats du projet sélectionné chargés via GET /api/evaluations/treatable
+  // (garde `decision='a_traiter'` portée par le registre). Rafraîchi au
+  // changement de projet, comme les fieldsets ADR / Fonctionnalités / Règles.
+  const evalItemBox = document.getElementById('rm-eval-item-pick');
+  const loadEvalItems = async () => {
+    if (!evalItemBox) return;
+    const proj = currentProject();
+    if (!proj) { evalItemBox.innerHTML = '<p class="muted-sm">Choisissez un projet pour afficher les éléments « à traiter ».</p>'; return; }
+    evalItemBox.innerHTML = '<p class="muted-sm">Chargement des éléments « à traiter »…</p>';
+    let items = [];
+    try {
+      const d = await api(`/api/evaluations/treatable?project=${encodeURIComponent(proj)}`);
+      items = (d && d.items) || [];
+    } catch (e) {
+      evalItemBox.innerHTML = '<p class="muted-sm">Erreur de chargement : ' + esc(e.message || e) + '</p>';
+      return;
+    }
+    evalItemBox.innerHTML = evalItemSelectorHtml(items, { prefix: 'rm-eval-item-pick' });
+    bindEvalItemSelector('rm-eval-item-pick');
+  };
   const renderReposHint = () => {
     const proj = projects.find((p) => p.id === currentProject());
     const repos = (proj && proj.repos) || [];
@@ -4118,6 +4143,7 @@ async function recetteCreateModal() {
     renderReposHint();
     loadAdrs();
     loadFeaturesRules();
+    loadEvalItems();
   });
   renderReposHint();
 
@@ -4179,7 +4205,7 @@ async function recetteCreateModal() {
           if (art) documents.push({ mode: 'artifact', artifactId: art, title, nature });
         }
       }
-      await api(recettesApiBase(), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+      const created = await api(recettesApiBase(), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         project: proj,
         title: document.getElementById('rm-title').value.trim(),
         description: document.getElementById('rm-description').value.trim() || undefined,
@@ -4190,6 +4216,29 @@ async function recetteCreateModal() {
         ruleIds: selectedFrIds('rule', 'rm-rule-pick'), // toujours un tableau (vide = aucune règle métier)
         organizationId: currentOrg || undefined,
       }) });
+      // Reprise des ÉLÉMENTS DE RECETTE ÉVALUATEUR cochés (T-20260922-141007-p4dc) :
+      // le cadrage est créé (comportement inchangé) PUIS les éléments cochés sont
+      // rattachés via POST /api/recettes/:id/evaluation-items. Erreurs NON
+      // bloquantes mais reportées dans le message de la modale.
+      const createdId = created && created.recette && (created.recette.recetteId || created.recette.id);
+      const evalItemIds = selectedEvalItemIds('rm-eval-item-pick');
+      const linkErrors = [];
+      if (createdId && evalItemIds.length) {
+        for (const itemId of evalItemIds) {
+          try {
+            await api(`${recettesApiBase()}/${encodeURIComponent(createdId)}/evaluation-items`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ itemId: Number(itemId) }) });
+          } catch (err) { linkErrors.push(`#${itemId} : ${err.message || err}`); }
+        }
+      }
+      if (linkErrors.length) {
+        msg.textContent = `Cadrage ${createdId} créé, mais ${linkErrors.length} élément(s) non repris : ${linkErrors.join(' ; ')}`;
+        msg.className = 'msg error';
+        // Empêche une double création si le formulaire est renvoyé.
+        const submitBtn = e.target.querySelector('button[type="submit"]');
+        if (submitBtn) submitBtn.disabled = true;
+        refreshActive();
+        return;
+      }
       closeModal();
       refreshActive();
     } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
@@ -7433,6 +7482,70 @@ function bindFrSelector(prefix, opts = {}) {
       else featureFormModal(null, opts.pieces || [], onSaved, { projectId, fromRecette, recetteId });
     });
   }
+  apply();
+}
+
+// ===========================================================================
+// Sélecteur multi-lignes ÉLÉMENTS DE RECETTE ÉVALUATEUR « à traiter »
+// (T-20260922-141007-p4dc) — réutilise les classes CSS `.adr-pick*` (aucun CSS
+// ajouté), comme les sélecteurs ADR / Fonctionnalités / Règles. Les candidats
+// proviennent de `GET /api/evaluations/treatable?project=…` : uniquement les
+// éléments `decision='a_traiter'` (garde portée par le registre). AUCUN coché
+// par défaut (la reprise est un choix explicite).
+//   evalItemSelectorHtml(items, { prefix }) → HTML (message explicite si vide)
+//   selectedEvalItemIds(prefix) → tableau d'itemId cochés (vide si rien)
+//   bindEvalItemSelector(prefix) → câble le filtre recherche + le compteur
+// ===========================================================================
+function evalItemSelectorHtml(items, opts = {}) {
+  const prefix = opts.prefix || 'eval-item-pick';
+  const list = items || [];
+  const rows = list.map((it) => {
+    const id = it.itemId;
+    const origin = it.evaluationTitle || it.evaluationId || `#${id}`;
+    const repris = (Array.isArray(it.reprisPar) && it.reprisPar.length)
+      ? `<span class="muted-sm" title="Déjà repris par un cadrage">· déjà repris par ${esc(it.reprisPar.map((r) => r.title || r.cadrageId).join(', '))}</span>`
+      : '';
+    const hay = [origin, it.content, it.category, it.severity].filter(Boolean).join(' ').toLowerCase();
+    return `<label class="adr-pick-row" data-search="${esc(hay)}">
+      <input type="checkbox" class="eval-item-cb" value="${esc(id)}">
+      <span class="adr-pick-head"><strong>${esc(origin)}</strong> ${evalCategoryBadge(it.category)} ${evalSeverityBadge(it.severity)} ${repris}</span>
+      <span class="adr-pick-meta">${esc((it.content || '').slice(0, 140))}</span>
+    </label>`;
+  }).join('');
+  return `
+    <div class="adr-pick" id="${esc(prefix)}" data-unit="élément(s)">
+      <div class="adr-pick-filters">
+        <input type="search" class="adr-pick-search" placeholder="Rechercher un élément « à traiter »…">
+        <span class="muted-sm adr-pick-count">${list.length} élément(s)</span>
+      </div>
+      <div class="adr-pick-list">${rows || '<p class="muted-sm">Aucun élément « à traiter » pour ce projet.</p>'}</div>
+    </div>`;
+}
+
+// Sélection courante (itemId cochés) du sélecteur Éléments évaluateur `prefix`.
+// Retourne TOUJOURS un tableau (vide = 0 sélection).
+function selectedEvalItemIds(prefix = 'eval-item-pick') {
+  return [...document.querySelectorAll(`#modal-backdrop #${prefix} .eval-item-cb:checked`)].map((c) => c.value);
+}
+
+// Câble le filtre recherche + le compteur du sélecteur `prefix`.
+function bindEvalItemSelector(prefix = 'eval-item-pick') {
+  const root = document.getElementById(prefix);
+  if (!root) return;
+  const search = root.querySelector('.adr-pick-search');
+  const count = root.querySelector('.adr-pick-count');
+  const rows = [...root.querySelectorAll('.adr-pick-row')];
+  const apply = () => {
+    const q = ((search && search.value) || '').trim().toLowerCase();
+    let visible = 0;
+    for (const row of rows) {
+      const show = !q || (row.dataset.search || '').includes(q);
+      row.hidden = !show;
+      if (show) visible++;
+    }
+    if (count) count.textContent = `${visible} / ${rows.length} élément(s)`;
+  };
+  if (search) search.addEventListener('input', apply);
   apply();
 }
 

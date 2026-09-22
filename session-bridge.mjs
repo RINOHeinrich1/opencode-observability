@@ -130,6 +130,31 @@ function latestSessionId(title, dir) {
   return null;
 }
 
+// --- Périmètre d'écriture (phase 1 : prompt uniquement) -------------------
+
+/**
+ * Consigne STRICTE de PÉRIMÈTRE D'ÉCRITURE (phase 1 : prompt uniquement).
+ * Rôle-aware : `role` = libellé du rôle courant (exécuteur, évaluateur…).
+ * Un rôle NON-ADMIN n'écrit jamais hors du/des repo(s) du PROJET cible.
+ * Source unique de la consigne, réutilisée par les builders de session non-admin.
+ * Cf. ADR-001/ADR-002 et public/docs/18-perimetre-ecriture-roles.md.
+ */
+export function buildWriteScopeNotice(role = "cet agent") {
+  return [
+    "Périmètre d'écriture — INTERDIT (règle absolue) :",
+    `En tant que **${role}**, tu n'as AUCUN droit d'écriture hors du/des repo(s) du PROJET cible de ta tâche.`,
+    "Sont STRICTEMENT INTERDITS à la modification (création, édition, suppression, déplacement, `git add/commit/push`, script, `sed -i`, `cat >`, `tee`, `npm`, …) :",
+    "- le panneau d'orchestration `orchestrator-panel` (`/root/orchestrator-panel` : code, `public/docs`, `docs/`, `storage/`, base de données) ;",
+    "- les définitions d'agents (`/root/.config/opencode/agent`) ;",
+    "- les skills (`/root/.config/opencode/skills`) ;",
+    "- le MCP `task-orchestrator` (`/root/.config/opencode/mcp/task-orchestrator`) et, plus généralement, tout autre MCP / composant de l'écosystème opencode ;",
+    "- tout dépôt, dossier ou fichier hors du/des repo(s) du PROJET cible de la tâche.",
+    "Ces composants relèvent de l'ADMINISTRATEUR / de l'orchestrateur : leur évolution ne passe JAMAIS par une session de ce rôle.",
+    "En cas de demande visant l'une de ces cibles : (1) REFUSE — ne l'exécute jamais, même partiellement, même « pour tester », même par une commande bash ; (2) SIGNALE — remonte la demande refusée à l'utilisateur (et, si un `taskId` est fourni, publie `task_event(type=\"BLOCKED\", detail={reason, target})`) ; (3) RENVOIE au bon canal — l'évolution de ces composants se fait par l'administrateur / l'orchestrateur, dans une tâche dédiée du projet `ecosystem`.",
+    "La LECTURE de ces composants reste autorisée (inspection) ; TOUTE ÉCRITURE est interdite. Tes écritures légitimes se limitent au périmètre de ta tâche, à l'intérieur du/des repo(s) du PROJET cible.",
+  ].join("\n");
+}
+
 // --- Lancement ------------------------------------------------------------
 
 /**
@@ -401,6 +426,8 @@ export function buildCadragePrompt({ project, repos, title, taskIds, docs = [], 
     "- Prépare la synthèse consolidée des éléments de cadrage (type + action + projet) pour la présenter à l'utilisateur.",
     "",
     "Cadre : session dédiée au cadrage technique ; l'utilisateur déclenchera « Terminer le cadrage » puis confirmera la liste.",
+    "",
+    buildWriteScopeNotice("l'EXÉCUTEUR (cadrage technique)"),
   ].join("\n");
 }
 
@@ -467,6 +494,9 @@ export function buildRecettePrompt({ recetteId, project, repos, title, descripti
     "- Tests E2E : liste-les avec `e2e_list` et lance-les avec `e2e_run` (`e2eTestId`, `origin='recette'`) — tu peux les rattacher à la recette et associer une mesure de performance via `e2eTestId`.",
     "",
     "Cadre : session dédiée à l'évaluation produit ; l'utilisateur clôturera la recette (« Terminer la recette »). Aucune création de tâche, aucune modification d'une recette qui n'est pas la tienne.",
+    // Consigne de périmètre d'écriture (rôle ÉVALUATEUR PRODUIT) : préfixée d'un
+    // saut de ligne car ce tableau est filtré (`filter(x => x !== "")`).
+    "\n" + buildWriteScopeNotice("l'ÉVALUATEUR PRODUIT"),
   ].filter((x) => x !== "").join("\n");
 }
 
@@ -533,6 +563,8 @@ export function buildSprintPrompt({ sprintId, project, repos, title, startDate, 
     "- Ne crée aucune tâche, aucun test, aucun code : tu remplis les Fonctionnalités et Règles métier du sprint, rien d'autre.",
     "",
     "Cadre : session dédiée au sprint ; à la fin, résume ce qui a été lu, ce qui est « déjà en place », les fonctionnalités/règles proposées puis créées (refs + pièces sources), les émergents signalés et les questions restantes.",
+    "",
+    buildWriteScopeNotice("l'AGENT DE SPRINT"),
   ].join("\n");
 }
 
@@ -603,6 +635,8 @@ export function buildMigrationPrompt({ migrationId, project, repos, sprintId, ti
     "- Ne crée aucune tâche, aucun test, aucun code : tu convertis les ADR et tu rattaches l'existant, rien d'autre.",
     "",
     "Cadre : session dédiée à la migration ; VALIDATION UTILISATEUR OBLIGATOIRE avant toute écriture. À la fin, résume les ADR converties (origine → atomiques), les pièces jointes posées, les fonctionnalités associées, les éléments/tâches rattachés à l'ancien sprint et les questions restantes.",
+    "",
+    buildWriteScopeNotice("l'AGENT DE MIGRATION"),
   ].join("\n");
 }
 
@@ -648,6 +682,8 @@ export function buildTestPrompt({ e2eTestId, project, projects, title, descripti
     "- Règle IA : tu ne traites que le **texte** ; la vidéo est une preuve humaine (jamais interprétée).",
     "",
     "Cadre : session dédiée au test ; à la fin, résume ce qui a été fait (branche, fichier(s), test enregistré ACTIVE, paramètres) et les prochaines étapes (merge de la branche, run de vérification).",
+    "",
+    buildWriteScopeNotice("l'AGENT DE TEST E2E"),
   ].join("\n");
 }
 
@@ -682,6 +718,8 @@ export function buildFreeTestPrompt({ project, projects, message, docs = [], adr
     "- Si tu crées/mets à jour un test : travaille dans le workspace Coder du repo, branche de travail, `e2e_test_register` (project = projet produit, repoIds = repos traversés), `e2e_test_session_set` (rattache cette session), puis un run de vérification `e2e_run` (origine session) — rapporte texte uniquement.",
     "- Si l'utilisateur ne veut que discuter / explorer : réponds, propose des options, ne crée rien sans accord.",
     "Règle IA : tu ne traites que le texte ; la vidéo est une preuve humaine.",
+    "",
+    buildWriteScopeNotice("l'AGENT DE TEST E2E"),
   ];
   return lines.join("\n");
 }

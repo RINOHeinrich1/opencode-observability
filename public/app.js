@@ -3036,7 +3036,7 @@ async function evaluationCreateModal() {
           const f = row.querySelector('.ep-file').files[0];
           if (f) {
             const buf = await f.arrayBuffer();
-            documents.push({ mode: 'import', filename: f.name, dataBase64: btoa(String.fromCharCode(...new Uint8Array(buf))), nature, title });
+            documents.push({ mode: 'import', filename: f.name, dataBase64: arrayBufferToBase64(buf), nature, title });
           }
         } else {
           const art = row.querySelector('.ep-art').value;
@@ -3280,7 +3280,7 @@ async function evaluationItemPieceModal(evaluationId, itemId) {
         const f = document.getElementById('eip-file').files[0];
         if (!f) throw new Error('fichier requis');
         const buf = await f.arrayBuffer();
-        body.filename = f.name; body.dataBase64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+        body.filename = f.name; body.dataBase64 = arrayBufferToBase64(buf);
       } else {
         body.artifactId = document.getElementById('eip-art').value;
         if (!body.artifactId) throw new Error('artefact requis');
@@ -3326,7 +3326,7 @@ async function evaluationPiecesModal(evaluationId) {
           <option value="artifact">Lier un artefact</option>
         </select>
         <input id="ep2-url" placeholder="https://… (mode lien)">
-        <input id="ep2-file" type="file" hidden>
+        <input id="ep2-file" type="file" accept="image/*,video/*,.md,.markdown,.pdf,.docx" hidden>
         <select id="ep2-art" hidden><option value="">— artefact existant —</option>${allArtifacts.map((a) => `<option value="${esc(a.artifact_id)}">${esc((a.title || a.path).slice(0, 60))}</option>`).join('')}</select>
         <div class="modal-actions"><button type="submit" class="launch-btn">Ajouter</button></div>
       </form>` : ''}
@@ -3362,7 +3362,7 @@ async function evaluationPiecesModal(evaluationId) {
         const f = document.getElementById('ep2-file').files[0];
         if (!f) throw new Error('fichier requis');
         const buf = await f.arrayBuffer();
-        body.filename = f.name; body.dataBase64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+        body.filename = f.name; body.dataBase64 = arrayBufferToBase64(buf);
       } else {
         body.artifactId = document.getElementById('ep2-art').value;
         if (!body.artifactId) throw new Error('artefact requis');

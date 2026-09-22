@@ -131,15 +131,18 @@ export async function listUsers() {
   return res.rows.map((r) => ({ ...r, role: normalizeRole(r), organizationId: r.organization_id ?? null, notifyEmail: r.notify_email ?? null }));
 }
 
-// Rôle effectif : 'admin' > 'supervisor' > 'user' (is_admin rétrocompat supercede).
+// Rôles valides du panneau (ADR-002) : 'admin' > 'supervisor' > 'evaluateur' > 'user'.
+const ROLES = ["admin", "supervisor", "evaluateur", "user"];
+
+// Rôle effectif : 'admin' > 'supervisor' > 'evaluateur' > 'user' (is_admin rétrocompat supercede).
 function normalizeRole(r) {
   if (r.is_admin) return "admin";
-  return ["admin", "supervisor", "user"].includes(r.role) ? r.role : "user";
+  return ROLES.includes(r.role) ? r.role : "user";
 }
 
-// Crée un utilisateur avec un rôle explicite ('admin' | 'supervisor' | 'user').
+// Crée un utilisateur avec un rôle explicite ('admin' | 'supervisor' | 'evaluateur' | 'user').
 export async function createUser(username, password, isAdmin, role, organizationId) {
-  const targetRole = isAdmin ? "admin" : (["admin", "supervisor", "user"].includes(role) ? role : "user");
+  const targetRole = isAdmin ? "admin" : (ROLES.includes(role) ? role : "user");
   const { salt, hash } = hashPassword(password);
   await pool().query(
     "INSERT INTO users (username, password_hash, salt, is_admin, role, organization_id, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
@@ -149,7 +152,7 @@ export async function createUser(username, password, isAdmin, role, organization
 }
 
 export async function updateUserRole(userId, role) {
-  const targetRole = ["admin", "supervisor", "user"].includes(role) ? role : "user";
+  const targetRole = ROLES.includes(role) ? role : "user";
   await pool().query("UPDATE users SET role = $1, is_admin = $2 WHERE id = $3", [targetRole, targetRole === "admin" ? 1 : 0, userId]);
   return getUserById(userId);
 }

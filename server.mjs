@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { execFileSync, spawn } from "node:child_process";
 import pg from "pg";
 import { openDb, getUserByUsername, verifyPassword, createUser, updateUserRole, updateUserOrganization, listUsers, listUserOrganizations, setUserOrganizations, listUsersByOrganization, listUserProjects, setUserProjects, listUsersByProject, getUserOpencode, setUserOpencode, listUsersOpencode, updatePassword, setUserNotifyEmail, deleteUser, createSession, deleteSession, setSessionOrganization, pruneSessions, listArchives, archivedTaskIds, archiveTask, restoreTask, getArchive, removeArchive } from "./panel-db.mjs";
-import { currentUser, sessionToken, cookieHeader, clearCookieHeader } from "./auth.mjs";
+import { currentUser, sessionToken, cookieHeader, clearCookieHeader, allowedPages } from "./auth.mjs";
 import { scanEcosystem, updateAgentModel } from "./ecosystem.mjs";
 import { loadEnv } from "./env.mjs";
 import * as pilot from "./pilot.mjs";
@@ -17,6 +17,34 @@ import { sessionUsage, taskConsumption } from "./usage.mjs";
 import * as metrics from "./metrics.mjs";
 import { marked } from "marked";
 import { generateSubtitledVideo, generateNarratedVideo } from "./subtitles.mjs";
+
+// --- ACL rôle `evaluateur` (ADR-002) — allowlist FAIL-CLOSED ----------------
+// L'évaluateur n'accède qu'aux pages Fonctionnalités & Règles, Tests E2E et
+// Recettes (+ lecture Projets/Repos pour choisir un projet). Toute route NON
+// listée est refusée en 403 : la protection est côté serveur, jamais l'UI.
+// Allowlist de LECTURE (préfixes autorisés, méthode GET/HEAD uniquement).
+const EVALUATEUR_ALLOWED_API = [
+  "/api/me", "/api/config", "/api/orgs", "/api/session/organization", "/api/render-md",
+  "/api/projects", "/api/repos", "/api/pieces", "/api/features", "/api/rules", "/api/links",
+  "/api/cardinality", "/api/sprints", "/api/docs", "/api/e2e-tests", "/api/e2e/jobs",
+  "/api/e2e/agent-sessions", "/api/e2e-vars", "/api/e2e/file", "/api/recettes",
+  "/api/batches", "/api/adr-vigilances",
+];
+// Interdits EXPLICITES (défense en profondeur) même si un préfixe de l'allowlist
+// les couvrirait : `/api/docs/file` sert le contenu des ADR (onglet ADR interdit).
+const EVALUATEUR_DENIED_API = ["/api/docs/file", "/api/e2e-secrets"];
+// Écritures autorisées (méthodes non-GET) : ses recettes (items/documents/session),
+// le lancement d'un test E2E, le dépôt de pièces, la levée d'une vigilance ADR et
+// le changement d'organisation active. Rien d'autre (finish/tasks, création E2E,
+// vars/secrets, features/rules/docs/sprints/projets/repos… = 403).
+const EVALUATEUR_WRITE_PATTERNS = [
+  /^\/api\/session\/organization$/,
+  /^\/api\/pieces$/,
+  /^\/api\/recettes$/,
+  /^\/api\/recettes\/[^/]+\/(items|documents|session)(\/.*)?$/,
+  /^\/api\/e2e-tests\/[^/]+\/run$/,
+  /^\/api\/adr-vigilances\/[^/]+\/resolve$/,
+];
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -242,6 +270,28 @@ async function userOwnsEntity(username, kind, id) {
     }
   } catch { return false; }
   return true;
+}
+
+// Garde ACL rôle `evaluateur` (FAIL-CLOSED) : renvoie `true` (et écrit un 403) si
+// la requête sort du périmètre autorisé, `false` sinon. Ne concerne QUE le rôle
+// `evaluateur` — les autres rôles sont inchangés. Lecture = allowlist de préfixes ;
+// écriture = patterns explicites ; toute autre route API est refusée.
+function enforceEvaluateurAcl(user, path, method, res) {
+  if (!user || user.role !== "evaluateur") return false;
+  if (!path.startsWith("/api/")) return false;
+  if (EVALUATEUR_DENIED_API.some((p) => path === p || path.startsWith(p + "/"))) {
+    sendJson(res, 403, { error: "accès refusé — hors périmètre évaluateur" });
+    return true;
+  }
+  const isRead = method === "GET" || method === "HEAD";
+  const allowed = isRead
+    ? EVALUATEUR_ALLOWED_API.some((p) => path === p || path.startsWith(p + "/"))
+    : EVALUATEUR_WRITE_PATTERNS.some((re) => re.test(path));
+  if (!allowed) {
+    sendJson(res, 403, { error: "accès refusé — hors périmètre évaluateur" });
+    return true;
+  }
+  return false;
 }
 
 async function registryTasks(url, forcedOrg, ownerScope, projectAccess) {
@@ -707,7 +757,7 @@ async function handleLogin(req, res) {
     return sendJson(res, 401, { error: "identifiants invalides" });
   }
   const s = await createSession(u.id);
-  let role = u.role && ["admin", "supervisor", "user"].includes(u.role) ? u.role : "user";
+  let role = u.role && ["admin", "supervisor", "evaluateur", "user"].includes(u.role) ? u.role : "user";
   if (u.is_admin) role = "admin";
   res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Set-Cookie": cookieHeader(s.token) });
   res.end(JSON.stringify({ ok: true, user: { id: u.id, username: u.username, is_admin: role === "admin", role } }));
@@ -727,7 +777,7 @@ async function handleUsers(req, res, user) {
     const { username, password, role, organizationId, projectIds } = await readBody(req);
     if (!username || !password) return sendJson(res, 400, { error: "username et password requis" });
     try {
-      // role : admin | supervisor | user (défaut user ; isAdmin rétrocompat).
+      // role : admin | supervisor | evaluateur | user (défaut user ; isAdmin rétrocompat).
       const u = await createUser(String(username), String(password), false, role || "user", organizationId);
       // Accès par projet (aucun par défaut).
       if (Array.isArray(projectIds) && projectIds.length) { try { await setUserProjects(u.id, projectIds); } catch {} }
@@ -795,7 +845,7 @@ async function handleUserAction(req, res, user, path) {
   }
   if (req.method === "POST" && parts[3] === "role") {
     const { role } = await readBody(req);
-    if (!["admin", "supervisor", "user"].includes(role)) return sendJson(res, 400, { error: "role invalide (admin|supervisor|user)" });
+    if (!["admin", "supervisor", "evaluateur", "user"].includes(role)) return sendJson(res, 400, { error: "role invalide (admin|supervisor|evaluateur|user)" });
     if (id === user.id) return sendJson(res, 400, { error: "impossible de changer son propre rôle" });
     const u = await updateUserRole(id, role);
     if (!u) return sendJson(res, 404, { error: "utilisateur inconnu" });
@@ -1468,6 +1518,9 @@ const server = createServer(async (req, res) => {
       return redirect(res, "/login");
     }
 
+    // ACL rôle `evaluateur` (ADR-002) : refus 403 FAIL-CLOSED AVANT toute route.
+    if (enforceEvaluateurAcl(user, path, req.method, res)) return;
+
     // Rôle SUPERVISEUR / lecture seule (v0.9.29) : accès en LECTURE (GET)
     // uniquement. Toute méthode d'écriture (POST/PUT/DELETE/PATCH) est refusée
     // sauf pour un administrateur. La protection est côté serveur (jamais l'UI).
@@ -1484,8 +1537,18 @@ const server = createServer(async (req, res) => {
         if (!owned) return sendJson(res, 403, { error: "accès en écriture limité à vos propres données" });
       }
     }
+    // Garde rôle `evaluateur` (ADR-002) : l'écriture est limitée à SES PROPRES
+    // recettes (items/documents/session). La création (sans id) reste permise et
+    // est attribuée à l'évaluateur.
+    if (user.role === "evaluateur" && req.method !== "GET") {
+      const m = path.match(/^\/api\/recettes\/([^/]+)/);
+      if (m) {
+        const owned = await userOwnsEntity(user.username, "recettes", decodeURIComponent(m[1]));
+        if (!owned) return sendJson(res, 403, { error: "accès en écriture limité à vos propres recettes" });
+      }
+    }
 
-    if (path === "/api/me") return sendJson(res, 200, { user });
+    if (path === "/api/me") return sendJson(res, 200, { user: { ...user, pages: allowedPages(user.role) } });
     // Change l'organisation ACTIVE de la session (isolation serveur). L'utilisateur
     // doit être membre de l'organisation ciblée.
     if (path === "/api/session/organization" && req.method === "POST") {
@@ -2534,7 +2597,9 @@ const server = createServer(async (req, res) => {
       const params = [];
       if (project) { params.push(project); conds.push(`r.project = $${params.length}`); }
       if (user.activeOrganizationId) { params.push(user.activeOrganizationId); conds.push(`(r.organization_id = $${params.length})`); }
-      if (user.ownerScope) { params.push(user.ownerScope); conds.push(`r.created_by = $${params.length}`); }
+      // Périmètre des recettes : l'évaluateur (et le rôle `user`) ne voient que
+      // leurs recettes ; admin/superviseur voient tout (recetteOwnerScope = null).
+      if (user.recetteOwnerScope) { params.push(user.recetteOwnerScope); conds.push(`r.created_by = $${params.length}`); }
       if (user.projectAccess !== null && user.projectAccess !== undefined) {
         if (!user.projectAccess.length) conds.push("1 = 0");
         else { params.push(user.projectAccess); conds.push(`r.project = ANY($${params.length})`); }
@@ -2612,16 +2677,22 @@ const server = createServer(async (req, res) => {
         try { sb = await readBody(req); } catch {}
         return sendJson(res, 200, await pilot.launchRecetteSession({ recetteId: recetteAction[1], force: !!(sb && sb.force), adrIds: (sb && sb.adrIds) || undefined, featureIds: (sb && sb.featureIds) || undefined, ruleIds: (sb && sb.ruleIds) || undefined }));
       }
+      // ADR-001/002 : la recette de l'évaluateur n'est PAS convertible en tâches
+      // (le cadrage technique relève de l'exécuteur/admin). Refus explicite.
+      if (user.role === "evaluateur") return sendJson(res, 403, { error: "conversion d'une recette en tâches interdite au rôle évaluateur (ADR-001/002)" });
       const b = await readBody(req);
       return sendJson(res, 200, await pilot.finishRecette({ recetteId: recetteAction[1], items: b.items, by: user.username, launchMode: b.launchMode, createTasks: b.createTasks !== false }));
     }
     const recetteTaskAdd = path.match(/^\/api\/recettes\/([^/]+)\/tasks$/);
     if (recetteTaskAdd && req.method === "POST") {
+      // ADR-001/002 : rattacher/détacher des tâches = cadrage technique → interdit.
+      if (user.role === "evaluateur") return sendJson(res, 403, { error: "gestion des tâches d'une recette interdite au rôle évaluateur (ADR-001/002)" });
       const b = await readBody(req);
       return sendJson(res, 200, await pilot.addRecetteTask({ recetteId: recetteTaskAdd[1], taskId: b.taskId }));
     }
     const recetteTaskDel = path.match(/^\/api\/recettes\/([^/]+)\/tasks\/([^/]+)$/);
     if (recetteTaskDel && req.method === "DELETE") {
+      if (user.role === "evaluateur") return sendJson(res, 403, { error: "gestion des tâches d'une recette interdite au rôle évaluateur (ADR-001/002)" });
       return sendJson(res, 200, await pilot.removeRecetteTask({ recetteId: recetteTaskDel[1], taskId: decodeURIComponent(recetteTaskDel[2]) }));
     }
     const recetteItemDel = path.match(/^\/api\/recettes\/([^/]+)\/items\/([0-9]+)$/);

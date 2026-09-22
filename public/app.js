@@ -1,6 +1,7 @@
 // app.js — Logique du panneau de supervision.
 let ME = null;
 let IS_ADMIN = false;    // vrai si l'utilisateur courant est admin (écritures)
+let IS_EVALUATEUR = false; // vrai si rôle « évaluateur » (ADR-002 : périmètre restreint)
 let REFRESH_S = 10;      // intervalle (s), surchargé par /api/config (min 10)
 let refreshTimer = null;
 let activeTab = 'overview';
@@ -100,6 +101,9 @@ function ensurePane(tab) {
 }
 
 function switchTab(tab) {
+  // Rôle évaluateur : repli sur la page autorisée si l'onglet est hors périmètre
+  // (deep-link / état résiduel) — défense UI, la garde serveur reste la référence.
+  if (IS_EVALUATEUR && !EVALUATEUR_ALLOWED_TABS.includes(tab)) tab = 'features';
   ensurePane(tab);
   document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('.pane').forEach((p) => p.classList.toggle('active', p.id === 'pane-' + tab));
@@ -130,11 +134,26 @@ const PROJECT_TABS = [
   ['archives', 'Archives'],
 ];
 
+// Rôle ÉVALUATEUR (ADR-002) : onglets restreints. Global = Projets (pour choisir
+// un projet) ; projet ouvert = Fonctionnalités & Règles, Tests E2E, Recettes.
+// La page d'atterrissage est `features` (jamais `overview`).
+const EVALUATEUR_GLOBAL_TABS = [
+  ['projects', 'Projets'],
+];
+const EVALUATEUR_PROJECT_TABS = [
+  ['features', 'Fonctionnalités & Règles'],
+  ['e2etests', 'Tests E2E'],
+  ['recettes', 'Recettes'],
+];
+const EVALUATEUR_ALLOWED_TABS = ['projects', 'features', 'e2etests', 'recettes'];
+
 // Construit la barre d'onglets selon l'état (projet ouvert ou non).
 function renderNav() {
   const nav = document.getElementById('tabs');
   if (!nav) return;
-  const tabs = currentProject ? PROJECT_TABS : GLOBAL_TABS;
+  const tabs = IS_EVALUATEUR
+    ? (currentProject ? EVALUATEUR_PROJECT_TABS : EVALUATEUR_GLOBAL_TABS)
+    : (currentProject ? PROJECT_TABS : GLOBAL_TABS);
   const activeIsDefault = (ORGANIZATIONS.find((o) => o.id === currentOrg) || {}).isDefault === true;
   const buttons = tabs
     .filter(([t]) => t !== 'users' || IS_ADMIN)
@@ -170,7 +189,8 @@ function openProject(id) {
   if (!id) return;
   setCurrentProject(id);
   renderNav();
-  switchTab('overview');
+  // L'évaluateur atterrit sur une page autorisée (Fonctionnalités & Règles).
+  switchTab(IS_EVALUATEUR ? 'features' : 'overview');
   refreshActive();
 }
 
@@ -1040,10 +1060,11 @@ async function renderUsers() {
   const users = data.users || [];
   let projects = [];
   try { projects = ((await api('/api/projects')).projects || []); } catch {}
-  const roleOpts = (sel) => `<select class="role-sel" data-user="${esc(sel.id)}">${['admin', 'supervisor', 'user'].map((rl) => `<option value="${rl}" ${sel.role === rl ? 'selected' : ''}>${rl === 'admin' ? 'admin' : rl === 'supervisor' ? 'superviseur' : 'utilisateur'}</option>`).join('')}</select>`;
+  const ROLE_LABELS = { admin: 'admin', supervisor: 'superviseur', evaluateur: 'évaluateur', user: 'utilisateur' };
+  const roleOpts = (sel) => `<select class="role-sel" data-user="${esc(sel.id)}">${['admin', 'supervisor', 'evaluateur', 'user'].map((rl) => `<option value="${rl}" ${sel.role === rl ? 'selected' : ''}>${ROLE_LABELS[rl]}</option>`).join('')}</select>`;
   document.getElementById('pane-users').innerHTML = `
     <h2>Utilisateurs <span class="muted-sm">— organisation ${esc(currentOrg)}</span></h2>
-    <p class="muted-sm">Rôles : <strong>admin</strong> (écriture, tous les projets de l'organisation) · <strong>superviseur</strong> (lecture seule, tous les projets) · <strong>utilisateur</strong> (peut créer/agir, ne voit que <em>ses propres créations</em>). L'accès aux <strong>projets</strong> est explicite (aucun par défaut ; l'admin a tous les projets).</p>
+    <p class="muted-sm">Rôles : <strong>admin</strong> (écriture, tous les projets de l'organisation) · <strong>superviseur</strong> (lecture seule, tous les projets) · <strong>évaluateur</strong> (pages Fonctionnalités & Règles, Tests E2E, Recettes ; écrit sur <em>ses propres recettes</em>, lance les tests E2E et dépose des pièces) · <strong>utilisateur</strong> (peut créer/agir, ne voit que <em>ses propres créations</em>). L'accès aux <strong>projets</strong> est explicite (aucun par défaut ; l'admin a tous les projets).</p>
     <div class="eco-restart-bar"><button class="launch-btn" id="add-user-btn">Ajouter un utilisateur</button><span id="users-msg" class="muted-sm"></span></div>
     <table><thead><tr><th>Utilisateur</th><th>Rôle</th><th>Organisations</th><th>Projets</th><th>opencode</th><th>Email notif.</th><th>Créé le</th><th></th></tr></thead>
     <tbody>${users.map((u) => `<tr><td>${esc(u.username)}</td><td>${roleOpts(u)}</td><td><button class="ghost tiny" data-user-orgs="${u.id}" data-user-name="${esc(u.username)}">Gérer</button></td><td><button class="ghost tiny" data-user-projects="${u.id}" data-user-name="${esc(u.username)}">Gérer</button></td><td><button class="ghost tiny" data-user-oc="${u.id}" data-user-name="${esc(u.username)}">Accès</button></td><td><button class="ghost tiny" data-user-email="${u.id}" data-user-name="${esc(u.username)}" data-user-email-val="${esc(u.notifyEmail || '')}" title="Configurer l'email de notification">${u.notifyEmail ? esc(u.notifyEmail) : '—'}</button></td><td class="code">${esc((u.created_at || '').replace('T', ' ').slice(0, 19))}</td>    <td><div class="icon-actions"><button class="ghost tiny" data-oc-restart="${esc(u.username)}" title="Redémarrer l'instance opencode@${esc(u.username)}.service">Redémarrer</button><button class="danger" data-del="${u.id}">Supprimer</button></div></td></tr>`).join('')}</tbody></table>`;
@@ -1083,6 +1104,7 @@ async function userCreateModal() {
         <label>Rôle
           <select id="uc-role">
             <option value="user">utilisateur</option>
+            <option value="evaluateur">évaluateur</option>
             <option value="supervisor">superviseur</option>
             <option value="admin">admin</option>
           </select>
@@ -2590,12 +2612,12 @@ async function renderRecettes() {
     <p class="muted-sm">Opérations de vérification — chaque recette couvre UN projet (produit) et 0..N tâches de ce projet ; les repos transverses du projet sont sa portée réelle. Titre et session dédiée.</p>
     ${batches.length ? `<div class="actions-section"><h3>Batches d'orchestration actifs <span class="muted-sm">(${batches.length})</span></h3><div class="project-cards">${batches.map(batchCard).join('')}</div></div>` : ''}
     <div class="filters">
-      <div class="status-tagfilter" id="rec-user-tagfilter" title="Afficher les recettes des utilisateurs sélectionnés (multi)">
+      ${IS_EVALUATEUR ? '' : `<div class="status-tagfilter" id="rec-user-tagfilter" title="Afficher les recettes des utilisateurs sélectionnés (multi)">
         <span class="tagfilter-label">Créateurs :</span>
         <span class="tagfilter-tags" id="rec-user-tags"></span>
         <select id="rec-user-add" title="Ajouter un créateur à filtrer"><option value="">+ Ajouter…</option></select>
         <button type="button" class="ghost tagfilter-clear" id="rec-user-clear" hidden>tout afficher</button>
-      </div>
+      </div>`}
       <select id="rec-missing" title="Filtrer par lien manquant (cardinalité : source registre)">
         <option value="">Sans lien : tous</option>
         <option value="recette_sans_adr">Sans ADR</option>
@@ -7461,7 +7483,8 @@ async function init() {
     const me = await api('/api/me');
     ME = me.user;
     IS_ADMIN = !!(ME && ME.is_admin);
-    document.getElementById('whoami').textContent = ME.username + (ME.is_admin ? ' (admin)' : (ME.role === 'supervisor' ? ' (superviseur)' : (ME.role === 'user' ? ' (utilisateur)' : '')));
+    IS_EVALUATEUR = !!(ME && ME.role === 'evaluateur');
+    document.getElementById('whoami').textContent = ME.username + (ME.is_admin ? ' (admin)' : (ME.role === 'supervisor' ? ' (superviseur)' : (ME.role === 'evaluateur' ? ' (évaluateur)' : (ME.role === 'user' ? ' (utilisateur)' : ''))));
     // Bandeau : libellé COURT (évite le débordement d'en-tête).
     const roBanner = document.querySelector('.readonly-banner');
     if (roBanner) {
@@ -7472,12 +7495,21 @@ async function init() {
       } else if (ME.role === 'supervisor') {
         roBanner.textContent = 'Superviseur';
         roBanner.title = "Rôle superviseur : lecture seule sur toutes les données de l'organisation active.";
+      } else if (ME.role === 'evaluateur') {
+        roBanner.textContent = 'Évaluateur produit';
+        roBanner.title = "Rôle évaluateur : accès limité aux pages Fonctionnalités & Règles, Tests E2E et Recettes ; vous ne voyez que vos propres recettes (écriture sur vos recettes, lancement de tests E2E, dépôt de pièces).";
+        roBanner.style.display = 'inline-block';
       }
     }
     // Rôle SUPERVISOR / lecture seule stricte : classe body (masque les actions
     // d'écriture via CSS). Un `user` peut écrire (boutons visibles).
     if (ME.role === 'supervisor') {
       document.body.classList.add('readonly');
+    }
+    // Rôle ÉVALUATEUR : classe body dédiée (masque les écritures hors périmètre
+    // Features/Règles et E2E — cf. style.css `body.evaluateur`).
+    if (ME.role === 'evaluateur') {
+      document.body.classList.add('evaluateur');
     }
   } catch { return; }
 

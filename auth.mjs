@@ -26,8 +26,8 @@ export async function currentUser(req) {
   if (new Date(s.expires_at).getTime() < Date.now()) return null;
   const u = await getUserById(s.user_id);
   if (!u) return null;
-  // Rôle effectif : admin (is_admin rétrocompat) > supervisor > user.
-  let role = u.role && ["admin", "supervisor", "user"].includes(u.role) ? u.role : "user";
+  // Rôle effectif : admin (is_admin rétrocompat) > supervisor > evaluateur > user.
+  let role = u.role && ["admin", "supervisor", "evaluateur", "user"].includes(u.role) ? u.role : "user";
   if (u.is_admin) role = "admin";
   // Appartenance N:N + organisation ACTIVE (stockée dans la session).
   let organizations = await listUserOrganizations(u.id);
@@ -44,10 +44,15 @@ export async function currentUser(req) {
     organizationId: u.organization_id || "onirtech",
     organizations, activeOrganizationId,
     isSupervisor: role === "supervisor", isUser: role === "user",
+    isEvaluateur: role === "evaluateur",
     // Périmètre propriétaire : un rôle `user` ne voit QUE ses propres créations
     // (created_by = son username) dans l'organisation active. `supervisor`/`admin`
     // voient toutes les données de l'organisation (ownerScope = null).
     ownerScope: role === "user" ? u.username : null,
+    // Périmètre des RECETTES (ADR-002) : l'`evaluateur` ne voit QUE ses propres
+    // recettes ; `admin`/`supervisor` voient toutes les recettes (null). Le rôle
+    // `user` conserve son comportement historique (couvert ici pour ne rien casser).
+    recetteOwnerScope: role === "evaluateur" || role === "user" ? u.username : null,
     // Accès par PROJET : `admin` = tous les projets (null) ; les autres = liste
     // explicite (aucun par défaut).
     projectAccess: role === "admin" ? null : await listUserProjects(u.id),
@@ -57,9 +62,24 @@ export async function currentUser(req) {
   };
 }
 
-// Helpers ACL (admin = tout ; supervisor/user = lecture seule).
-export const canWrite = (user) => !!(user && user.is_admin);
-export const isReadOnly = (user) => !!(user && !user.is_admin);
+// Helpers ACL. `isReadOnly` = rôle `supervisor` uniquement (lecture stricte).
+// L'`evaluateur` n'est PAS en lecture seule globale : il écrit sur SES recettes,
+// lance des tests E2E et dépose des pièces (périmètre appliqué côté serveur).
+export const isReadOnly = (user) => !!(user && user.role === "supervisor");
+export const canWrite = (user) => !!(user && !isReadOnly(user));
+
+// Pages autorisées par rôle (source UNIQUE UI + serveur, ADR-002). L'`evaluateur`
+// n'accède qu'à Fonctionnalités & Règles, Tests E2E et Recettes (+ Projets pour
+// choisir un projet). `admin`/`supervisor`/`user` conservent toutes les pages.
+export const ROLE_PAGES = {
+  admin: ["projects", "overview", "tasks", "recettes", "e2etests", "decisions", "artifacts", "adr", "sprints", "features", "e2esecrets", "archives", "ecosystem", "workspaces", "users"],
+  supervisor: ["projects", "overview", "tasks", "recettes", "e2etests", "decisions", "artifacts", "adr", "sprints", "features", "e2esecrets", "archives", "ecosystem", "workspaces", "users"],
+  evaluateur: ["projects", "features", "e2etests", "recettes"],
+  user: ["projects", "overview", "tasks", "recettes", "e2etests", "decisions", "artifacts", "adr", "sprints", "features", "e2esecrets", "archives", "ecosystem", "workspaces", "users"],
+};
+export function allowedPages(role) {
+  return ROLE_PAGES[role] || ROLE_PAGES.user;
+}
 
 export function cookieHeader(token) {
   // Domaine partagé (ex. .madatalk.fr) pour que le cookie du panneau soit envoyé

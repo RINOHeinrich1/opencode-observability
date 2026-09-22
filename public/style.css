@@ -890,6 +890,32 @@ body.readonly #agent-session-btn {
   display: none !important;
 }
 
+/* Rôle ÉVALUATEUR (ADR-002) : masque les actions d'écriture HORS périmètre.
+   L'évaluateur CONSERVE : création/édition de SES recettes, lancement d'un test
+   E2E (▶ Lancer) et dépôt de pièces. Sont masquées les écritures Features/Règles
+   et les écritures E2E hors exécution (création, obsolescence, session de
+   création, création de tâche). Défense en profondeur : la source de vérité
+   reste la garde serveur fail-closed (403) — ceci n'est qu'un confort UI. */
+body.evaluateur [data-fr-impl],
+body.evaluateur [data-fr-edit],
+body.evaluateur [data-fr-del],
+body.evaluateur [data-fr-link],
+body.evaluateur [data-rule-impl],
+body.evaluateur [data-rule-edit],
+body.evaluateur [data-rule-del],
+body.evaluateur [data-rule-link],
+body.evaluateur #fr-new-feat,
+body.evaluateur #fr-new-rule,
+body.evaluateur #new-e2e-btn,
+body.evaluateur #agent-session-btn,
+body.evaluateur [data-e2e-obsolete],
+body.evaluateur [data-e2e-session],
+body.evaluateur [data-e2e-session-force],
+body.evaluateur [data-e2e-create-task] {
+  display: none !important;
+}
+body.evaluateur .readonly-banner { display: inline-block !important; }
+
 /* === Vue dédiée d'APPROBATION (décision à prendre) — plein écran lisible === */
 .decision-review {
   background: var(--panel, #161a22);

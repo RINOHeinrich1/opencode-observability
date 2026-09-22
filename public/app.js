@@ -170,12 +170,13 @@ const EXECUTEUR_PROJECT_TABS = [
   ['overview', "Vue d'ensemble"],
   ['tasks', 'Tâches'],
   ['recettes', 'Cadrage technique'],
+  ['evaluations', 'Recette'],
   ['e2etests', 'Tests E2E'],
   ['features', 'Fonctionnalités & Règles'],
   ['decisions', 'Décisions'],
   ['adr', 'ADR'],
 ];
-const EXECUTEUR_ALLOWED_TABS = ['projects', 'overview', 'tasks', 'recettes', 'e2etests', 'features', 'decisions', 'adr', 'workspaces'];
+const EXECUTEUR_ALLOWED_TABS = ['projects', 'overview', 'tasks', 'recettes', 'evaluations', 'e2etests', 'features', 'decisions', 'adr', 'workspaces'];
 
 // --- Terminologie « Cadrage technique » (ADR-001) --------------------------
 // Du point de vue de l'EXÉCUTEUR, l'entité historique « Recette » est un
@@ -2814,6 +2815,13 @@ const EVAL_CATEGORY_LABELS = { recommandation: 'Recommandation', probleme: 'Prob
 const EVAL_SEVERITY_LABELS = { low: 'faible', medium: 'moyenne', high: 'élevée', critical: 'critique' };
 const EVAL_VERDICT_LABELS = { conforme: 'conforme', non_conforme: 'non conforme', a_ameliorer: 'à améliorer' };
 const EVAL_ITEM_STATUS_LABELS = { open: 'ouvert', treated: 'traité', dismissed: 'écarté' };
+// DÉCISION ADMIN (distincte du statut de suivi) : l'admin marque « à traiter »
+// ou « non retenu » ; l'exécuteur n'accède qu'aux éléments « à traiter ».
+const EVAL_ITEM_DECISION_LABELS = { pending: 'non décidé', a_traiter: 'à traiter', non_retenu: 'non retenu' };
+function evalDecisionBadge(d) {
+  const cls = d === 'a_traiter' ? 'in_progress' : d === 'non_retenu' ? 'rejected' : 'queued';
+  return `<span class="badge ${cls}" title="Décision admin (à traiter / non retenu)">${esc(EVAL_ITEM_DECISION_LABELS[d] || d || '—')}</span>`;
+}
 function evalCategoryBadge(c) { return `<span class="badge ${c === 'probleme' ? 'danger' : 'awaiting'}">${esc(EVAL_CATEGORY_LABELS[c] || c || '—')}</span>`; }
 function evalSeverityBadge(s) { return `<span class="badge eval-sev-${esc(s || 'medium')}" title="Sévérité">${esc(EVAL_SEVERITY_LABELS[s] || s || '—')}</span>`; }
 function evalVerdictBadge(v) {
@@ -2836,13 +2844,14 @@ function evaluationCard(e) {
       <div class="project-kv"><span class="lbl">Fonctionnalités</span><span>${e.features_count || 0}</span></div>
       <div class="project-kv"><span class="lbl">Règles métier</span><span>${e.rules_count || 0}</span></div>
       <div class="project-kv"><span class="lbl">Éléments</span><span>${e.items_count || 0}</span></div>
+      <div class="project-kv"><span class="lbl">À traiter</span><span>${e.treatable_count || 0}</span></div>
       <div class="project-kv"><span class="lbl">Pièces</span><span>${e.documents_count || 0}</span></div>
       <div class="project-kv"><span class="lbl">Créée par</span><span>${esc(e.created_by || '—')}</span></div>
     </div>
     <div class="project-card-actions">
       <button class="ghost" data-eval-detail="${esc(e.evaluation_id)}">Détail</button>
       <button class="ghost" data-eval-pieces="${esc(e.evaluation_id)}">Pièces (${e.documents_count || 0})</button>
-      ${canFinish ? `<button class="approve" data-eval-finish="${esc(e.evaluation_id)}">Terminer la recette</button>` : ''}
+      ${canFinish && !IS_EXECUTEUR ? `<button class="approve" data-eval-finish="${esc(e.evaluation_id)}">Terminer la recette</button>` : ''}
     </div>
   </article>`;
 }
@@ -2864,18 +2873,21 @@ async function renderEvaluations() {
   };
   const setUserFilter = (next) => { evaluationsUserFilter = [...new Set(next)]; persistEvaluationsUsers(); refreshActive(); };
   // D012 : l'évaluateur ne voit que SES recettes → le filtre créateurs est masqué.
-  evals = IS_EVALUATEUR ? evals : evals.filter((e) => !evaluationsUserFilter.length || evaluationsUserFilter.includes(e.created_by || '—'));
+  // L'exécuteur accède à la page en LECTURE SEULE (ADR-002) : pas de filtre créateurs.
+  evals = (IS_EVALUATEUR || IS_EXECUTEUR) ? evals : evals.filter((e) => !evaluationsUserFilter.length || evaluationsUserFilter.includes(e.created_by || '—'));
+  const evalReadOnly = IS_EXECUTEUR;
+  const treatableTotal = evals.reduce((n, e) => n + (Number(e.treatable_count) || 0), 0);
   document.getElementById('pane-evaluations').innerHTML = `
     <h2>Recettes</h2>
-    <p class="muted-sm">Recette de l'<strong>évaluateur produit</strong> — décrit le parcours évalué, rattache des fonctionnalités (verdict) et des règles métier, enregistre des recommandations/problèmes et joint des pièces (lien, document, photo, vidéo). ${IS_EVALUATEUR ? 'Vous ne voyez que vos recettes.' : 'Admin/superviseur voient toutes les recettes.'}</p>
+    <p class="muted-sm">Recette de l'<strong>évaluateur produit</strong> — décrit le parcours évalué, rattache des fonctionnalités (verdict) et des règles métier, enregistre des recommandations/problèmes et joint des pièces (lien, document, photo, vidéo). ${evalReadOnly ? `Lecture seule — vous n'accédez qu'aux éléments <strong>à traiter</strong> (${treatableTotal}).` : IS_EVALUATEUR ? 'Vous ne voyez que vos recettes.' : 'Admin/superviseur voient toutes les recettes.'}</p>
     <div class="filters">
-      ${IS_EVALUATEUR ? '' : `<div class="status-tagfilter" id="eval-user-tagfilter" title="Afficher les recettes des évaluateurs sélectionnés (multi)">
+      ${(IS_EVALUATEUR || IS_EXECUTEUR) ? '' : `<div class="status-tagfilter" id="eval-user-tagfilter" title="Afficher les recettes des évaluateurs sélectionnés (multi)">
         <span class="tagfilter-label">Créateurs :</span>
         <span class="tagfilter-tags" id="eval-user-tags"></span>
         <select id="eval-user-add" title="Ajouter un créateur à filtrer"><option value="">+ Ajouter…</option></select>
         <button type="button" class="ghost tagfilter-clear" id="eval-user-clear" hidden>tout afficher</button>
       </div>`}
-      <button id="new-evaluation-btn" class="launch-btn">+ Nouvelle recette</button>
+      ${evalReadOnly ? '' : `<button id="new-evaluation-btn" class="launch-btn">+ Nouvelle recette</button>`}
     </div>
     <div class="project-cards">${evals.map(evaluationCard).join('') || '<p class="muted">Aucune recette.</p>'}</div>`;
   renderUserUI();
@@ -2885,7 +2897,8 @@ async function renderEvaluations() {
   if (box) box.addEventListener('click', (ev) => { const x = ev.target.closest('.chip-x'); if (x) setUserFilter(evaluationsUserFilter.filter((u) => u !== x.dataset.user)); });
   const clear = document.getElementById('eval-user-clear');
   if (clear) clear.addEventListener('click', () => setUserFilter([]));
-  document.getElementById('new-evaluation-btn').addEventListener('click', () => evaluationCreateModal());
+  const newEvalBtn = document.getElementById('new-evaluation-btn');
+  if (newEvalBtn) newEvalBtn.addEventListener('click', () => evaluationCreateModal());
   document.querySelectorAll('#pane-evaluations [data-eval-detail]').forEach((b) => b.addEventListener('click', () => evaluationDetailModal(b.dataset.evalDetail)));
   document.querySelectorAll('#pane-evaluations [data-eval-pieces]').forEach((b) => b.addEventListener('click', () => evaluationPiecesModal(b.dataset.evalPieces)));
   document.querySelectorAll('#pane-evaluations [data-eval-finish]').forEach((b) => b.addEventListener('click', () => evaluationFinishConfirm(b.dataset.evalFinish)));
@@ -3051,9 +3064,20 @@ async function evaluationDetailModal(evaluationId) {
   try { d = await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}`); } catch (e) { alert('Impossible de charger la recette : ' + (e.message || e)); return; }
   const ev = d.evaluation || {};
   const editable = ev.status !== 'done';
+  // Écritures : l'évaluateur (propriétaire) et l'admin ; l'exécuteur est en
+  // LECTURE SEULE (ADR-002) — ses POST seraient refusés côté serveur.
+  const canWrite = editable && !IS_EXECUTEUR;
   const items = ev.items || [];
   const feats = ev.fonctionnalites || [];
   const rules = ev.regles || [];
+  // Pièces rattachées à un élément précis (`document.itemId`).
+  const docsByItem = new Map();
+  for (const doc of (ev.documents || [])) {
+    if (doc.itemId === null || doc.itemId === undefined) continue;
+    const k = Number(doc.itemId);
+    if (!docsByItem.has(k)) docsByItem.set(k, []);
+    docsByItem.get(k).push(doc);
+  }
   const verdictOptions = (cur) => ['', 'conforme', 'non_conforme', 'a_ameliorer'].map((v) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${v ? esc(EVAL_VERDICT_LABELS[v]) : '— verdict —'}</option>`).join('');
   showModal(`
     <div class="modal modal-wide">
@@ -3062,20 +3086,30 @@ async function evaluationDetailModal(evaluationId) {
       ${ev.description ? `<div class="eval-block"><span class="lbl">Parcours évalué</span><div class="muted-sm" style="white-space:pre-wrap">${esc(ev.description)}</div></div>` : ''}
       <h3>Éléments <span class="muted-sm">(recommandations / problèmes)</span></h3>
       <div class="recette-list" id="eval-items-list">
-        ${items.map((it) => `<div class="recette-item eval-item">
-          ${evalCategoryBadge(it.category)} ${evalSeverityBadge(it.severity)}
+        ${items.map((it) => {
+          const repris = (it.reprisPar || []).map((x) => `<span class="badge awaiting" title="Repris par le cadrage ${esc(x.cadrageId)}${x.takenBy ? ` (${esc(x.takenBy)})` : ''}">repris par ${esc(x.title || x.cadrageId)}</span>`).join(' ');
+          const pieces = docsByItem.get(Number(it.itemId)) || [];
+          const pieceLine = pieces.length ? `<div class="muted-sm eval-item-pieces">${pieces.map((doc) => `<span>${doc.nature === 'lien' ? '🔗' : doc.nature === 'photo' ? '🖼' : doc.nature === 'video' ? '🎬' : '📄'} ${esc(doc.title || (doc.path || '').split('/').pop())}</span>`).join(' · ')}</div>` : '';
+          const decideBtns = IS_ADMIN ? `<button class="ghost" data-eval-item-decide="${it.itemId}" data-decision="a_traiter" title="Marquer « à traiter » (visible par l'exécuteur)">À traiter</button><button class="ghost" data-eval-item-decide="${it.itemId}" data-decision="non_retenu" title="Marquer « non retenu »">Non retenu</button>` : '';
+          return `<div class="recette-item eval-item">
+          ${evalCategoryBadge(it.category)} ${evalSeverityBadge(it.severity)} ${evalDecisionBadge(it.decision)}
           <span class="eval-item-content">${esc(it.content)}</span>
           <span class="badge ${it.status === 'treated' ? 'done' : it.status === 'dismissed' ? 'queued' : 'in_progress'}">${esc(EVAL_ITEM_STATUS_LABELS[it.status] || it.status)}</span>
-          ${editable ? `<button class="ghost" data-eval-item-edit="${it.itemId}">Éditer</button><button class="danger" data-eval-item-del="${it.itemId}">Retirer</button>` : ''}
-        </div>`).join('') || '<p class="muted-sm">Aucun élément.</p>'}
+          ${repris}
+          ${decideBtns}
+          ${canWrite ? `<button class="ghost" data-eval-item-piece="${it.itemId}" title="Joindre une pièce à cet élément">+ pièce</button>` : ''}
+          ${canWrite ? `<button class="ghost" data-eval-item-edit="${it.itemId}">Éditer</button><button class="danger" data-eval-item-del="${it.itemId}">Retirer</button>` : ''}
+          ${pieceLine}
+        </div>`;
+        }).join('') || '<p class="muted-sm">Aucun élément.</p>'}
       </div>
-      ${editable ? '<div class="actions-buttons"><button class="launch-btn" id="eval-item-add">+ Ajouter un élément</button></div>' : ''}
+      ${canWrite ? '<div class="actions-buttons"><button class="launch-btn" id="eval-item-add">+ Ajouter un élément</button></div>' : ''}
       <h3>Verdicts par fonctionnalité</h3>
       <div class="recette-list">
         ${feats.map((f) => `<div class="recette-item eval-verdict-row">
           <span class="adr-pick-head"><strong>${esc(f.ref || f.id)}</strong> ${f.role ? `<span class="badge">${esc(f.role)}</span>` : ''}</span>
           <span class="muted-sm">${esc((f.userStory || '').slice(0, 90))}</span>
-          ${editable
+          ${canWrite
             ? `<select class="eval-verdict-sel" data-eval-verdict="${esc(f.id)}">${verdictOptions(f.verdict)}</select>`
             : evalVerdictBadge(f.verdict)}
         </div>`).join('') || '<p class="muted-sm">Aucune fonctionnalité rattachée.</p>'}
@@ -3106,6 +3140,15 @@ async function evaluationDetailModal(evaluationId) {
     try { await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/items/${b.dataset.evalItemDel}`, { method: 'DELETE' }); evaluationDetailModal(evaluationId); }
     catch (e) { alert('Échec : ' + (e.message || e)); }
   }));
+  // Décision ADMIN (« à traiter » / « non retenu ») — route admin-only côté serveur.
+  document.querySelectorAll('#modal-backdrop [data-eval-item-decide]').forEach((b) => b.addEventListener('click', async () => {
+    try {
+      await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/items/${b.dataset.evalItemDecide}/decision`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision: b.dataset.decision }) });
+      evaluationDetailModal(evaluationId);
+    } catch (e) { alert('Échec de la décision : ' + (e.message || e)); }
+  }));
+  // Pièces portées par un élément (`itemId`).
+  document.querySelectorAll('#modal-backdrop [data-eval-item-piece]').forEach((b) => b.addEventListener('click', () => evaluationItemPieceModal(evaluationId, Number(b.dataset.evalItemPiece))));
   document.querySelectorAll('#modal-backdrop [data-eval-verdict]').forEach((sel) => sel.addEventListener('change', async () => {
     try {
       await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/verdicts`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fonctionnaliteId: sel.dataset.evalVerdict, verdict: sel.value || null }) });
@@ -3163,6 +3206,87 @@ function evaluationItemModal(evaluationId, item) {
         await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/items`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       }
       evaluationDetailModal(evaluationId);
+    } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
+  });
+}
+
+// Modale PIÈCES d'un ÉLÉMENT : liste + ajout (lien / document / photo / vidéo).
+// La pièce est rattachée à l'élément via `itemId` (contrat `evaluation_doc_add`).
+async function evaluationItemPieceModal(evaluationId, itemId) {
+  let d;
+  try { d = await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}`); } catch (e) { alert('Impossible de charger la recette : ' + (e.message || e)); return; }
+  const ev = d.evaluation || {};
+  const item = (ev.items || []).find((x) => Number(x.itemId) === Number(itemId)) || {};
+  const pieces = (ev.documents || []).filter((doc) => Number(doc.itemId) === Number(itemId));
+  let allArtifacts = [];
+  try { allArtifacts = ((await api('/api/artifacts')).artifacts || []); } catch {}
+  showModal(`
+    <div class="modal modal-wide">
+      <h2>Pièces de l'élément</h2>
+      <p class="muted">${evalCategoryBadge(item.category)} ${evalSeverityBadge(item.severity)} ${esc(item.content || '')}</p>
+      <div class="recette-list">
+        ${pieces.map((doc) => `<div class="recette-item">
+          <code class="muted-sm">${doc.nature === 'lien' ? '🔗' : doc.nature === 'photo' ? '🖼' : doc.nature === 'video' ? '🎬' : '📄'}</code>
+          <span><strong>${esc(doc.title || (doc.path || '').split('/').pop())}</strong></span>
+          ${doc.nature ? `<span class="muted-sm">${esc(doc.nature)}</span>` : ''}
+          <button class="danger" data-eval-item-doc-del="${esc(doc.documentId || doc.id)}">Retirer</button>
+        </div>`).join('') || '<p class="muted-sm">Aucune pièce rattachée à cet élément.</p>'}
+      </div>
+      <form id="eval-item-piece-form" class="pilot-form">
+        <div class="links-head"><label class="modal-field" style="margin:0">Ajouter une pièce à cet élément</label></div>
+        <select id="eip-nature">
+          <option value="lien">Lien</option>
+          <option value="document">Document</option>
+          <option value="photo">Photo</option>
+          <option value="video">Vidéo</option>
+        </select>
+        <input id="eip-title" placeholder="titre (optionnel)">
+        <select id="eip-mode">
+          <option value="link">Lien (URL)</option>
+          <option value="import">Importer un fichier</option>
+          <option value="artifact">Lier un artefact</option>
+        </select>
+        <input id="eip-url" placeholder="https://… (mode lien)">
+        <input id="eip-file" type="file" hidden>
+        <select id="eip-art" hidden><option value="">— artefact existant —</option>${allArtifacts.map((a) => `<option value="${esc(a.artifact_id)}">${esc((a.title || a.path).slice(0, 60))}</option>`).join('')}</select>
+        <div class="modal-actions"><button type="submit" class="launch-btn">Ajouter</button></div>
+      </form>
+      <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
+      <div id="eval-item-piece-msg" class="msg"></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  const modeSel = document.getElementById('eip-mode');
+  const sync = () => {
+    const m = modeSel.value;
+    document.getElementById('eip-url').hidden = m !== 'link';
+    document.getElementById('eip-file').hidden = m !== 'import';
+    document.getElementById('eip-art').hidden = m !== 'artifact';
+  };
+  modeSel.addEventListener('change', sync); sync();
+  document.querySelectorAll('#modal-backdrop [data-eval-item-doc-del]').forEach((b) => b.addEventListener('click', async () => {
+    try { await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/documents/${b.dataset.evalItemDocDel}`, { method: 'DELETE' }); evaluationItemPieceModal(evaluationId, itemId); }
+    catch (e) { alert('Échec : ' + (e.message || e)); }
+  }));
+  document.getElementById('eval-item-piece-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById('eval-item-piece-msg');
+    try {
+      const mode = modeSel.value;
+      const body = { mode, nature: document.getElementById('eip-nature').value, title: document.getElementById('eip-title').value.trim() || undefined, itemId: Number(itemId) };
+      if (mode === 'link') {
+        body.url = document.getElementById('eip-url').value.trim();
+        if (!body.url) throw new Error('URL requise');
+      } else if (mode === 'import') {
+        const f = document.getElementById('eip-file').files[0];
+        if (!f) throw new Error('fichier requis');
+        const buf = await f.arrayBuffer();
+        body.filename = f.name; body.dataBase64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+      } else {
+        body.artifactId = document.getElementById('eip-art').value;
+        if (!body.artifactId) throw new Error('artefact requis');
+      }
+      await api(`${evaluationsApiBase()}/${encodeURIComponent(evaluationId)}/documents`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      evaluationItemPieceModal(evaluationId, itemId);
     } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
   });
 }
@@ -3343,6 +3467,7 @@ async function recetteDetailModal(recetteId) {
         return `<div class="recette-item"><code class="muted-sm">${esc(tid)}</code><div class="recette-task">${tproj ? `<code class="chip-project">${esc(tproj)}</code>` : ''}<strong>${esc(ttl)}</strong>${req ? `<p class="muted-sm">${esc(req)}</p>` : ''}</div>${rec.status !== 'done' ? `<button type="button" class="ghost rec-task-del" data-rec-task-del="${esc(tid)}" title="Détacher cette tâche (elle reste intacte)">✕ retirer</button>` : ''}</div>`;
       }).join('')}</div>${rec.status !== 'done' ? `<div class="rec-tasks-add"><select id="rec-task-add"><option value="">+ Ajouter une tâche couverte…</option></select></div>` : ''}</div></div>` : `<p class="muted-sm">Aucune tâche couverte (${T.entityLower} exploratoire).</p>`}
       ${items.length ? `<div class="actions-section"><h3>${T.elementsCap} (${items.length})</h3><div class="recette-list">${items.map((it) => `<div class="recette-item"><span class="badge ${RECETTE_CLS_BADGE[it.classification] || 'queued'}">${RECETTE_CLS_LABEL[it.classification] || it.classification}</span>${it.project ? `<code class="chip-project">${esc(it.project)}</code>` : ''}${it.execOrder != null ? `<span class="badge order-badge" title="Ordre d'exécution">ordre ${esc(it.execOrder)}</span>` : ''}${testIntentBadge(it)}${docIntentBadge(it)}${it.vigilance ? `<span class="badge danger" title="${esc(it.vigilance)}">⚠ vigilance</span>` : ''}<span>${esc(it.title || it.content.slice(0, 80))}</span>${rec.status !== 'done' && it.status !== 'task_created' ? `<button type="button" class="ghost rec-item-del" data-rec-item-del="${it.id}" title="Retirer cet élément (fusion/consolidation)">✕</button>` : ''}</div>`).join('')}</div></div>` : ''}
+      ${(IS_EXECUTEUR || IS_ADMIN) ? `<div class="actions-section"><h3>Éléments de recette à traiter</h3><div class="recette-list">${(rec.evaluationItems || []).map((it) => `<div class="recette-item">${evalCategoryBadge(it.category)} ${evalSeverityBadge(it.severity)}<span>${esc(it.content)}</span><span class="muted-sm">repris par ce cadrage</span>${rec.status !== 'done' ? `<button type="button" class="ghost rec-eval-item-del" data-rec-eval-item-del="${it.itemId}" title="Retirer la reprise (l'élément reste « à traiter »)">✕ retirer</button>` : ''}</div>`).join('') || '<p class="muted-sm">Aucun élément de recette évaluateur repris dans ce cadrage.</p>'}</div>${rec.status !== 'done' ? `<div class="rec-tasks-add"><select id="rec-eval-item-add"><option value="">+ Reprendre un élément « à traiter »…</option></select></div>` : ''}</div>` : ''}
       <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
@@ -3377,6 +3502,33 @@ async function recetteDetailModal(recetteId) {
       if (!confirm(`Retirer cet ${T.element} ? (utilisé pour la fusion/consolidation d'éléments)`)) return;
       try {
         await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/items/${b.dataset.recItemDel}`, { method: 'DELETE' });
+        closeModal(); recetteDetailModal(recetteId);
+      } catch (e) { alert('Échec : ' + (e.message || e)); }
+    }));
+    // Reprise d'un ÉLÉMENT DE RECETTE ÉVALUATEUR « à traiter » (sélection en
+    // contexte) — traçage « repris par le cadrage X ».
+    const evalItemAddSel = document.getElementById('rec-eval-item-add');
+    if (evalItemAddSel) {
+      (async () => {
+        try {
+          const dd = await api(`/api/evaluations/treatable?project=${encodeURIComponent(project)}`);
+          const already = new Set((rec.evaluationItems || []).map((x) => Number(x.itemId)));
+          const cands = (dd.items || []).filter((c) => !already.has(Number(c.itemId)));
+          evalItemAddSel.innerHTML = `<option value="">+ Reprendre un élément « à traiter »…</option>` + cands.map((c) => `<option value="${c.itemId}">[${esc(c.evaluationTitle || c.evaluationId || '')}] ${esc((c.content || '').slice(0, 70))}</option>`).join('');
+        } catch {}
+        evalItemAddSel.addEventListener('change', async () => {
+          const v = evalItemAddSel.value;
+          if (!v) return;
+          try {
+            await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/evaluation-items`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ itemId: Number(v) }) });
+            closeModal(); recetteDetailModal(recetteId);
+          } catch (e) { alert('Échec : ' + (e.message || e)); evalItemAddSel.value = ''; }
+        });
+      })();
+    }
+    document.querySelectorAll('#modal-backdrop [data-rec-eval-item-del]').forEach((b) => b.addEventListener('click', async () => {
+      try {
+        await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/evaluation-items/${b.dataset.recEvalItemDel}`, { method: 'DELETE' });
         closeModal(); recetteDetailModal(recetteId);
       } catch (e) { alert('Échec : ' + (e.message || e)); }
     }));
@@ -4697,7 +4849,7 @@ async function projectDetailModal(projectId, tab = 'projet') {
           ${tabs.map(([t, l]) => `<button type="button" class="pd-tab ${t === tab ? 'active' : ''}" data-pd-tab="${t}">${esc(l)}</button>`).join('')}
         </div>
         <div class="pd-panel" id="pd-panel"></div>
-        <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
+      <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
         <div id="pd-msg" class="msg"></div>
       </div>`);
     document.getElementById('modal-cancel').onclick = closeModal;

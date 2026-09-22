@@ -39,7 +39,10 @@
 //   --apply         exécute les renommages (+ alignement si --align-paths).
 //   --revert        rejoue la table d'audit à l'envers (dry-run sans --apply).
 //   --align-paths   recalcule `artifacts.path` (+ meta.maquetteDir/meta.url)
-//                   depuis l'emplacement disque réel (écrit seulement avec --apply).
+//                   depuis l'emplacement disque réel APRÈS renommage (écrit
+//                   seulement avec --apply). Idempotent et correct dans les deux
+//                   ordres : renommage + alignement dans le MÊME run, ou
+//                   alignement seul après renommage.
 //   --orphans       liste les fichiers de `storage/` non référencés (jamais supprimés).
 //   --check         vérifie que tout `artifacts.path` sous `storage/` existe (0 lien mort).
 //   --dir=<path>    dossier `storage` (défaut : /root/orchestrator-panel/storage).
@@ -254,6 +257,35 @@ function listOrphans(entries, refIndex) {
 }
 
 // ---------------------------------------------------------------------------
+// Projection des entrées vers leur emplacement APRÈS renommage
+// ---------------------------------------------------------------------------
+// L'alignement DOIT viser le nom de fichier RÉEL post-renommage. Comme le plan
+// de renommage est calculé AVANT toute écriture, on projette ici les entrées
+// scannées (`fromAbs`/`from`) vers leur cible (`toAbs`/`to`) pour que le
+// dry-run et le run `--apply --align-paths` (renommage + alignement dans le
+// MÊME run) produisent le bon chemin. En `--apply`, on re-scanne le disque
+// après renommage (source de vérité), ce qui couvre aussi le cas « alignement
+// seul après renommage ».
+function projectEntries(entries, plan, storageDir) {
+  const renames = plan
+    .filter((p) => p.action === "rename")
+    .map((p) => ({ from: p.from, to: p.to, isDir: p.isDir }))
+    .sort((a, b) => b.from.length - a.from.length); // plus long préfixe d'abord
+  return entries.map((e) => {
+    for (const r of renames) {
+      if (e.rel === r.from) {
+        return { ...e, rel: r.to, abs: path.join(storageDir, ...r.to.split("/")) };
+      }
+      if (r.isDir && e.rel.startsWith(r.from + "/")) {
+        const rel = r.to + e.rel.slice(r.from.length);
+        return { ...e, rel, abs: path.join(storageDir, ...rel.split("/")) };
+      }
+    }
+    return e;
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Alignement des chemins (artifacts.path / meta.*)
 // ---------------------------------------------------------------------------
 async function buildAlignPlan(client, storageDir, resolver, entries) {
@@ -278,7 +310,15 @@ async function buildAlignPlan(client, storageDir, resolver, entries) {
     let realPath = null;
     for (const cand of cands) {
       const hits = tokenIndex.get(cand);
-      if (hits && hits.length) { realPath = hits.includes(a.path) ? a.path : hits[0]; break; }
+      if (hits && hits.length) {
+        // Préférer le chemin RÉEL existant (cas --apply : disque post-renommage) ;
+        // sinon la cible projetée (dry-run : le fichier n'est pas encore renommé).
+        // Conserve `a.path` s'il est lui-même un chemin valide (idempotence).
+        realPath = hits.includes(a.path) && fs.existsSync(a.path)
+          ? a.path
+          : (hits.find((h) => fs.existsSync(h)) || hits[0]);
+        break;
+      }
     }
     if (!realPath) continue;
 
@@ -470,10 +510,14 @@ async function main() {
     }
 
     const plan = buildPlan(args.dir, entries, resolver, refIndex);
-    const alignPlan = args.alignPaths ? await buildAlignPlan(client, args.dir, resolver, entries) : [];
 
     if (!args.apply) {
-      // DRY-RUN (défaut) : aucune écriture.
+      // DRY-RUN (défaut) : aucune écriture. L'alignement est calculé sur l'état
+      // du disque APRÈS renommage (projeté) pour rester correct quand renommage
+      // et alignement sont demandés dans le MÊME run.
+      const alignPlan = args.alignPaths
+        ? await buildAlignPlan(client, args.dir, resolver, projectEntries(entries, plan, args.dir))
+        : [];
       if (args.json) {
         console.log(JSON.stringify({ mode: "dry-run", storageDir: args.dir, entries: plan, align: alignPlan }, null, 2));
       } else {
@@ -490,7 +534,15 @@ async function main() {
     await ensureAuditTables(client);
     await client.query("BEGIN");
     const renamed = await applyFileRenames(client, plan);
-    const aligned = args.alignPaths ? await applyAlign(client, alignPlan) : [];
+    // Alignement calculé APRÈS le renommage effectif : `scanStorage` reflète le
+    // nom de fichier RÉEL (post-renommage) → `artifacts.path` n'est jamais
+    // laissé sur l'ancien nom. Idempotent : un second passage ne change rien.
+    let aligned = [];
+    if (args.alignPaths) {
+      const entriesAfter = scanStorage(args.dir);
+      const alignPlan = await buildAlignPlan(client, args.dir, resolver, entriesAfter);
+      aligned = await applyAlign(client, alignPlan);
+    }
     await recordStep(client, "files:rename", { renamed: renamed.filter((r) => r.result === "renamed").length });
     if (args.alignPaths) await recordStep(client, "paths:align", { aligned: aligned.length });
     await client.query("COMMIT");

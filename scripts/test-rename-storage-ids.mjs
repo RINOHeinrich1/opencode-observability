@@ -7,9 +7,12 @@
 //   2. `--orphans` : signale les fichiers non référencés (sans les toucher) ;
 //   3. `--apply` : renomme les fichiers à ancien id RÉSOLUS et RÉFÉRENCÉS,
 //      ignore (signale) les AMBIGUS et les ORPHELINS, `storage/e2e/**` exclu ;
-//   4. `--align-paths --apply` : `artifacts.path` + `meta.maquetteDir` alignés ;
+//   4. `--apply --align-paths` DANS LE MÊME RUN : `artifacts.path` pointe le
+//      fichier RÉEL post-renommage (+ `meta.maquetteDir`) — cas du bug corrigé ;
+//   4bis. recovery : `--align-paths --apply` SEUL après renommage (path resté
+//      sur l'ancien nom) récupère le chemin du fichier réel ;
 //   5. `--check` : 0 lien mort ;
-//   6. idempotence (`--apply` rejoué = 0 renommage) ;
+//   6. idempotence (`--apply --align-paths` rejoué = 0 renommage, 0 alignement) ;
 //   7. `--revert --apply` : retour à l'état initial (fichiers + chemins).
 //
 // Usage : node scripts/test-rename-storage-ids.mjs
@@ -88,13 +91,18 @@ async function main() {
     [join(staleDir, "index.html"), JSON.stringify({ maquetteDir: staleDir, url: "/api/recettes/RECT-rec00001-aaaa/maquette/slug/index.html" })]);
 
   // --- 1. DRY-RUN (aucune écriture) ---------------------------------------
-  const dry = run([], dir);
+  const dry = run(["--align-paths"], dir);
   check("dry-run code 0", dry.code, 0);
   check("dry-run : fichier NON renommé", fs.existsSync(fCad), true);
   check("dry-run : cible absente", fs.existsSync(join(dir, "cadrage-docs/CT-cad0001-aaaa-1700000000000-doc.md")), false);
   check("dry-run : aucune table d'audit", await n1(c, "SELECT count(*) n FROM information_schema.tables WHERE table_name='storage_rename_map'"), 0);
   check("dry-run : 1 entrée à renommer", (dry.json.entries || []).filter((e) => e.action === "rename").length, 1);
   check("dry-run : orphelin signalé (skip-orphan)", (dry.json.entries || []).filter((e) => e.action === "skip-orphan").length, 1);
+  // Le dry-run d'alignement doit viser le NOM APRÈS RENOMMAGE (le nom réel final),
+  // pas l'ancien nom : c'est exactement le défaut corrigé.
+  check("dry-run align : cible cadrage = nom post-renommage",
+    (dry.json.align || []).find((a) => a.artifact_id === "ART-CAD")?.newPath,
+    join(dir, "cadrage-docs/CT-cad0001-aaaa-1700000000000-doc.md"));
 
   // --- 2. ORPHANS ---------------------------------------------------------
   const orph = run(["--orphans"], dir);
@@ -103,8 +111,11 @@ async function main() {
   check("orphans : inclut RECT-orph0001", orph.json.orphans.some((o) => o.rel.includes("RECT-orph0001")), true);
   check("orphans : inclut RECT-T-20260101 (NON CONFORME)", orph.json.orphans.some((o) => o.rel.includes("RECT-T-20260101")), true);
 
-  // --- 3. APPLY -----------------------------------------------------------
-  const apply = run(["--apply"], dir);
+  // --- 3. APPLY + ALIGN-PATHS DANS LE MÊME RUN ---------------------------
+  // Cas NON COUVERT par la version précédente (33 PASS malgré le bug) : le
+  // renommage et l'alignement sont demandés dans le MÊME run, donc l'alignement
+  // doit utiliser le nom de fichier APRÈS renommage.
+  const apply = run(["--apply", "--align-paths"], dir);
   check("apply code 0", apply.code, 0);
   check("apply : fichier renommé (CT-*)", fs.existsSync(join(dir, "cadrage-docs/CT-cad0001-aaaa-1700000000000-doc.md")), true);
   check("apply : ancien fichier disparu (rename)", fs.existsSync(fCad), false);
@@ -114,14 +125,34 @@ async function main() {
   check("apply : e2e intact", fs.existsSync(join(dir, "e2e/runs/EXE-aaaa/y.webm")), true);
   check("apply : 1 rename enregistré", await n1(c, "SELECT count(*) n FROM storage_rename_map WHERE kind='file' AND new_path LIKE '%CT-cad0001%'"), 1);
   check("apply : étape audit tracée", await n1(c, "SELECT count(*) n FROM storage_rename_migrations WHERE step='files:rename'"), 1);
+  // MÊME RUN : `artifacts.path` doit être le chemin du fichier RÉEL post-renommage.
+  check("apply+align même run : artifacts.path cadrage = fichier réel post-renommage",
+    (await q(c, "SELECT path FROM artifacts WHERE artifact_id='ART-CAD'"))[0].path,
+    join(dir, "cadrage-docs/CT-cad0001-aaaa-1700000000000-doc.md"));
+  check("apply+align même run : le path aligné existe sur disque",
+    fs.existsSync((await q(c, "SELECT path FROM artifacts WHERE artifact_id='ART-CAD'"))[0].path), true);
+  check("apply+align même run : artifacts.path maquette aligné",
+    (await q(c, "SELECT path FROM artifacts WHERE artifact_id='ART-REC'"))[0].path,
+    join(dir, "recette-maquettes/RECT-rec00001-aaaa/slug/index.html"));
+  check("apply+align même run : meta.maquetteDir aligné",
+    (await q(c, "SELECT meta->>'maquetteDir' AS m FROM artifacts WHERE artifact_id='ART-REC'"))[0].m,
+    join(dir, "recette-maquettes/RECT-rec00001-aaaa/slug"));
+  check("apply+align même run : meta.url inchangée (déjà au bon id)",
+    (await q(c, "SELECT meta->>'url' AS u FROM artifacts WHERE artifact_id='ART-REC'"))[0].u,
+    "/api/recettes/RECT-rec00001-aaaa/maquette/slug/index.html");
 
-  // --- 4. ALIGN-PATHS --APPLY --------------------------------------------
-  const align = run(["--align-paths", "--apply"], dir);
-  check("align code 0", align.code, 0);
-  check("align : artifacts.path cadrage aligné", (await q(c, "SELECT path FROM artifacts WHERE artifact_id='ART-CAD'"))[0].path, join(dir, "cadrage-docs/CT-cad0001-aaaa-1700000000000-doc.md"));
-  check("align : artifacts.path maquette aligné", (await q(c, "SELECT path FROM artifacts WHERE artifact_id='ART-REC'"))[0].path, join(dir, "recette-maquettes/RECT-rec00001-aaaa/slug/index.html"));
-  check("align : meta.maquetteDir aligné", (await q(c, "SELECT meta->>'maquetteDir' AS m FROM artifacts WHERE artifact_id='ART-REC'"))[0].m, join(dir, "recette-maquettes/RECT-rec00001-aaaa/slug"));
-  check("align : meta.url inchangée (déjà au bon id)", (await q(c, "SELECT meta->>'url' AS u FROM artifacts WHERE artifact_id='ART-REC'"))[0].u, "/api/recettes/RECT-rec00001-aaaa/maquette/slug/index.html");
+  // --- 4. RECOVERY : ALIGN SEUL APRÈS RENAME (path régressé) --------------
+  // Reproduit l'état RÉEL constaté : le fichier est déjà renommé (CT-*) mais
+  // `artifacts.path` est resté sur l'ANCIEN nom (lien mort). L'alignement seul
+  // doit récupérer le chemin du fichier réel.
+  await c.query("UPDATE artifacts SET path=$1 WHERE artifact_id='ART-CAD'", [fCad]);
+  check("recovery : état de départ = lien mort", fs.existsSync(fCad), false);
+  const rec = run(["--align-paths", "--apply"], dir);
+  check("recovery code 0", rec.code, 0);
+  check("recovery align-only : artifacts.path ré-aligné sur le fichier réel",
+    (await q(c, "SELECT path FROM artifacts WHERE artifact_id='ART-CAD'"))[0].path,
+    join(dir, "cadrage-docs/CT-cad0001-aaaa-1700000000000-doc.md"));
+  check("recovery align-only : 1 seul chemin ré-aligné", (rec.json.align || []).length, 1);
 
   // --- 5. CHECK (0 lien mort) --------------------------------------------
   const chk = run(["--check"], dir);
@@ -129,8 +160,9 @@ async function main() {
   check("check : 0 lien mort", chk.json.deadCount, 0);
 
   // --- 6. IDEMPOTENCE -----------------------------------------------------
-  const again = run(["--apply"], dir);
+  const again = run(["--apply", "--align-paths"], dir);
   check("idempotence : 0 rename", (again.json.entries || []).filter((e) => e.result === "renamed").length, 0);
+  check("idempotence : 0 alignement", (again.json.align || []).length, 0);
 
   // --- 7. REVERT ----------------------------------------------------------
   const rev = run(["--revert", "--apply"], dir);

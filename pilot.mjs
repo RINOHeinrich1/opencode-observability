@@ -822,6 +822,9 @@ export async function createFeature(args = {}) {
     userStory: args.userStory,
     sourcedPieceId: args.sourcedPieceId || undefined,
     recetteId: args.recetteId || undefined,
+    // Signal EXPLICITE d'émergence origine `recette` (T6) — création depuis une
+    // recette évaluateur / un cadrage sans identifiant de recette disponible.
+    fromRecette: typeof args.fromRecette === "boolean" ? args.fromRecette : undefined,
     createdBy: args.createdBy || undefined,
   });
 }
@@ -880,6 +883,8 @@ export async function createRule(args = {}) {
     content: args.content,
     sourcedPieceId: args.sourcedPieceId || undefined,
     recetteId: args.recetteId || undefined,
+    // Signal EXPLICITE d'émergence origine `recette` (T6) — miroir de createFeature.
+    fromRecette: typeof args.fromRecette === "boolean" ? args.fromRecette : undefined,
     // Association EXPLICITE de rôles (T-20260922-064200-e0yw) — pass-through.
     roles: Array.isArray(args.roles) ? args.roles : undefined,
     roleGlobal: typeof args.roleGlobal === "boolean" ? args.roleGlobal : undefined,
@@ -927,6 +932,9 @@ export const LINK_KINDS = {
   task_feature:    { a: "taskId",    b: "featureId" },
   recette_sprint:  { a: "recetteId", b: "sprintId" },
   recette_feature: { a: "recetteId", b: "featureId" },
+  recette_rule:    { a: "recetteId", b: "ruleId" },
+  evaluation_feature: { a: "evaluationId", b: "featureId" },
+  evaluation_rule:    { a: "evaluationId", b: "ruleId" },
 };
 
 function linkArgs(kind, args = {}) {

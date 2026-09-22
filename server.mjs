@@ -2250,9 +2250,19 @@ const server = createServer(async (req, res) => {
       const b = await readBody(req);
       try {
         if (!b.projectId) return sendJson(res, 400, { error: "projectId requis" });
+        // GARDE ADMIN : une création demandée DANS UN CONTEXTE RECETTE/CADRAGE
+        // (`fromRecette` explicite ou `recetteId`) marque l'élément émergent
+        // d'origine `recette` — réservée à l'administrateur (ADR-001 : « création
+        // administrateur si manquant, marquée émergente »). La création STANDARD
+        // (onglet Fonctionnalités & Règles, sans contexte recette) reste inchangée.
+        const fromRecette = b.fromRecette === true || !!b.recetteId;
+        if (fromRecette && !user.is_admin) {
+          return sendJson(res, 403, { error: "réservé aux administrateurs — création d'une fonctionnalité depuis une recette/cadrage" });
+        }
         return sendJson(res, 201, await pilot.createFeature({
           projectId: b.projectId, ref: b.ref, role: b.role, userStory: b.userStory,
           sourcedPieceId: b.sourcedPieceId || undefined, recetteId: b.recetteId || undefined,
+          fromRecette: typeof b.fromRecette === "boolean" ? b.fromRecette : undefined,
           createdBy: user.username,
         }));
       } catch (e) { return sendJson(res, 400, { error: String((e && e.message) || e) }); }
@@ -2310,9 +2320,16 @@ const server = createServer(async (req, res) => {
       const b = await readBody(req);
       try {
         if (!b.projectId) return sendJson(res, 400, { error: "projectId requis" });
+        // GARDE ADMIN (miroir de POST /api/features) : création en contexte
+        // recette/cadrage → émergente origine `recette`, réservée à l'admin.
+        const fromRecette = b.fromRecette === true || !!b.recetteId;
+        if (fromRecette && !user.is_admin) {
+          return sendJson(res, 403, { error: "réservé aux administrateurs — création d'une règle depuis une recette/cadrage" });
+        }
         return sendJson(res, 201, await pilot.createRule({
           projectId: b.projectId, ref: b.ref, content: b.content,
           sourcedPieceId: b.sourcedPieceId || undefined, recetteId: b.recetteId || undefined,
+          fromRecette: typeof b.fromRecette === "boolean" ? b.fromRecette : undefined,
           // Association EXPLICITE de rôles (T-20260922-064200-e0yw).
           roles: Array.isArray(b.roles) ? b.roles : undefined,
           roleGlobal: typeof b.roleGlobal === "boolean" ? b.roleGlobal : undefined,
@@ -2960,11 +2977,27 @@ const server = createServer(async (req, res) => {
          FROM artifacts d LEFT JOIN artifacts a ON a.artifact_id = (d.meta->>'artifactId')
          WHERE d.content_id = $1 AND d.doc_type = ANY($2) ORDER BY d.id ASC`, [r.recette_id, RECETTE_DOC_TYPES],
       )).rows;
+      // FONCTIONNALITÉS / RÈGLES MÉTIER rattachées au cadrage (ADR-001 : un
+      // cadrage doit être rattaché à ≥1 fonctionnalité et des règles métier).
+      // Lecture SQL directe des tables de lien existantes ; l'émergence est
+      // exposée (origine `recette` pour les éléments créés depuis le cadrage).
+      const fonctionnalites = (await registry().query(
+        `SELECT f.id, f.ref, f.role, f.user_story, f.emergent, f.emergent_origin
+           FROM recette_fonctionnalites rf
+           JOIN fonctionnalites f ON f.id = rf.fonctionnalite_id
+          WHERE rf.recette_id = $1 ORDER BY f.ref ASC`, [r.recette_id],
+      )).rows.map((f) => ({ id: f.id, ref: f.ref, role: f.role ?? null, userStory: f.user_story, emergent: !!f.emergent, emergentOrigin: f.emergent_origin ?? null }));
+      const regles = (await registry().query(
+        `SELECT g.id, g.ref, g.content, g.emergent, g.emergent_origin
+           FROM recette_regles rr
+           JOIN regles_metier g ON g.id = rr.regle_id
+          WHERE rr.recette_id = $1 ORDER BY g.ref ASC`, [r.recette_id],
+      )).rows.map((g) => ({ id: g.id, ref: g.ref, content: g.content, emergent: !!g.emergent, emergentOrigin: g.emergent_origin ?? null }));
       // Points de vigilance ADR (item 126) — historique + points OUVERTs qui
       // BLOQUENT la terminaison (la modale de clôture les affiche avec la raison).
       let adrVigilances = [];
       try { const v = await pilot.listAdrVigilances({ recetteId: r.recette_id }); adrVigilances = (v && v.vigilancess) || []; } catch {}
-      return sendJson(res, 200, { recette: { ...r, repos: await reposOfProject(r.project), tasks, items, evaluationItems, documents: docs, adrVigilances, adrVigilancesOpen: adrVigilances.filter((x) => x.status === "open") } });
+      return sendJson(res, 200, { recette: { ...r, repos: await reposOfProject(r.project), tasks, items, evaluationItems, documents: docs, fonctionnalites, regles, adrVigilances, adrVigilancesOpen: adrVigilances.filter((x) => x.status === "open") } });
     }
     // =========================================================================
     // ÉVALUATIONS — « Recette » de l'ÉVALUATEUR PRODUIT (T-20260922-100650-sbc1).

@@ -5,6 +5,22 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## 2026-09-22 · Harmonisation de la prose des prompts d'agents (« recette » → « cadrage technique ») (v0.9.73)
+
+Correction de la **prose** des définitions d'agents (`opencode-agents`) restée
+sur l'ancienne nomenclature ADR-004 (voir v0.9.72 pour les **tokens**).
+**Aucun changement de schéma** (`SCHEMA_VERSION` inchangé).
+
+- **Reformulé en « cadrage technique »** : `orchestrator.md` (13 occ.),
+  `agent-sprint.md` (5), `test-agent.md` (2), `build-notify.md` (4),
+  `agent-migration.md` (3).
+- **Conservé (valeurs de contrat vérifiées)** : `origin='recette'` (enum E2E,
+  `index.mjs`), `task_sessions.kind='recette'` (`index.mjs`), `recette_*` de la
+  recette évaluateur (`agent-recette.md`), tokens `recette_get`.
+- **Signalé** : `orchestrator.md` l.444 (`decision_request kind="cadrage"`)
+  contredit l.431 (kind déclaré obsolète) — incohérence préexistante, hors
+  périmètre terminologie.
+
 ## 2026-09-22 · Alignement des définitions d'agents sur la nomenclature ADR-004 (v0.9.72)
 
 Les **définitions d'agents** (`opencode-agents`) sont alignées sur la nomenclature

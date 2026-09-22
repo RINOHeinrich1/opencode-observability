@@ -178,6 +178,13 @@ prompt de l'agent ne référence **jamais** les outils de l'autre objet) :
   `cadrage_sprints` dans `agent-migration.md`.
 - **Hors renommage** (contrats conservés) : `task_recette`/`task_recette_reset`,
   `task_sessions.kind='recette'`, origine E2E `origin='recette'`, `verdict_by='agent-recette'`.
+- **Prose des prompts harmonisée** (v0.9.73) : les occurrences du mot « recette »
+  désignant le **cadrage technique** ont été remplacées par « cadrage technique »
+  dans `orchestrator.md`, `agent-sprint.md`, `test-agent.md`, `build-notify.md` et
+  `agent-migration.md`. Sont **conservées** les occurrences qui sont des
+  **valeurs de contrat** (`origin='recette'` E2E, `task_sessions.kind='recette'`)
+  et celles de la **recette évaluateur** (`recette_*`, `agent-recette.md`).
+  « Recette » nu ne désigne plus que la **recette de l'évaluateur**.
   Voir [`CHANGELOG.md`](CHANGELOG.md) (nomenclature ADR-004, v0.9.71).
 
 ## 4. Le registre de tâches (MCP task-orchestrator + PostgreSQL)

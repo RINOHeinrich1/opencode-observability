@@ -1434,6 +1434,7 @@ async function renderArtifacts() {
   pane.innerHTML = `
     <h2>Artefacts — gestionnaire central</h2>
     <p class="muted-sm">Tous les artefacts, toutes entités confondues (tâche / cadrage / projet / ADR / E2E). Type = <code>doc_type</code>, Nature = <code>kind</code>.</p>
+    ${filterBar()}
     <div class="art-filters">
       <select id="art-f-doctype" title="Type (doc_type)">${dtOpts}</select>
       <select id="art-f-kind" title="Nature (kind)">${kOpts}</select>
@@ -1456,12 +1457,15 @@ async function renderArtifacts() {
     if (artFilters.kind) q.set('kind', artFilters.kind);
     if (artFilters.contentId) q.set('contentId', artFilters.contentId);
     if (artFilters.q) q.set('q', artFilters.q);
+    if (taskFilter) q.set('taskId', taskFilter);
     if (currentProject) q.set('project', currentProject);
     let arts = [];
     try { arts = ((await api('/api/artifacts?' + q.toString())).artifacts || []); } catch (e) { /* liste vide */ }
     document.getElementById('art-list').innerHTML = arts.length
       ? `<table class="art-manager"><thead><tr><th>Entité</th><th>Type</th><th>Nature</th><th>Titre</th><th>Ajouté</th><th></th></tr></thead><tbody>${arts.map(artRow).join('')}</tbody></table>`
-      : '<p class="muted-sm">Aucun artefact pour ces filtres.</p>';
+      : (taskFilter
+        ? `<p class="muted-sm">Aucun artefact pour la tâche <code>${esc(taskFilter)}</code>.</p>`
+        : '<p class="muted-sm">Aucun artefact pour ces filtres.</p>');
     document.querySelectorAll('#art-list [data-art-view]').forEach((b) => b.addEventListener('click', () => artViewModal(b.dataset.artView)));
     document.querySelectorAll('#art-list [data-art-dl]').forEach((b) => b.addEventListener('click', () => {
       window.location.href = `/api/artifacts/${encodeURIComponent(b.dataset.artDl)}/download`;
@@ -1471,8 +1475,9 @@ async function renderArtifacts() {
   document.getElementById('art-f-kind').addEventListener('change', () => { readFilters(); reload(); });
   document.getElementById('art-f-content').addEventListener('change', () => { readFilters(); reload(); });
   document.getElementById('art-f-q').addEventListener('change', () => { readFilters(); reload(); });
-  document.getElementById('art-f-reset').addEventListener('click', () => { artFilters = { docType: '', contentId: '', kind: '', q: '' }; renderArtifacts(); });
+  document.getElementById('art-f-reset').addEventListener('click', () => { artFilters = { docType: '', contentId: '', kind: '', q: '' }; taskFilter = ''; renderArtifacts(); });
   document.getElementById('art-add').addEventListener('click', () => artAddModal(reload));
+  bindTaskFilter();
   await reload();
 }
 

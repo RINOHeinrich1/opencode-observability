@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   salt          TEXT NOT NULL,
   is_admin      INTEGER NOT NULL DEFAULT 0,
-  role          TEXT NOT NULL DEFAULT 'user',
+  role          TEXT NOT NULL DEFAULT 'executeur',
   organization_id TEXT,
   notify_email  TEXT,
   created_at    TEXT NOT NULL
@@ -72,8 +72,9 @@ async function ensureReady() {
     _readyPromise = (async () => {
       await pool().query(SCHEMA);
       // Migration rétrocompat (rôle superviseur v0.9.29) : ajoute la colonne role
-      // aux tables existantes puis porte is_admin=1 → role='admin'.
-      await pool().query("ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user'");
+      // aux tables existantes puis porte is_admin=1 → role='admin'. Défaut
+      // 'executeur' depuis la suppression du rôle 'user' (ADR-002, doc 16).
+      await pool().query("ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'executeur'");
       await pool().query("UPDATE users SET role = 'admin' WHERE is_admin = 1 AND role = 'user'");
       // Multi-organisation (v0.9.47) : chaque utilisateur appartient à une org.
       await pool().query("ALTER TABLE users ADD COLUMN IF NOT EXISTS organization_id TEXT");
@@ -146,20 +147,23 @@ export async function listUsers() {
   return res.rows.map((r) => ({ ...r, role: normalizeRole(r), organizationId: r.organization_id ?? null, notifyEmail: r.notify_email ?? null }));
 }
 
-// Rôles valides du panneau (ADR-002) : 'admin' > 'supervisor' > 'evaluateur' > 'executeur' > 'user'.
-const ROLES = ["admin", "supervisor", "evaluateur", "executeur", "user"];
+// Rôles valides du panneau (ADR-002, doc 16) : 'admin' > 'supervisor' >
+// 'evaluateur' > 'executeur'. Le rôle 'user' est SUPPRIMÉ (migration vers
+// 'executeur' — cf. migrateUserRole).
+const ROLES = ["admin", "supervisor", "evaluateur", "executeur"];
 
-// Rôle effectif : 'admin' > 'supervisor' > 'evaluateur' > 'executeur' > 'user'
-// (is_admin rétrocompat supercede).
+// Rôle effectif : 'admin' > 'supervisor' > 'evaluateur' > 'executeur'
+// (is_admin rétrocompat supercede). FAIL-SAFE : un rôle inconnu — dont l'ancien
+// 'user' non migré — est résolu en 'executeur' (jamais 'user').
 function normalizeRole(r) {
   if (r.is_admin) return "admin";
-  return ROLES.includes(r.role) ? r.role : "user";
+  return ROLES.includes(r.role) ? r.role : "executeur";
 }
 
 // Crée un utilisateur avec un rôle explicite
-// ('admin' | 'supervisor' | 'evaluateur' | 'executeur' | 'user').
+// ('admin' | 'supervisor' | 'evaluateur' | 'executeur' ; défaut 'executeur').
 export async function createUser(username, password, isAdmin, role, organizationId) {
-  const targetRole = isAdmin ? "admin" : (ROLES.includes(role) ? role : "user");
+  const targetRole = isAdmin ? "admin" : (ROLES.includes(role) ? role : "executeur");
   const { salt, hash } = hashPassword(password);
   await pool().query(
     "INSERT INTO users (username, password_hash, salt, is_admin, role, organization_id, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
@@ -169,7 +173,7 @@ export async function createUser(username, password, isAdmin, role, organization
 }
 
 export async function updateUserRole(userId, role) {
-  const targetRole = ROLES.includes(role) ? role : "user";
+  const targetRole = ROLES.includes(role) ? role : "executeur";
   await pool().query("UPDATE users SET role = $1, is_admin = $2 WHERE id = $3", [targetRole, targetRole === "admin" ? 1 : 0, userId]);
   return getUserById(userId);
 }

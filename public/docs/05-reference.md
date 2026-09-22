@@ -93,7 +93,9 @@ Base `task_registry` :
 > dans `artifacts` par `scripts/artifacts-fusion-migration.mjs` puis renommées
 > `legacy_*`. Voir [`13-adr-et-artefacts.md`](13-adr-et-artefacts.md) §4.
 
-Base `panel` : `users`, `sessions`, `archives`.
+Base `panel` : `users`, `sessions`, `archives`, **`user_role_migrations`** (audit
+de la migration du rôle `user` → `executeur` — voir
+[`16-migration-role-user.md`](16-migration-role-user.md)).
 
 ## 2. Machines à états
 
@@ -277,7 +279,9 @@ humans **validate** (never auto-validated).
 > into `artifacts` by `scripts/artifacts-fusion-migration.mjs` then renamed
 > `legacy_*`.
 
-Database `panel`: `users`, `sessions`, `archives`.
+Database `panel`: `users`, `sessions`, `archives`, **`user_role_migrations`**
+(audit of the `user` → `executeur` role migration — see
+[`16-migration-role-user.md`](16-migration-role-user.md)).
 
 **2. State machines** — **Task** (coarse): `queued → started → planning →
 awaiting_validation → planned → in_progress → done` (+ `blocked`/`failed`/`aborted`/

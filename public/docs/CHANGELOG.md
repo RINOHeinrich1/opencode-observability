@@ -5,6 +5,29 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## 2026-09-22 · Suppression du rôle « user » (migration vers exécuteur) (v0.9.70)
+
+Le rôle `user` du panneau est **supprimé** (ADR-002), avec **migration tracée**
+des comptes existants — voir le nouveau doc
+[`16-migration-role-user.md`](16-migration-role-user.md).
+
+- **Migration (Phase A, `panel-db.mjs`)** : table d'audit `user_role_migrations` +
+  fonctions `migrateUserRole` / `revertUserRoleMigration` / `listUserRoleMigrations`
+  (transaction, **idempotentes**, **réversibles**, **tracées**). Règle explicite
+  **Ronald → executeur**, défaut → executeur.
+- **CLI `scripts/migrate-user-role.mjs`** : `--dry-run` (**défaut**, aucune
+  écriture) / `--apply` / `--revert` (`--all` | `--migration-id`) ; **aucune
+  migration automatique** au démarrage du serveur. L'application effective
+  (`--apply`) est une **décision humaine explicite**.
+- **Retrait du rôle (Phase B)** : `panel-db.mjs` (`ROLES`, `normalizeRole`,
+  `createUser`, `updateUserRole`, `DEFAULT`), `server.mjs` (login, création,
+  validation rôle, garde d'écriture), `auth.mjs` (whitelist, `isUser`, `ownerScope`,
+  `recetteOwnerScope`, `ROLE_PAGES`, `allowedPages`), `public/app.js` (libellés,
+  options, whoami, bandeau). Le rôle n'est **plus proposé à la création**.
+- **Invariants ACL préservés** (ADR-002) : supervisor lecture seule, évaluateur sur
+  ses recettes, exécuteur sprint actif, admin plein accès. **Fail-safe legacy**
+  `user` → `executeur` (normalizeRole/currentUser), `allowedPages` **fail-closed**.
+
 ## 2026-09-22 · Statuts non ambigus des Fonctionnalités (Intégration / Développement / Tests E2E) et des Règles (Respect) (v0.9.69)
 
 Le statut du référentiel **Fonctionnalités / Règles** (jugé ambigu : « on a juste

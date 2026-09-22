@@ -1187,11 +1187,11 @@ async function renderUsers() {
   const users = data.users || [];
   let projects = [];
   try { projects = ((await api('/api/projects')).projects || []); } catch {}
-  const ROLE_LABELS = { admin: 'admin', supervisor: 'superviseur', evaluateur: 'évaluateur', executeur: 'exécuteur', user: 'utilisateur' };
-  const roleOpts = (sel) => `<select class="role-sel" data-user="${esc(sel.id)}">${['admin', 'supervisor', 'evaluateur', 'executeur', 'user'].map((rl) => `<option value="${rl}" ${sel.role === rl ? 'selected' : ''}>${ROLE_LABELS[rl]}</option>`).join('')}</select>`;
+  const ROLE_LABELS = { admin: 'admin', supervisor: 'superviseur', evaluateur: 'évaluateur', executeur: 'exécuteur' };
+  const roleOpts = (sel) => `<select class="role-sel" data-user="${esc(sel.id)}">${['admin', 'supervisor', 'evaluateur', 'executeur'].map((rl) => `<option value="${rl}" ${sel.role === rl ? 'selected' : ''}>${ROLE_LABELS[rl]}</option>`).join('')}</select>`;
   document.getElementById('pane-users').innerHTML = `
     <h2>Utilisateurs <span class="muted-sm">— organisation ${esc(currentOrg)}</span></h2>
-    <p class="muted-sm">Rôles : <strong>admin</strong> (écriture, tous les projets de l'organisation) · <strong>superviseur</strong> (lecture seule stricte : TOUTES les pages et tous les projets de l'organisation, y compris les nouveaux onglets Cadrage technique et Recette évaluateur — toutes les tâches, toutes les recettes) · <strong>évaluateur</strong> (pages Fonctionnalités & Règles, Tests E2E, Recette ; écrit sur <em>ses propres recettes</em>, lance les tests E2E et dépose des pièces) · <strong>exécuteur</strong> (Vue d'ensemble, Tâches, Cadrage technique, Recette évaluateur en lecture seule, Tests E2E, Fonctionnalités & Règles, Décisions, ADR, Workspaces ; travaille dans le <em>sprint actif</em> du projet et crée/lance les cadrages techniques) · <strong>utilisateur</strong> (peut créer/agir, ne voit que <em>ses propres créations</em>). L'accès aux <strong>projets</strong> est explicite (aucun par défaut ; l'admin et le superviseur ont tous les projets).</p>
+    <p class="muted-sm">Rôles : <strong>admin</strong> (écriture, tous les projets de l'organisation) · <strong>superviseur</strong> (lecture seule stricte : TOUTES les pages et tous les projets de l'organisation, y compris les nouveaux onglets Cadrage technique et Recette évaluateur — toutes les tâches, toutes les recettes) · <strong>évaluateur</strong> (pages Fonctionnalités & Règles, Tests E2E, Recette ; écrit sur <em>ses propres recettes</em>, lance les tests E2E et dépose des pièces) · <strong>exécuteur</strong> (Vue d'ensemble, Tâches, Cadrage technique, Recette évaluateur en lecture seule, Tests E2E, Fonctionnalités & Règles, Décisions, ADR, Workspaces ; travaille dans le <em>sprint actif</em> du projet et crée/lance les cadrages techniques). L'accès aux <strong>projets</strong> est explicite (aucun par défaut ; l'admin et le superviseur ont tous les projets).</p>
     <div class="eco-restart-bar"><button class="launch-btn" id="add-user-btn">Ajouter un utilisateur</button><span id="users-msg" class="muted-sm"></span></div>
     <table><thead><tr><th>Utilisateur</th><th>Rôle</th><th>Organisations</th><th>Projets</th><th>opencode</th><th>Email notif.</th><th>Créé le</th><th></th></tr></thead>
     <tbody>${users.map((u) => `<tr><td>${esc(u.username)}</td><td>${roleOpts(u)}</td><td><button class="ghost tiny" data-user-orgs="${u.id}" data-user-name="${esc(u.username)}">Gérer</button></td><td><button class="ghost tiny" data-user-projects="${u.id}" data-user-name="${esc(u.username)}">Gérer</button></td><td><button class="ghost tiny" data-user-oc="${u.id}" data-user-name="${esc(u.username)}">Accès</button></td><td><button class="ghost tiny" data-user-email="${u.id}" data-user-name="${esc(u.username)}" data-user-email-val="${esc(u.notifyEmail || '')}" title="Configurer l'email de notification">${u.notifyEmail ? esc(u.notifyEmail) : '—'}</button></td><td class="code">${esc((u.created_at || '').replace('T', ' ').slice(0, 19))}</td>    <td><div class="icon-actions"><button class="ghost tiny" data-oc-restart="${esc(u.username)}" title="Redémarrer l'instance opencode@${esc(u.username)}.service">Redémarrer</button><button class="danger" data-del="${u.id}">Supprimer</button></div></td></tr>`).join('')}</tbody></table>`;
@@ -1230,7 +1230,6 @@ async function userCreateModal() {
         </label>
         <label>Rôle
           <select id="uc-role">
-            <option value="user">utilisateur</option>
             <option value="executeur">exécuteur</option>
             <option value="evaluateur">évaluateur</option>
             <option value="supervisor">superviseur</option>
@@ -8818,15 +8817,11 @@ async function init() {
     IS_EVALUATEUR = !!(ME && ME.role === 'evaluateur');
     IS_EXECUTEUR = !!(ME && ME.role === 'executeur');
     IS_SUPERVISOR = !!(ME && ME.role === 'supervisor');
-    document.getElementById('whoami').textContent = ME.username + (ME.is_admin ? ' (admin)' : (ME.role === 'supervisor' ? ' (superviseur)' : (ME.role === 'evaluateur' ? ' (évaluateur)' : (ME.role === 'executeur' ? ' (exécuteur)' : (ME.role === 'user' ? ' (utilisateur)' : '')))));
+    document.getElementById('whoami').textContent = ME.username + (ME.is_admin ? ' (admin)' : (ME.role === 'supervisor' ? ' (superviseur)' : (ME.role === 'evaluateur' ? ' (évaluateur)' : (ME.role === 'executeur' ? ' (exécuteur)' : ''))));
     // Bandeau : libellé COURT (évite le débordement d'en-tête).
     const roBanner = document.querySelector('.readonly-banner');
     if (roBanner) {
-      if (ME.role === 'user') {
-        roBanner.textContent = 'Utilisateur';
-        roBanner.title = "Rôle utilisateur : vous pouvez créer/agir, mais vous ne voyez que les données que vous avez créées dans l'organisation active.";
-        roBanner.style.display = 'inline-block';
-      } else if (ME.role === 'supervisor') {
+      if (ME.role === 'supervisor') {
         roBanner.textContent = 'Superviseur';
         roBanner.title = "Rôle superviseur : lecture seule stricte sur TOUTES les pages et toutes les données de l'organisation active (toutes les tâches, toutes les recettes — évaluateur et cadrages techniques). Aucune écriture possible.";
       } else if (ME.role === 'evaluateur') {
@@ -8840,7 +8835,7 @@ async function init() {
       }
     }
     // Rôle SUPERVISOR / lecture seule stricte : classe body (masque les actions
-    // d'écriture via CSS). Un `user` peut écrire (boutons visibles).
+    // d'écriture via CSS).
     if (IS_SUPERVISOR) {
       document.body.classList.add('readonly');
     }

@@ -351,7 +351,7 @@ async function userOwnsEntity(username, kind, id) {
 }
 
 // Table d'ACL par rôle restreint (source UNIQUE serveur, ADR-002). Les rôles
-// absents (admin/supervisor/user) ne sont pas restreints par page.
+// absents (admin/supervisor) ne sont pas restreints par page.
 const ROLE_ACL = {
   evaluateur: { label: "évaluateur", allowed: EVALUATEUR_ALLOWED_API, denied: EVALUATEUR_DENIED_API, writes: EVALUATEUR_WRITE_PATTERNS },
   executeur: { label: "exécuteur", allowed: EXECUTEUR_ALLOWED_API, denied: EXECUTEUR_DENIED_API, writes: EXECUTEUR_WRITE_PATTERNS },
@@ -899,7 +899,7 @@ async function handleLogin(req, res) {
     return sendJson(res, 401, { error: "identifiants invalides" });
   }
   const s = await createSession(u.id);
-  let role = u.role && ["admin", "supervisor", "evaluateur", "executeur", "user"].includes(u.role) ? u.role : "user";
+  let role = u.role && ["admin", "supervisor", "evaluateur", "executeur"].includes(u.role) ? u.role : "executeur";
   if (u.is_admin) role = "admin";
   res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Set-Cookie": cookieHeader(s.token) });
   res.end(JSON.stringify({ ok: true, user: { id: u.id, username: u.username, is_admin: role === "admin", role } }));
@@ -919,11 +919,11 @@ async function handleUsers(req, res, user) {
     const { username, password, role, organizationId, projectIds } = await readBody(req);
     if (!username || !password) return sendJson(res, 400, { error: "username et password requis" });
     try {
-      // role : admin | supervisor | evaluateur | executeur | user (défaut user ; isAdmin rétrocompat).
-      const u = await createUser(String(username), String(password), false, role || "user", organizationId);
+      // role : admin | supervisor | evaluateur | executeur (défaut executeur ; isAdmin rétrocompat).
+      const u = await createUser(String(username), String(password), false, role || "executeur", organizationId);
       // Accès par projet (aucun par défaut).
       if (Array.isArray(projectIds) && projectIds.length) { try { await setUserProjects(u.id, projectIds); } catch {} }
-      return sendJson(res, 201, { ok: true, user: { id: u.id, username: u.username, is_admin: u.is_admin ? true : false, role: (u.role || "user"), organizationId: u.organization_id || null } });
+      return sendJson(res, 201, { ok: true, user: { id: u.id, username: u.username, is_admin: u.is_admin ? true : false, role: (u.role || "executeur"), organizationId: u.organization_id || null } });
     } catch (e) {
       return sendJson(res, 409, { error: "nom d'utilisateur déjà pris" });
     }
@@ -987,11 +987,11 @@ async function handleUserAction(req, res, user, path) {
   }
   if (req.method === "POST" && parts[3] === "role") {
     const { role } = await readBody(req);
-    if (!["admin", "supervisor", "evaluateur", "executeur", "user"].includes(role)) return sendJson(res, 400, { error: "role invalide (admin|supervisor|evaluateur|executeur|user)" });
+    if (!["admin", "supervisor", "evaluateur", "executeur"].includes(role)) return sendJson(res, 400, { error: "role invalide (admin|supervisor|evaluateur|executeur)" });
     if (id === user.id) return sendJson(res, 400, { error: "impossible de changer son propre rôle" });
     const u = await updateUserRole(id, role);
     if (!u) return sendJson(res, 404, { error: "utilisateur inconnu" });
-    return sendJson(res, 200, { ok: true, user: { id: u.id, username: u.username, is_admin: u.is_admin ? true : false, role: u.role || "user" } });
+    return sendJson(res, 200, { ok: true, user: { id: u.id, username: u.username, is_admin: u.is_admin ? true : false, role: u.role || "executeur" } });
   }
   if (req.method === "POST" && parts[3] === "organization") {
     const { organizationId } = await readBody(req);
@@ -1704,16 +1704,6 @@ const server = createServer(async (req, res) => {
     // sauf pour un administrateur. La protection est côté serveur (jamais l'UI).
     if (user.isReadOnly && req.method !== "GET") {
       if (path.startsWith("/api/")) return sendJson(res, 403, { error: "lecture seule (rôle superviseur) — opération non autorisée" });
-    }
-    // Garde rôle `user` : l'écriture est limitée à SES PROPRES entités
-    // (tasks / recettes / evaluations / e2e-tests). La création (sans id) reste
-    // permise et est attribuée à l'utilisateur.
-    if (user.role === "user" && req.method !== "GET") {
-      const m = path.match(/^\/api\/(tasks|recettes|evaluations|e2e-tests)\/([^/]+)/);
-      if (m) {
-        const owned = await userOwnsEntity(user.username, m[1], decodeURIComponent(m[2]));
-        if (!owned) return sendJson(res, 403, { error: "accès en écriture limité à vos propres données" });
-      }
     }
     // Garde rôle `evaluateur` (ADR-002) : l'écriture est limitée à SES PROPRES
     // recettes évaluateur (items/documents/verdicts/finish). La création (sans id)
@@ -2811,8 +2801,8 @@ const server = createServer(async (req, res) => {
       const params = [];
       if (project) { params.push(project); conds.push(`r.project = $${params.length}`); }
       if (user.activeOrganizationId) { params.push(user.activeOrganizationId); conds.push(`(r.organization_id = $${params.length})`); }
-      // Périmètre des recettes : l'évaluateur (et le rôle `user`) ne voient que
-      // leurs recettes ; admin/superviseur voient tout (recetteOwnerScope = null).
+      // Périmètre des recettes : l'évaluateur ne voit que ses recettes ;
+      // admin/superviseur voient tout (recetteOwnerScope = null).
       if (user.recetteOwnerScope) { params.push(user.recetteOwnerScope); conds.push(`r.created_by = $${params.length}`); }
       if (user.projectAccess !== null && user.projectAccess !== undefined) {
         if (!user.projectAccess.length) conds.push("1 = 0");

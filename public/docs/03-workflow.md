@@ -198,6 +198,38 @@ Voir [`13-adr-et-artefacts.md`](13-adr-et-artefacts.md) §3.
   (`upsertE2ETest` / `reactivateE2ETest`) repasse `ACTIVE` mais **conserve** ses
   remarques (trace historique).
 
+### Tests standard de l'évaluateur (parcours + erreurs console/réseau + stress routes API) (v0.9.68)
+
+> **ADR-003** — les **TESTS STANDARD** sont des outils de l'évaluateur **distincts
+> des tests E2E Playwright** : parcours de pages avec informations réseau ET
+> capture des erreurs console/réseau, métriques Core Web Vitals, et **stress test
+> des routes d'API**. Ils produisent des **pièces `performance`** rattachables à
+> la recette (et à un élément via `itemId`), à côté des recommandations/problèmes.
+
+- **Outil** : `evaluation_perf_run` (MCP) / `POST /api/evaluations/:id/perf-run`
+  (panneau, **asynchrone** → job suivi via `GET …/perf-jobs/:jobId`). La page
+  Recette expose la section « **Tests standard (parcours + stress routes API)** ».
+- **Parcours de pages** : `pages` (URLs supplémentaires, ≤ 10 ; défaut `url`) —
+  informations réseau (durées/requêtes/types/tailles, **compression**, timings
+  TTFB/DCL/load) + **erreurs console** (warnings, exceptions JS) et **réseau**
+  (4xx/5xx, DNS, timeouts, requêtes échouées), catégorisées.
+- **Métriques** : Core Web Vitals **LCP < 2,5 s / INP < 200 ms / CLS < 0,1**
+  (+ ratings good/needs-improvement/poor), long tasks > 50 ms, temps d'exécution
+  JS, réseau par type (documents/JS/CSS/images/fonts/XHR), poids total.
+- **Stress des routes d'API** : `routes` (relatives à `baseUrl` ou absolues,
+  ≤ 20 ; défaut `url`) — accès **parallèles bornés** par route : débit req/s,
+  latence moy/p50/p95/p99, taux d'erreurs + **agrégat global**.
+- **Bornes** (anti-dégradation préprod) : pages ≤ 10, routes ≤ 20,
+  concurrency ≤ 10, requests ≤ 200 (budget réparti sur les routes).
+- **Playwright** : résolu depuis `repoDir` (checkout applicatif) pour les Core
+  Web Vitals et la capture console ; sans Playwright, mesure réseau/stress via
+  `fetch` (vitals/console indisponibles, avertissement explicite).
+- **Preuves** : le rapport (résumé + erreurs console/réseau + stress par route)
+  est enregistré comme pièce `evaluation_doc` `nature='performance'` (famille
+  `evaluations*`, **aucune table neuve**) ; l'UI affiche le détail dépliable.
+- **Distinct des tests E2E** : aucune fusion — les tests E2E restent les entités
+  Playwright (§1bis.ter « Périmètre E2E de l'évaluateur »).
+
 ## 1ter. Sprints, émergence et cardinalités (ADR-001)
 
 ### Cycle de vie d'un sprint

@@ -2005,7 +2005,13 @@ const server = createServer(async (req, res) => {
           w.attachedProjects = set ? [...set].sort() : [];
         }
       }
-      return sendJson(res, 200, { count: ws.length, workspaces: ws });
+      // Propagation de l'état dégradé de l'enrichissement Coder : un échec
+      // `coder list` (ex. token expiré) est rendu VISIBLE au client (notice UI
+      // « Statut Coder indisponible ») au lieu d'être perdu ici (ADR-008).
+      const payload = { count: ws.length, workspaces: ws };
+      if (r && r.coderUnavailable) payload.coderUnavailable = true;
+      if (r && r.coderError) payload.coderError = String(r.coderError);
+      return sendJson(res, 200, payload);
     }
     // --- Workspaces Coder : opérations CRUD (admin) -------------------------
     const wsShowMatch = path.match(/^\/api\/workspaces\/([^/]+)$/);
@@ -2023,25 +2029,43 @@ const server = createServer(async (req, res) => {
     const wsStartMatch = path.match(/^\/api\/workspaces\/([^/]+)\/start$/);
     if (wsStartMatch && req.method === "POST") {
       if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
-      try { return sendJson(res, 200, await pilot.startWorkspace(decodeURIComponent(wsStartMatch[1]), user.activeOrganizationId || "onirtech")); }
+      try {
+        const r = await pilot.startWorkspace(decodeURIComponent(wsStartMatch[1]), user.activeOrganizationId || "onirtech");
+        // Un échec Coder ne sort JAMAIS en 200 {queued:true} : 502 + cause (ADR-008).
+        if (r && r.ok === false) return sendJson(res, 502, { ok: false, error: r.error, exitCode: r.exitCode });
+        return sendJson(res, 200, r);
+      }
       catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e).slice(0, 500) }); }
     }
     const wsStopMatch = path.match(/^\/api\/workspaces\/([^/]+)\/stop$/);
     if (wsStopMatch && req.method === "POST") {
       if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
-      try { return sendJson(res, 200, await pilot.stopWorkspace(decodeURIComponent(wsStopMatch[1]), user.activeOrganizationId || "onirtech")); }
+      try {
+        const r = await pilot.stopWorkspace(decodeURIComponent(wsStopMatch[1]), user.activeOrganizationId || "onirtech");
+        if (r && r.ok === false) return sendJson(res, 502, { ok: false, error: r.error, exitCode: r.exitCode });
+        return sendJson(res, 200, r);
+      }
       catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e).slice(0, 500) }); }
     }
     const wsRestartMatch = path.match(/^\/api\/workspaces\/([^/]+)\/restart$/);
     if (wsRestartMatch && req.method === "POST") {
       if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
-      try { return sendJson(res, 200, await pilot.restartWorkspace(decodeURIComponent(wsRestartMatch[1]), user.activeOrganizationId || "onirtech")); }
+      try {
+        const r = await pilot.restartWorkspace(decodeURIComponent(wsRestartMatch[1]), user.activeOrganizationId || "onirtech");
+        if (r && r.ok === false) return sendJson(res, 502, { ok: false, error: r.error, exitCode: r.exitCode });
+        return sendJson(res, 200, r);
+      }
       catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e).slice(0, 500) }); }
     }
     const wsDelMatch = path.match(/^\/api\/workspaces\/([^/]+)$/);
     if (wsDelMatch && req.method === "DELETE") {
       if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
-      try { return sendJson(res, 200, await pilot.deleteWorkspace(decodeURIComponent(wsDelMatch[1]), user.activeOrganizationId || "onirtech")); }
+      try {
+        const r = await pilot.deleteWorkspace(decodeURIComponent(wsDelMatch[1]), user.activeOrganizationId || "onirtech");
+        // Même règle que les actions : un échec Coder ne sort pas en 200.
+        if (r && r.ok === false) return sendJson(res, 502, { ok: false, error: r.error, exitCode: r.exitCode });
+        return sendJson(res, 200, r);
+      }
       catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e).slice(0, 500) }); }
     }
     // Ouvre l'IDE web Coder d'un workspace SANS authentification Coder côté

@@ -5,11 +5,15 @@
   "type": "module",
   "main": "server.mjs",
   "scripts": {
-    "start": "node server.mjs"
+    "start": "node server.mjs",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
     "marked": "^18.0.11",
     "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0"
   }
 }

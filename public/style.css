@@ -298,7 +298,7 @@ h3 { margin: 18px 0 8px; font-size: 14px; color: var(--muted); }
   padding: 24px;
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
 }
-.modal h2 { margin: 0 0 6px; }
+.modal h2 { margin: 0 0 6px; overflow-wrap: anywhere; word-break: break-word; }
 .modal p { margin: 8px 0; line-height: 1.5; }
 .modal .code { color: var(--accent); }
 .modal-request {
@@ -696,7 +696,7 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 .recette-cand span { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 
 /* ===== Cadrage : titre cliquable + description (v0.8.5) ===== */
-.recette-title { cursor: pointer; }
+.recette-title { cursor: pointer; word-break: break-word; overflow-wrap: anywhere; }
 .recette-title:hover { text-decoration: underline; }
 
 /* ===== Cadrage : modale de détail défilante, aucun contenu tronqué (v0.8.8) ===== */
@@ -720,7 +720,7 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 .badge.vig-badge { background: #5b2a2a; color: #ffb8b8; }
 .recette-order-row td { background: rgba(255,255,255,0.03); font-weight: 600; padding: 4px 12px; }
 .modal-finish { max-width: 760px; max-height: 88vh; overflow-y: auto; }
-.modal-finish.finish-full { max-width: 100%; width: 100%; height: 100%; max-height: 100vh; }
+.modal-finish.finish-full, .modal.modal-full { max-width: 100%; width: 100%; height: 100%; max-height: 100vh; }
 
 /* ===== Modale DÉTAIL PROJET unique (onglets internes, responsive) ===== */
 .modal-project-detail { max-width: 820px; max-height: 88vh; overflow-y: auto; }
@@ -741,7 +741,8 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
   .pd-inline { flex-direction: column; align-items: stretch; }
   .pd-inline select, .pd-inline input { flex: 1 1 auto; width: 100%; }
 }
-.finish-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.finish-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.finish-head h2 { min-width: 0; overflow-wrap: anywhere; }
 .finish-item { align-items: flex-start; padding: 8px 0; }
 .finish-item-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
 .finish-item-edit { background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin: 6px 0; }
@@ -750,7 +751,7 @@ select.model-select { width: 100%; padding: 8px 10px; background: var(--panel); 
 .finish-field select, .finish-field input, .finish-field textarea { width: 100%; box-sizing: border-box; }
 .finish-item-edit .recette-task { width: 100%; }
 @media (max-width: 640px) {
-  .modal-finish { width: 100%; max-height: 94vh; padding: 14px; }
+  .modal-finish, .modal-wide { width: 100%; max-height: 94vh; padding: 14px; }
 }
 
 /* ===== Filtre statut multi-valeurs (tag input) — onglet Tâches (v0.8.27) ===== */

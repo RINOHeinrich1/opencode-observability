@@ -1757,7 +1757,23 @@ const server = createServer(async (req, res) => {
       }
     }
 
-    if (path === "/api/me") return sendJson(res, 200, { user: { ...user, pages: allowedPages(user.role) } });
+    if (path === "/api/me") {
+      // ADR-006 — Instance opencode DÉDIÉE de l'utilisateur AUTHENTIFIÉ : source de
+      // vérité du routage des liens de session (le front construit ses liens depuis
+      // `user.opencodeUrl`, jamais depuis la `SESSION_BASE_URL` globale seule).
+      // Non provisionné (pas de port) → `opencodeUrl`/`opencodePort` = null et le
+      // front retombe sur `SESSION_BASE_URL` (fallback ADR-006).
+      let opencodeUrl = null;
+      let opencodePort = null;
+      try {
+        const oc = await getUserOpencode(user.id);
+        if (oc && oc.port) {
+          opencodePort = oc.port;
+          opencodeUrl = `https://${String(oc.username).toLowerCase()}.dev.madatalk.fr`;
+        }
+      } catch {}
+      return sendJson(res, 200, { user: { ...user, pages: allowedPages(user.role), opencodeUrl, opencodePort } });
+    }
     // Change l'organisation ACTIVE de la session (isolation serveur). L'utilisateur
     // doit être membre de l'organisation ciblée.
     if (path === "/api/session/organization" && req.method === "POST") {

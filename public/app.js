@@ -12,7 +12,11 @@ let activeTab = 'overview';
 let ecosystemTab = localStorage.getItem('panel_eco_tab') || 'agents';
 let lastUpdated = null;
 let taskFilter = '';     // tâche sélectionnée comme filtre ('' = aucune)
-let SESSION_BASE_URL = 'https://dev.madatalk.fr'; // base des liens de session opencode
+let SESSION_BASE_URL = 'https://dev.madatalk.fr'; // base des liens de session opencode (FALLBACK ADR-006)
+// ADR-006 — URL de l'instance opencode DÉDIÉE de l'utilisateur AUTHENTIFIÉ
+// (`https://<user>.dev.madatalk.fr`), servie par `GET /api/me` (`user.opencodeUrl`).
+// `null` si aucune instance n'est provisionnée → repli sur `SESSION_BASE_URL`.
+let OPENCODE_INSTANCE_URL = null;
 let groupCadrageEnabled = localStorage.getItem('panel_group_cadrage') === '1'; // persistant (onglets + rechargement)
 let groupParallelEnabled = localStorage.getItem('panel_group_parallel') === '1'; // grouper par ordre/parallèle
 let groupUserEnabled = localStorage.getItem('panel_group_user') === '1'; // grouper par utilisateur (créateur)
@@ -549,9 +553,14 @@ function sessionLink(sid) {
 }
 
 // URL d'une session opencode (réutilisée par sessionLink et le bouton cadrage).
+// ADR-006 — la base est l'instance DÉDIÉE de l'utilisateur AUTHENTIFIÉ
+// (`OPENCODE_INSTANCE_URL`) ; `SESSION_BASE_URL` n'est que le FALLBACK quand
+// aucune instance n'est provisionnée. Le host ET le paramètre `server/` (base64url
+// de la base) suivent la MÊME base, sinon opencode web ne résout pas la session.
 function sessionHref(sid) {
-  const encoded = btoa(SESSION_BASE_URL).replace(/=+$/, '');
-  return `${SESSION_BASE_URL}/server/${encoded}/session/${encodeURIComponent(sid)}`;
+  const base = OPENCODE_INSTANCE_URL || SESSION_BASE_URL;
+  const encoded = btoa(base).replace(/=+$/, '');
+  return `${base}/server/${encoded}/session/${encodeURIComponent(sid)}`;
 }
 
 // --- Vue d'ensemble --------------------------------------------------------
@@ -9737,6 +9746,9 @@ async function init() {
   try {
     const me = await api('/api/me');
     ME = me.user;
+    // ADR-006 — mémorise l'instance opencode dédiée de l'utilisateur authentifié
+    // (source de vérité des liens de session ; `null` → fallback SESSION_BASE_URL).
+    OPENCODE_INSTANCE_URL = (ME && ME.opencodeUrl) || null;
     IS_ADMIN = !!(ME && ME.is_admin);
     IS_EVALUATEUR = !!(ME && ME.role === 'evaluateur');
     IS_EXECUTEUR = !!(ME && ME.role === 'executeur');

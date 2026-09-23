@@ -3054,11 +3054,47 @@ const server = createServer(async (req, res) => {
            JOIN regles_metier g ON g.id = rr.regle_id
           WHERE rr.cadrage_id = $1 ORDER BY g.ref ASC`, [r.cadrage_id],
       )).rows.map((g) => ({ id: g.id, ref: g.ref, content: g.content, emergent: !!g.emergent, emergentOrigin: g.emergent_origin ?? null }));
+      // A001 — ADR DE CE CADRAGE : union de deux mécanismes de rattachement qui
+      // coexistent : (1) la table de lien canonique `cadrage_adr` (tool MCP
+      // `cadrage_adr_link`) ; (2) les ADR rattachées comme DOCUMENTS à la
+      // création (`createCadrage` → `cadrage_doc_add`, source `import`, path =
+      // chemin de l'ADR). La jointure documents→ADR se fait par `path`
+      // (`artifacts.doc_type = 'adr'`) ; l'union est dédupliquée par `adrId`
+      // (UNION, pas UNION ALL). Le statut est lu en direct sur `artifacts.status`
+      // (jamais figé dans la chaîne `nature`).
+      const adrs = (await registry().query(
+        `SELECT a.artifact_id AS adr_id, a.title, a.status, a.path, a.kind, a.doc_type
+           FROM artifacts a
+           JOIN cadrage_adr ra ON ra.adr_id = a.artifact_id
+          WHERE ra.cadrage_id = $1
+         UNION
+         SELECT a.artifact_id AS adr_id, a.title, a.status, a.path, a.kind, a.doc_type
+           FROM artifacts a
+           JOIN artifacts d ON d.path = a.path
+          WHERE d.content_id = $1 AND d.doc_type = ANY($2) AND a.doc_type = 'adr'
+          ORDER BY adr_id ASC`,
+        [r.cadrage_id, CADRAGE_DOC_TYPES],
+      )).rows.map((a) => ({ adrId: a.adr_id, title: a.title ?? null, status: a.status ?? null, path: a.path ?? null, kind: a.kind ?? null, docType: a.doc_type }));
+      // A002 — TÂCHES GÉNÉRÉES DEPUIS LES ÉLÉMENTS : une entrée par élément de
+      // cadrage portant un `created_task_id`, avec le titre/projet de la tâche et
+      // son statut (dernière exécution, même sous-requête que le reste du panneau).
+      // LEFT JOIN : une tâche supprimée laisse `title`/`project`/`status` NULL —
+      // le rendu retombe sur `badge(status || 'queued')` et affiche l'identifiant.
+      const generatedTasks = (await registry().query(
+        `SELECT ci.id AS item_id, ci.title AS item_title, ci.classification,
+                ci.created_task_id AS task_id, t.title, t.project,
+                ${latestStatusSubquery()} AS status
+           FROM cadrage_items ci
+           LEFT JOIN tasks t ON t.id = ci.created_task_id
+          WHERE ci.cadrage_id = $1 AND ci.created_task_id IS NOT NULL
+          ORDER BY ci.id ASC`,
+        [r.cadrage_id],
+      )).rows.map((x) => ({ itemId: Number(x.item_id), itemTitle: x.item_title ?? null, classification: x.classification, taskId: x.task_id, title: x.title ?? null, project: x.project ?? null, status: x.status ?? null }));
       // Points de vigilance ADR (item 126) — historique + points OUVERTs qui
       // BLOQUENT la terminaison (la modale de clôture les affiche avec la raison).
       let adrVigilances = [];
       try { const v = await pilot.listAdrVigilances({ cadrageId: r.cadrage_id }); adrVigilances = (v && v.vigilancess) || []; } catch {}
-      return sendJson(res, 200, { cadrage: { ...r, repos: await reposOfProject(r.project), tasks, items, recetteItems, documents: docs, fonctionnalites, regles, adrVigilances, adrVigilancesOpen: adrVigilances.filter((x) => x.status === "open") } });
+      return sendJson(res, 200, { cadrage: { ...r, repos: await reposOfProject(r.project), tasks, items, recetteItems, documents: docs, fonctionnalites, regles, adrs, generatedTasks, adrVigilances, adrVigilancesOpen: adrVigilances.filter((x) => x.status === "open") } });
     }
     // SUPPRESSION d'un CADRAGE ENTIER (cadrage technique) — ADMIN uniquement.
     // Nettoyage en CASCADE de toute sa famille polymorphe côté registre. Route

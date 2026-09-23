@@ -3977,6 +3977,10 @@ async function cadrageDetailModal(cadrageId) {
   // GET /api/cadrages/:id (B006). L'émergence est affichée (origine `cadrage`).
   const recFeatures = rec.fonctionnalites || [];
   const recRules = rec.regles || [];
+  // A004 — ADR de ce cadrage + tâches générées depuis les éléments, exposées par
+  // GET /api/cadrages/:id (A001/A002). Lecture additive : aucune écriture.
+  const recAdrs = rec.adrs || [];
+  const genTasks = rec.generatedTasks || [];
   // Écritures du cadrage : masquées au superviseur (lecture seule stricte, ADR-002)
   // — le contenu de LECTURE reste affiché.
   const canEditRec = rec.status !== 'done' && !IS_SUPERVISOR;
@@ -4025,9 +4029,22 @@ async function cadrageDetailModal(cadrageId) {
           <button type="button" class="ghost" data-rec-create="rule" title="Créer une règle métier manquante (marquée émergente, rattachée à ce cadrage)">＋ Créer une règle métier manquante</button>
         </div>` : ''}
       </div>
+      <div class="actions-section"><h3>ADR de ce cadrage (${recAdrs.length})</h3>
+        <div class="recette-list">
+          ${recAdrs.length ? recAdrs.map((a) => `<div class="recette-item">${adrStatusBadge(a.status)}<code class="muted-sm">${esc(a.adrId)}</code><span>${esc(a.title || a.path || a.adrId)}</span><button type="button" class="ghost tiny" data-cadr-adr-view="${esc(a.adrId)}" title="Voir le contenu de l'ADR">Regarder</button></div>`).join('') : '<p class="muted-sm">Aucune ADR rattachée à ce cadrage.</p>'}
+        </div>
+      </div>
+      <div class="actions-section"><h3>Tâches générées depuis les éléments (${genTasks.length})</h3>
+        <div class="recette-list">
+          ${genTasks.length ? genTasks.map((g) => `<div class="recette-item">${badge(g.status || 'queued')}<code class="muted-sm">${esc(g.taskId)}</code>${g.project ? `<code class="chip-project">${esc(g.project)}</code>` : ''}<span>${esc(g.title || g.itemTitle || g.taskId)}</span></div>`).join('') : '<p class="muted-sm">Aucune tâche générée depuis les éléments de ce cadrage.</p>'}
+        </div>
+      </div>
       <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
+  // A007 — « Regarder » d'une ADR du cadrage → modale de lecture du contenu
+  // (motif `data-*-view` + `viewRefDoc`, réutilisé tel quel — non modifié ici).
+  document.querySelectorAll('#cadrage-detail-modal [data-cadr-adr-view]').forEach((b) => b.addEventListener('click', () => viewRefDoc(b.getAttribute('data-cadr-adr-view'))));
   document.getElementById('cadrage-detail-fullscreen').onclick = () => {
     const fs = document.getElementById('cadrage-detail-modal').classList.toggle('modal-full');
     document.getElementById('cadrage-detail-fullscreen').textContent = fs ? '⤢ rétrécir' : '⛶ plein écran';

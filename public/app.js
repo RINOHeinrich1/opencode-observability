@@ -3466,6 +3466,15 @@ async function recetteDetailModal(recetteId) {
     docsByItem.get(k).push(doc);
   }
   const verdictOptions = (cur) => ['', 'conforme', 'non_conforme', 'a_ameliorer'].map((v) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${v ? esc(EVAL_VERDICT_LABELS[v]) : '— verdict —'}</option>`).join('');
+  // DÉCISION ADMIN d'un élément : combo UNIQUE à 3 valeurs (non décidé | à traiter |
+  // non retenu) — libellés depuis EVAL_ITEM_DECISION_LABELS, option courante
+  // `selected` (défaut `pending` si absente). Axe DISTINCT du statut de suivi.
+  const evalDecisionOptions = (cur) => {
+    const selected = cur || 'pending';
+    return ['pending', 'a_traiter', 'non_retenu']
+      .map((v) => `<option value="${v}" ${selected === v ? 'selected' : ''}>${esc(EVAL_ITEM_DECISION_LABELS[v])}</option>`)
+      .join('');
+  };
   showModal(`
     <div class="modal modal-wide">
       <h2>Détail de la recette</h2>
@@ -3477,13 +3486,13 @@ async function recetteDetailModal(recetteId) {
           const repris = (it.reprisPar || []).map((x) => `<span class="badge awaiting" title="Repris par le cadrage ${esc(x.cadrageId)}${x.takenBy ? ` (${esc(x.takenBy)})` : ''}">repris par ${esc(x.title || x.cadrageId)}</span>`).join(' ');
           const pieces = docsByItem.get(Number(it.itemId)) || [];
           const pieceLine = pieces.length ? `<div class="muted-sm eval-item-pieces">${pieces.map((doc) => `<span>${evalNatureIcon(doc.nature)} ${esc(doc.title || (doc.path || '').split('/').pop())}</span>`).join(' · ')}</div>` : '';
-          const decideBtns = IS_ADMIN ? `<button class="ghost" data-eval-item-decide="${it.itemId}" data-decision="a_traiter" title="Marquer « à traiter » (visible par l'exécuteur)">À traiter</button><button class="ghost" data-eval-item-decide="${it.itemId}" data-decision="non_retenu" title="Marquer « non retenu »">Non retenu</button>` : '';
+          const decideSelect = IS_ADMIN ? `<select class="eval-decision-sel" data-eval-item-decision="${it.itemId}" title="Décision admin (à traiter / non retenu / non décidé)">${evalDecisionOptions(it.decision)}</select>` : '';
           return `<div class="recette-item eval-item">
           ${evalCategoryBadge(it.category)} ${evalSeverityBadge(it.severity)} ${evalDecisionBadge(it.decision)}
           <span class="eval-item-content">${esc(it.content)}</span>
           <span class="badge ${it.status === 'treated' ? 'done' : it.status === 'dismissed' ? 'queued' : 'in_progress'}">${esc(EVAL_ITEM_STATUS_LABELS[it.status] || it.status)}</span>
           ${repris}
-          ${decideBtns}
+          ${decideSelect}
           ${canWrite ? `<button class="ghost" data-eval-item-piece="${it.itemId}" title="Joindre une pièce à cet élément">+ pièce</button>` : ''}
           ${canWrite ? `<button class="ghost" data-eval-item-edit="${it.itemId}">Éditer</button><button class="danger" data-eval-item-del="${it.itemId}">Retirer</button>` : ''}
           ${pieceLine}
@@ -3597,18 +3606,23 @@ async function recetteDetailModal(recetteId) {
       alert('Échec : ' + (e.message || e));
     }
   }));
-  // Décision ADMIN (« à traiter » / « non retenu ») — route admin-only côté serveur.
-  document.querySelectorAll('#modal-backdrop [data-eval-item-decide]').forEach((b) => b.addEventListener('click', async () => {
-    const original = b.innerHTML;
-    setBtnBusy(b, 'Décision');
-    try {
-      await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/items/${b.dataset.evalItemDecide}/decision`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision: b.dataset.decision }) });
-      recetteDetailModal(recetteId);
-    } catch (e) {
-      b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
-      alert('Échec de la décision : ' + (e.message || e));
-    }
-  }));
+  // Décision ADMIN via COMBO unique (non décidé | à traiter | non retenu) — route
+  // admin-only côté serveur (403 hors admin). AUCUN appel PATCH sur le statut de
+  // suivi (`updateRecetteItem`) : seul `POST …/items/:itemId/decision` est émis.
+  document.querySelectorAll('#modal-backdrop [data-eval-item-decision]').forEach((sel) => {
+    const prevValue = sel.value;
+    sel.addEventListener('change', async () => {
+      sel.disabled = true;
+      try {
+        await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/items/${sel.dataset.evalItemDecision}/decision`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision: sel.value }) });
+        recetteDetailModal(recetteId);
+      } catch (e) {
+        sel.disabled = false;
+        sel.value = prevValue;
+        alert('Échec de la décision : ' + (e.message || e));
+      }
+    });
+  });
   // Pièces portées par un élément (`itemId`).
   document.querySelectorAll('#modal-backdrop [data-eval-item-piece]').forEach((b) => b.addEventListener('click', () => recetteItemPieceModal(recetteId, Number(b.dataset.evalItemPiece))));
   document.querySelectorAll('#modal-backdrop [data-eval-verdict]').forEach((sel) => sel.addEventListener('change', async () => {

@@ -72,6 +72,13 @@ const EVALUATEUR_WRITE_PATTERNS = [
 // tracer un sprint). Toute route NON listée est refusée en 403 (protection
 // serveur, jamais l'UI). Les Déploiements sont atteints via le modal de tâche
 // (`/api/deployments`, `/api/plans`, `/api/events`) — pas d'onglet dédié.
+//
+// Workspaces (ADR-002/006) : la PAGE Workspace est accordée à l'exécuteur → son
+// API de LECTURE l'est aussi (`GET /api/workspaces`, `GET /api/workspaces/:name`,
+// `GET /api/coder/ide`), filtrée par le périmètre projet/organisation
+// (`workspaceAccess` / `user.projectAccess` déjà scope-aware dans les handlers).
+// Les ÉCRITURES Workspaces (POST/DELETE start|stop|restart) restent exclues de
+// `EXECUTEUR_WRITE_PATTERNS` et gardées par `if (!user.is_admin)` → 403.
 const EXECUTEUR_ALLOWED_API = [
   "/api/me", "/api/config", "/api/orgs", "/api/session/organization", "/api/render-md",
   "/api/projects", "/api/repos", "/api/pieces",
@@ -79,6 +86,7 @@ const EXECUTEUR_ALLOWED_API = [
   "/api/docs", "/api/e2e-tests", "/api/e2e/jobs", "/api/e2e/agent-sessions", "/api/e2e/file",
   "/api/e2e-vars", "/api/cadrages", "/api/recettes", "/api/tasks", "/api/plans", "/api/events",
   "/api/deployments", "/api/decisions", "/api/batches", "/api/adr-vigilances", "/api/artifacts",
+  "/api/workspaces", "/api/coder/ide",
 ];
 // Interdits EXPLICITES (défense en profondeur) : secrets E2E et gestion des
 // utilisateurs restent hors périmètre exécuteur.
@@ -2005,8 +2013,10 @@ const server = createServer(async (req, res) => {
       const name = decodeURIComponent(wsShowMatch[1]);
       // Lecture seule : un utilisateur peut voir le détail si le workspace
       // correspond à un de ses projets assignés / à son organisation (admin = tous).
+      // Refus = PÉRIMÈTRE (pas admin-only) : message explicite, distinct du 403
+      // des écritures (`if (!user.is_admin)` → « réservé aux administrateurs »).
       const access = await workspaceAccess(user.projectAccess, user.activeOrganizationId);
-      if (access && !access.allowedNames.has(name)) return sendJson(res, 403, { error: "réservé aux administrateurs" });
+      if (access && !access.allowedNames.has(name)) return sendJson(res, 403, { error: "workspace hors périmètre" });
       try { return sendJson(res, 200, await pilot.showWorkspace(name, user.activeOrganizationId || "onirtech")); }
       catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e).slice(0, 500) }); }
     }

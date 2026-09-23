@@ -5547,7 +5547,15 @@ async function providerApply(btn, refresh) {
 // --- Workspaces Coder (admin) ------------------------------------------------
 async function renderWorkspaces() {
   const r = await fetch('/api/workspaces');
-  if (r.status === 403) { document.getElementById('pane-workspaces').innerHTML = '<p class="muted">Réservé aux administrateurs.</p>'; return; }
+  if (r.status === 403) {
+    // Un 403 de PÉRIMÈTRE (ex. « workspace hors périmètre ») n'est pas un 403
+    // « admin uniquement » : on affiche le message serveur réel, avec repli
+    // générique réservé aux administrateurs seulement si le corps est absent.
+    let msg = '';
+    try { msg = ((await r.json()) || {}).error || ''; } catch { /* corps non JSON */ }
+    document.getElementById('pane-workspaces').innerHTML = `<p class="muted">${esc(msg || 'Réservé aux administrateurs.')}</p>`;
+    return;
+  }
   const data = await r.json();
   const wsList = data.workspaces || data.discovered || [];
   const stateLabel = (w) => {

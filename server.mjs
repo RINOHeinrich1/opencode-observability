@@ -12,6 +12,10 @@ import { openDb, getUserByUsername, verifyPassword, createUser, updateUserRole, 
 import { SHARED_AUTH, regenerateAndPropagate, migrateFromAuthJson } from "./provider-auth.mjs";
 import { currentUser, sessionToken, cookieHeader, clearCookieHeader, allowedPages } from "./auth.mjs";
 import { scanEcosystem, updateAgentModel } from "./ecosystem.mjs";
+// Cohérence « clé active fournisseur ↔ modèle déclaré » (ADR-005) : helpers
+// UNIQUES déployés par wcbc (session-bridge.mjs) — source de vérité du
+// catalogue servi, réutilisée sans logique divergente.
+import { getActiveProviderIds, listServedModels, checkModelServable } from "./session-bridge.mjs";
 import { loadEnv } from "./env.mjs";
 import * as pilot from "./pilot.mjs";
 import { closeAllMcpClients } from "./mcp-client.mjs";
@@ -146,20 +150,12 @@ async function getDefaultOrgId() {
   return _defaultOrgCache.id;
 }
 
-// Liste des modèles disponibles (fournisseur/modèle), depuis `opencode models`,
-// mise en cache 5 minutes.
-let _modelsCache = { at: 0, models: [] };
+// Liste des modèles disponibles (fournisseur/modèle) : SOURCE UNIQUE
+// `listServedModels()` de session-bridge.mjs (cache 5 min mutualisé). Le
+// sélecteur `/api/models` et le contrôle proactif de cohérence partagent ainsi
+// le même catalogue — plus de cache dupliqué pouvant diverger (ADR-005).
 function listModels() {
-  const now = Date.now();
-  if (_modelsCache.models.length && now - _modelsCache.at < 5 * 60 * 1000) return _modelsCache.models;
-  try {
-    const out = execFileSync(OPENCODE_BIN, ["models"], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024, timeout: 15000, env: OC_ENV });
-    const models = out.split("\n").map((l) => l.trim()).filter((l) => l && l.includes("/"));
-    _modelsCache = { at: now, models };
-  } catch {
-    /* conserve le cache précédent (éventuellement vide) */
-  }
-  return _modelsCache.models;
+  return listServedModels();
 }
 
 // --- Consommation (usage) par session et par tâche --------------------------
@@ -1694,6 +1690,45 @@ async function providerRouteDenied(user, res) {
   return false;
 }
 
+// Contrôle PROACTIF de cohérence « clé active fournisseur ↔ modèles déclarés
+// par les agents » (ADR-005 §a) — volet PRÉVENTIF, en complément de la
+// politique A RÉACTIVE (au lancement de session) implémentée par wcbc.
+// - confronte le modèle DÉCLARÉ (frontmatter) de TOUS les agents exposés par
+//   `scanEcosystem()` aux modèles réellement servis par la clé ACTIVE ;
+// - réutilise les helpers UNIQUES `getActiveProviderIds()` / `listServedModels()`
+//   / `checkModelServable()` (aucune logique de catalogue divergente) ;
+// - NON bloquant par décision d'ADR-005 : si le catalogue n'est pas exploitable
+//   (`catalogAvailable:false`), `checkModelServable` ne se bloque QUE sur
+//   l'absence de clé active du fournisseur et `fallbackCatalog` expose les
+//   modèles uniques des frontmatters (repli sans faux blocage).
+// Retour : { ok, catalogAvailable, activeProviders, affected[], fallbackCatalog }.
+function agentsModelCoherence({ forceCatalog = false } = {}) {
+  const activeProviders = getActiveProviderIds();
+  const catalog = listServedModels({ force: forceCatalog });
+  const catalogAvailable = Array.isArray(catalog) && catalog.length > 0;
+  const agents = (scanEcosystem().agents || []);
+  const affected = [];
+  const frontmatterModels = new Set();
+  for (const a of agents) {
+    const model = String(a.model || "").trim();
+    if (!model) continue;
+    frontmatterModels.add(model);
+    const check = checkModelServable({ model, activeProviders, catalog });
+    if (!check.servable) {
+      affected.push({ agent: a.name, model, provider: check.provider, reason: check.reason });
+    }
+  }
+  return {
+    ok: affected.length === 0,
+    catalogAvailable,
+    activeProviders: [...activeProviders].sort(),
+    affected,
+    // Repli (catalogue indisponible) : les modèles déclarés, pour un affichage
+    // explicite du caractère partiel de la vérification côté UI.
+    fallbackCatalog: catalogAvailable ? [] : [...frontmatterModels].sort(),
+  };
+}
+
 // --- Router ----------------------------------------------------------------
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
@@ -1821,7 +1856,9 @@ const server = createServer(async (req, res) => {
       if (provider.length > 64 || !/^[a-zA-Z0-9._-]+$/.test(provider)) return sendJson(res, 400, { error: "provider invalide" });
       try {
         const created = await addProviderKey({ provider, label, key });
-        return sendJson(res, 201, { ok: true, key: created });
+        // Contrôle proactif (ADR-005 §a) : à la création d'une clé, signaler les
+        // agents dont le modèle déclaré n'est pas servi par la clé active.
+        return sendJson(res, 201, { ok: true, key: created, coherence: agentsModelCoherence({ forceCatalog: true }) });
       } catch (e) {
         return sendJson(res, 400, { error: String((e && e.message) || e) });
       }
@@ -1833,7 +1870,9 @@ const server = createServer(async (req, res) => {
         await setActiveProviderKey(Number(providerActivateMatch[1]));
         const propagation = await regenerateAndPropagate();
         const { restarted, failed, notice } = restartOpencodeUnits();
-        return sendJson(res, 200, { ok: true, propagation, restarted, failed, ...(notice ? { notice } : {}) });
+        // Contrôle proactif (ADR-005 §a) : à l'ACTIVATION, signaler les agents
+        // dont le modèle déclaré n'est pas servi par la (nouvelle) clé active.
+        return sendJson(res, 200, { ok: true, propagation, restarted, failed, ...(notice ? { notice } : {}), coherence: agentsModelCoherence({ forceCatalog: true }) });
       } catch (e) {
         return sendJson(res, 400, { error: String((e && e.message) || e) });
       }
@@ -1859,6 +1898,13 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 500, { error: String((e && e.message) || e) });
       }
     }
+    // État de cohérence consultable SANS action (contrôle proactif visible dans
+    // l'onglet Fournisseurs, ADR-005 §a). Cache normal (pas de `force`) : un
+    // simple affichage ne doit pas relancer le CLI à chaque rendu.
+    if (path === "/api/providers/coherence" && req.method === "GET") {
+      if (await providerRouteDenied(user, res)) return;
+      return sendJson(res, 200, { ...agentsModelCoherence(), authPath: SHARED_AUTH });
+    }
     if (path === "/api/models" && req.method === "GET") return sendJson(res, 200, { models: listModels() });
     const agentModelMatch = path.match(/^\/api\/agents\/([^/]+)\/model$/);
     if (agentModelMatch && req.method === "POST") {
@@ -1870,7 +1916,9 @@ const server = createServer(async (req, res) => {
       }
       try {
         const r = updateAgentModel(agentModelMatch[1], model);
-        return sendJson(res, 200, { ok: true, ...r });
+        // Contrôle proactif (ADR-005 §a) : la même vérification s'applique à
+        // l'édition du modèle d'un agent (nouveau modèle servi par la clé active ?).
+        return sendJson(res, 200, { ok: true, ...r, coherence: agentsModelCoherence({ forceCatalog: true }) });
       } catch (e) {
         return sendJson(res, 400, { error: String((e && e.message) || e) });
       }

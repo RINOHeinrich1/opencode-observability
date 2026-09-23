@@ -3995,8 +3995,9 @@ async function cadrageDetailModal(cadrageId) {
     } catch {}
   }
   showModal(`
-    <div class="modal modal-wide">
-      <h2>${esc(rec.title || cadrageId)}</h2>
+    <div class="modal modal-wide" id="cadrage-detail-modal">
+      <div class="finish-head"><h2>${esc(rec.title || cadrageId)}</h2>
+        <button class="ghost" id="cadrage-detail-fullscreen" title="Plein écran">⛶</button></div>
       <p class="muted">${badge(rec.status)} · ${cadrageScopeChips(rec)}${rec.confirmed_at ? ` · confirmée ${esc((rec.confirmed_at || '').replace('T', ' ').slice(0, 16))}` : ''}</p>
       ${rec.description ? `<p class="modal-request">${esc(rec.description)}</p>` : ''}
       ${tasks.length ? `<div class="actions-section"><h3>Tâches couvertes (${tasks.length})</h3><div class="recette-list">${tasks.map((t) => {
@@ -4027,6 +4028,10 @@ async function cadrageDetailModal(cadrageId) {
       <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('cadrage-detail-fullscreen').onclick = () => {
+    const fs = document.getElementById('cadrage-detail-modal').classList.toggle('modal-full');
+    document.getElementById('cadrage-detail-fullscreen').textContent = fs ? '⤢ rétrécir' : '⛶ plein écran';
+  };
   // ADMIN : rattacher un élément EXISTANT (POST /api/links) ou en CRÉER un
   // manquant (émergent origine `cadrage`) puis le rattacher aussitôt.
   if (canLinkRec) {

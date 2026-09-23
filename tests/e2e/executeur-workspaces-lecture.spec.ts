@@ -277,16 +277,48 @@ test(
       ).toBeVisible();
     }
 
-    // --- Then : l'admin n'est PAS soumis au refus de PÉRIMÈTRE de l'exécuteur ---
-    // (projectAccess = null → workspaceAccess renvoie null → aucune restriction).
-    // On n'exécute AUCUNE action destructive ; on prouve seulement que le refus
-    // de périmètre introduit pour l'exécuteur ne s'applique pas à l'admin.
+    // --- Then : l'admin conserve la LECTURE du détail d'un workspace de son org ---
+    // NB : l'admin n'a PAS de filtre par projets (projectAccess = null), mais il
+    // reste scopé à son ORGANISATION ACTIVE : `workspaceAccess(projectAccess,
+    // activeOrganizationId)` renvoie l'allowlist des workspaces de l'org dès
+    // qu'une organisation est active (cf. server.mjs). Un nom INCONNU de l'org
+    // est donc refusé en 403 « workspace hors périmètre » — comportement
+    // PRÉEXISTANT (l'ancien libellé étant « réservé aux administrateurs »). On
+    // n'exécute AUCUNE action destructive et on vérifie :
+    //   1) un workspace RÉEL de l'org est lisible en détail (200) par l'admin ;
+    //   2) un nom inconnu ne renvoie JAMAIS le refus ACL du rôle exécuteur ni le
+    //      libellé admin-only (le garde-fou exécuteur ne concerne pas l'admin).
+    const listBody = (await (
+      await page.request.get(`${BASE_URL}/api/workspaces`)
+    )
+      .json()
+      .catch(() => ({}))) as { workspaces?: Array<{ name?: string }> };
+    const adminWorkspaces = listBody.workspaces || [];
+    if (adminWorkspaces.length > 0) {
+      const wsName = String(adminWorkspaces[0].name || "");
+      expect(wsName, "un workspace de l'org admin doit avoir un nom").not.toHaveLength(0);
+      const detailResp = await page.request.get(
+        `${BASE_URL}/api/workspaces/${encodeURIComponent(wsName)}`,
+      );
+      expect(
+        detailResp.status(),
+        `GET /api/workspaces/${wsName} (workspace réel de l'org) doit répondre 200 pour l'admin`,
+      ).toBe(200);
+    }
+
     const outResp = await page.request.get(
       `${BASE_URL}/api/workspaces/${encodeURIComponent(OUT_OF_SCOPE_WS)}`,
     );
+    const outErr = String(
+      ((await outResp.json().catch(() => ({}))) as { error?: string }).error || "",
+    );
     expect(
-      outResp.status(),
-      "l'admin ne doit jamais recevoir un 403 de périmètre (le garde-fou exécuteur ne le concerne pas)",
-    ).not.toBe(403);
+      outErr,
+      "l'admin ne doit jamais recevoir le refus ACL du rôle exécuteur",
+    ).not.toMatch(ACL_REFUSED);
+    expect(
+      outErr,
+      "l'admin ne doit jamais recevoir « réservé aux administrateurs » (refus admin-only)",
+    ).not.toMatch(ADMIN_ONLY);
   },
 );

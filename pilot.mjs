@@ -1233,6 +1233,19 @@ export async function deleteCadrage(args = {}) {
 // Lance (ou reprend) la session dédiée de l'agent de CADRAGE TECHNIQUE
 // (`agent-cadrage`) pour un cadrage (objet « cadrage technique », ex-« recette »).
 // `force = true` : ignore la session rattachée et en démarre une nouvelle.
+// Préserve la CAUSE RÉELLE d'un échec de lancement de session (ADR-005) : une
+// erreur STRUCTURÉE (ex. ModelNotServedError, `code`) remonte TELLE QUELLE
+// (l'UI l'exploite) ; en l'absence de `code`, un message de repli explicite est
+// construit en CONSERVANT la cause d'origine. Plus de « … indisponible ? »
+// masquant le vrai motif d'échec.
+function rethrowLaunchFailure(e, fallbackMsg) {
+  if (e && e.code) throw e;
+  const cause = String((e && e.message) || e || "").trim();
+  const err = new Error(cause ? `${fallbackMsg} — cause : ${cause}` : fallbackMsg);
+  err.cause = e;
+  throw err;
+}
+
 export async function launchCadrageSession({ cadrageId, force = false, adrIds, featureIds, ruleIds }) {
   if (!cadrageId) throw new Error("cadrageId requis");
   return withLaunchLock(`cadrage:${cadrageId}`, async () => {
@@ -1270,9 +1283,14 @@ export async function launchCadrageSession({ cadrageId, force = false, adrIds, f
     try { featureCtx = await featureContext({ projectId: proj, featureIds: fIds }); } catch {}
     try { ruleCtx = await ruleContext({ projectId: proj, ruleIds: rIds }); } catch {}
     const prompt = buildCadragePrompt({ project: proj, repos: rec.repos || [], title: rec.title, taskIds: rec.tasks || [], adrContext: adrCtx.context || "", featureContext: featureCtx.context || "", ruleContext: ruleCtx.context || "", recetteItems: rec.recetteItems || [] });
-    const { sessionId } = await launchSession({ dir, agent: "agent-cadrage", prompt, title: `Cadrage ${rec.title || proj}` });
+    let sessionId;
+    try {
+      ({ sessionId } = await launchSession({ dir, agent: "agent-cadrage", prompt, title: `Cadrage ${rec.title || proj}` }));
+    } catch (e) {
+      rethrowLaunchFailure(e, "échec de lancement de la session de cadrage technique");
+    }
     if (!sessionId || !/^ses_/.test(sessionId)) {
-      throw new Error("échec de lancement de la session de cadrage technique (agent-cadrage indisponible ?)");
+      throw new Error("échec de lancement de la session de cadrage technique (aucun identifiant de session retourné)");
     }
     await taskOrchestrator("cadrage_session_set", { cadrageId, sessionId });
     return { cadrageId, sessionId, resumed: false };
@@ -1472,9 +1490,14 @@ export async function launchMigrationSession({ migrationId, force = false, adrId
       adrs,
       adrContext: adrCtx.context || "",
     });
-    const { sessionId } = await launchSession({ dir, agent: "agent-migration", prompt, title: `Migration ${migration.title || proj}` });
+    let sessionId;
+    try {
+      ({ sessionId } = await launchSession({ dir, agent: "agent-migration", prompt, title: `Migration ${migration.title || proj}` }));
+    } catch (e) {
+      rethrowLaunchFailure(e, "échec de lancement de la session de migration");
+    }
     if (!sessionId || !/^ses_/.test(sessionId)) {
-      throw new Error("échec de lancement de la session de migration (agent-migration indisponible ?)");
+      throw new Error("échec de lancement de la session de migration (aucun identifiant de session retourné)");
     }
     await taskOrchestrator("migration_session_set", { migrationId, sessionId });
     return { migrationId, sessionId, resumed: false };
@@ -1511,9 +1534,14 @@ export async function launchBatchSession({ batchId, force = false }) {
       } catch { tasksDetail.push({ id: taskId, status: "?" }); }
     }
     const prompt = buildBatchSessionPrompt({ batch, tasksDetail });
-    const { sessionId } = await launchSession({ dir, agent: "orchestrator", prompt, title: `Batch ${batch.batchId} — ${(batch.title || "").slice(0, 50)}` });
+    let sessionId;
+    try {
+      ({ sessionId } = await launchSession({ dir, agent: "orchestrator", prompt, title: `Batch ${batch.batchId} — ${(batch.title || "").slice(0, 50)}` }));
+    } catch (e) {
+      rethrowLaunchFailure(e, "échec de lancement de la session d'orchestration du batch");
+    }
     if (!sessionId || !/^ses_/.test(sessionId)) {
-      throw new Error("échec de lancement de la session d'orchestration du batch (orchestrator indisponible ?)");
+      throw new Error("échec de lancement de la session d'orchestration du batch (aucun identifiant de session retourné)");
     }
     await taskOrchestrator("batch_set_session", { batchId, sessionId });
     return { batchId, sessionId, resumed: false };
@@ -1626,9 +1654,14 @@ export async function launchFreeTestSession({ project, repoId, message, adrIds }
   }
   const title = `Session test-agent ${project ? "— " + project : ""}`;
   const prompt = buildFreeTestPrompt({ project, projects, message, adrContext: adrCtx.context || "" });
-  const { sessionId } = await launchSession({ dir, agent: "test-agent", prompt, title });
+  let sessionId;
+  try {
+    ({ sessionId } = await launchSession({ dir, agent: "test-agent", prompt, title }));
+  } catch (e) {
+    rethrowLaunchFailure(e, "échec de lancement de la session test-agent");
+  }
   if (!sessionId || !/^ses_/.test(sessionId)) {
-    throw new Error("échec de lancement de la session test-agent (agent indisponible ?)");
+    throw new Error("échec de lancement de la session test-agent (aucun identifiant de session retourné)");
   }
   return { sessionId, resumed: false, dir, adrProvided: (adrCtx.adrs || []).map((a) => a.adrId) };
 }
@@ -1695,9 +1728,14 @@ export async function launchTestSession({ e2eTestId, force = false, mode, adrIds
     scenario: t.scenario,
     adrContext: adrCtx.context || "",   // ADR (item 125) : bloc de contexte
   });
-  const { sessionId } = await launchSession({ dir, agent: "test-agent", prompt, title: `${testMode === "create" ? "Création" : "MAJ"} test ${t.title || t.e2eTestId}` });
+  let sessionId;
+  try {
+    ({ sessionId } = await launchSession({ dir, agent: "test-agent", prompt, title: `${testMode === "create" ? "Création" : "MAJ"} test ${t.title || t.e2eTestId}` }));
+  } catch (e) {
+    rethrowLaunchFailure(e, "échec de lancement de la session test-agent");
+  }
   if (!sessionId || !/^ses_/.test(sessionId)) {
-    throw new Error("échec de lancement de la session test-agent (agent test-agent indisponible ?)");
+    throw new Error("échec de lancement de la session test-agent (aucun identifiant de session retourné)");
   }
   await taskOrchestrator("e2e_test_session_set", { e2eTestId, sessionId });
   return { e2eTestId, sessionId, resumed: false, mode: testMode };

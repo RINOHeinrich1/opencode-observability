@@ -6,7 +6,8 @@
 
 import { taskOrchestrator, coderWorkspaces } from "./mcp-client.mjs";
 import { launchSession, injectMessage, buildLaunchPrompt, buildReworkPrompt, buildCadragePrompt, buildRecettePrompt, buildSprintPrompt, buildMigrationPrompt, buildTestPrompt, buildFreeTestPrompt, buildBatchSessionPrompt, listSessions, killSession, sessionExists, sessionExistsById } from "./session-bridge.mjs";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 // Décision n°7 : agents contraints par type de tâche.
 export function agentsForType(type, auditTarget) {
@@ -102,6 +103,146 @@ export async function listWorkspaces(org) {
 // --- Workspaces Coder : opérations CRUD via coder CLI (admin) ---------------
 import { execFileSync, spawn } from "node:child_process";
 import { getOrganizationCoderConfig } from "/root/.config/opencode/mcp/task-orchestrator/db.mjs";
+
+// --- Indicateur de santé du token Coder (ADR-008) ---------------------------
+// Source de vérité : le heartbeat persisté par le script de rotation
+// `/root/.config/opencode/scripts/coder-token-rotate.mjs`
+// (`/var/lib/coder-token-rotate/state.json`, mode 0600, JAMAIS de token en clair).
+// Le panneau LIT cet état (aucun nouveau calcul de token, aucun déchiffrement,
+// aucun appel `coder`) et expose un état de santé lisible — ADR-008 exige un
+// échec BRUYANT et visible si la rotation ne tourne pas.
+// Mêmes variables/défauts que le script (CODER_ROTATE_*) pour éviter toute
+// divergence de seuils (source de vérité = le script).
+const CODER_ROTATE_STATE_DIR = process.env.CODER_ROTATE_STATE_DIR || "/var/lib/coder-token-rotate";
+const CODER_TOKEN_STATE_FILE = join(CODER_ROTATE_STATE_DIR, "state.json");
+const CODER_TOKEN_STALE_HOURS = Number(process.env.CODER_ROTATE_STALE_HOURS || "13");
+const CODER_TOKEN_MIN_REMAINING_HOURS = Number(process.env.CODER_ROTATE_MIN_REMAINING_HOURS || "48");
+
+// A003 — lecture défensive de l'état persisté (jamais le token).
+// Ne lève JAMAIS d'exception : fichier absent/illisible/JSON invalide →
+// `{ state:{}, readable:false }`. L'état dégradé est rendu VISIBLE par la
+// classification (rotationStale), jamais par une erreur 500 silencieuse.
+export function readCoderRotationState() {
+  const stateFile = CODER_TOKEN_STATE_FILE;
+  try {
+    if (!existsSync(stateFile)) return { state: {}, readable: false, stateFile };
+    const state = JSON.parse(readFileSync(stateFile, "utf8"));
+    if (!state || typeof state !== "object" || Array.isArray(state)) {
+      return { state: {}, readable: false, stateFile };
+    }
+    return { state, readable: true, stateFile };
+  } catch {
+    return { state: {}, readable: false, stateFile };
+  }
+}
+
+// A004 — classification PURE (aucun accès I/O) de la santé du token Coder.
+// Statuts ADR-008 (précédence) : no_config → expired → rotation_failed →
+// expiring → valid. `rotationStale` (heartbeat périmé/absent) est ORTHOGONAL au
+// statut : il n'est jamais masqué par un statut `valid`.
+export function classifyCoderTokenHealth({ configured, tokenPresent, state, readable, now, thresholds }) {
+  const nowMs = now instanceof Date ? now.getTime() : (Number(now) || Date.now());
+  const staleHours = (thresholds && Number(thresholds.staleHours)) || CODER_TOKEN_STALE_HOURS;
+  const minRemainingHours = (thresholds && Number(thresholds.minRemainingHours)) || CODER_TOKEN_MIN_REMAINING_HOURS;
+  const s = state && typeof state === "object" && !Array.isArray(state) ? state : {};
+  const status = s.status || null;
+  const exitCode = s.exitCode === null || s.exitCode === undefined ? null : s.exitCode;
+
+  // Date d'expiration : valeur exacte du state, sinon ESTIMATION
+  // `lastRunAt + remainingHours` (le script écrit expiresAt:null après une
+  // rotation — la prochaine exécution, ≤ 6 h, renseigne la valeur exacte).
+  let expiresAt = s.expiresAt ? String(s.expiresAt) : null;
+  let expiresAtEstimated = false;
+  if (!expiresAt && s.lastRunAt && s.remainingHours !== null && s.remainingHours !== undefined && Number.isFinite(Number(s.remainingHours))) {
+    const base = Date.parse(s.lastRunAt);
+    if (!Number.isNaN(base)) {
+      expiresAt = new Date(base + Number(s.remainingHours) * 3600000).toISOString();
+      expiresAtEstimated = true;
+    }
+  }
+  // remainingHours recalculé LIVE à partir de expiresAt si présent.
+  let remainingHours = null;
+  if (expiresAt) {
+    const exp = Date.parse(expiresAt);
+    if (!Number.isNaN(exp)) remainingHours = (exp - nowMs) / 3600000;
+  }
+
+  // --- Précédence des états (miroir des raisons `--health` 0/2/3/4 du script) ---
+  let health;
+  let detail;
+  if (!configured) {
+    health = "no_config";
+    detail = "organisation sans URL Coder — aucun token à surveiller";
+  } else if (!tokenPresent || status === "token_expired" || status === "token_missing" || (remainingHours !== null && remainingHours <= 0)) {
+    health = "expired";
+    detail = !tokenPresent
+      ? "aucun token Coder stocké pour l'organisation — bootstrap requis"
+      : (status === "token_expired" || status === "token_missing")
+        ? `rotation du token impossible (${status}) — bootstrap requis`
+        : `token Coder EXPIRÉ${expiresAt ? ` (expires ${expiresAt})` : ""} — bootstrap requis`;
+  } else if (status === "failed" || exitCode === 1) {
+    health = "rotation_failed";
+    detail = "la dernière rotation a échoué — token non renouvelé (voir le runbook de rotation)";
+  } else if (remainingHours !== null && remainingHours < minRemainingHours) {
+    health = "expiring";
+    detail = `token Coder expire bientôt (~${Math.round(remainingHours)} h < ${minRemainingHours} h)`;
+  } else {
+    health = "valid";
+    detail = `token Coder valide${remainingHours !== null ? ` (~${Math.round(remainingHours)} h)` : ""}`;
+  }
+
+  // --- Heartbeat : signal EXPLICITE quand la rotation n'a pas tourné ---
+  const lastSuccessMs = s.lastSuccessAt ? Date.parse(s.lastSuccessAt) : NaN;
+  const noHeartbeat = !readable || Number.isNaN(lastSuccessMs);
+  const rotationStale = noHeartbeat || (nowMs - lastSuccessMs) > staleHours * 3600000;
+  const rotationWarning = rotationStale
+    ? (noHeartbeat
+        ? "la rotation ne tourne pas — aucun heartbeat (state.json absent ou illisible)"
+        : `la rotation ne tourne pas — dernier succès ${s.lastSuccessAt} (> ${staleHours} h)`)
+    : null;
+
+  return {
+    status: health,
+    expiresAt,
+    expiresAtEstimated,
+    remainingHours: remainingHours === null ? null : Math.round(remainingHours),
+    lastRotation: { status, at: s.lastRunAt || null, successAt: s.lastSuccessAt || null, exitCode },
+    rotationStale,
+    rotationWarning,
+    stateReadable: !!readable,
+    detail,
+  };
+}
+
+// A005 — orchestration : config org + lecture d'état + classification.
+// Renvoie un objet santé sérialisable JSON. JAMAIS de token en clair.
+export async function coderTokenHealth(org) {
+  const targetOrg = org || "onirtech";
+  const cfg = await getOrganizationCoderConfig(targetOrg).catch(() => null);
+  const configured = !!(cfg && cfg.url);
+  const tokenPresent = !!(cfg && cfg.token);
+  const { state, readable, stateFile } = readCoderRotationState();
+  const now = Date.now();
+  const thresholds = { staleHours: CODER_TOKEN_STALE_HOURS, minRemainingHours: CODER_TOKEN_MIN_REMAINING_HOURS };
+  const health = classifyCoderTokenHealth({ configured, tokenPresent, state, readable, now, thresholds });
+  // state.json est MONO-organisation : il décrit l'org du DERNIER run du script.
+  // Si l'org demandée diffère, on l'explicite (jamais de confusion silencieuse).
+  const stateOrg = (state && state.org) || null;
+  const orgMismatch = !!(stateOrg && stateOrg !== targetOrg);
+  const detail = orgMismatch
+    ? `${health.detail} (état observé pour l'org ${stateOrg} du dernier run ; org demandée : ${targetOrg})`
+    : health.detail;
+  return {
+    org: targetOrg,
+    checkedAt: new Date(now).toISOString(),
+    stateFile,
+    stateOrg,
+    orgMismatch,
+    thresholds,
+    ...health,
+    detail,
+  };
+}
 
 function coderExec(org, args) {
   return getOrganizationCoderConfig(org).then((cfg) => {

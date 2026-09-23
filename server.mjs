@@ -86,7 +86,7 @@ const EXECUTEUR_ALLOWED_API = [
   "/api/docs", "/api/e2e-tests", "/api/e2e/jobs", "/api/e2e/agent-sessions", "/api/e2e/file",
   "/api/e2e-vars", "/api/cadrages", "/api/recettes", "/api/tasks", "/api/plans", "/api/events",
   "/api/deployments", "/api/decisions", "/api/batches", "/api/adr-vigilances", "/api/artifacts",
-  "/api/workspaces", "/api/coder/ide",
+  "/api/workspaces", "/api/coder/ide", "/api/coder/token-health",
 ];
 // Interdits EXPLICITES (défense en profondeur) : secrets E2E et gestion des
 // utilisateurs restent hors périmètre exécuteur.
@@ -2139,6 +2139,19 @@ const server = createServer(async (req, res) => {
       if (!r.ok) return sendJson(res, 400, { error: r.error });
       res.writeHead(302, { "Set-Cookie": r.cookies, Location: r.location });
       return res.end();
+    }
+    // ADR-008 — état de santé du token Coder d'organisation : LECTURE SEULE de
+    // l'état persisté par le script de rotation (`state.json`, jamais le token).
+    // Lisible par les rôles de l'onglet Workspaces (exécuteur — ADR-002) comme
+    // par l'admin. Org résolue : `?org=` → org active → org utilisateur → onirtech.
+    if (path === "/api/coder/token-health" && req.method === "GET") {
+      try {
+        const org = url.searchParams.get("org") || user.activeOrganizationId || user.organizationId || "onirtech";
+        const health = await pilot.coderTokenHealth(org);
+        return sendJson(res, 200, { ok: true, ...health });
+      } catch (e) {
+        return sendJson(res, 500, { error: String((e && e.message) || e).slice(0, 500) });
+      }
     }
     if (path === "/api/projects" && req.method === "GET") {
       const r = await pilot.listProjects();

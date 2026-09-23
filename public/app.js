@@ -6035,6 +6035,12 @@ async function viewRefDoc(docId) {
       : `<pre class="doc-view-body doc-view-pre">${esc(d.raw || '')}</pre>`;
     const kindTag = d.kind ? `<code class="chip">${esc(docKindLabel(d.kind))}</code> ` : '';
     const dlUrl = `/api/docs/${encodeURIComponent(docId)}/download`;
+    // A007 — Bandeau explicite quand le contenu provient du repli « champs
+    // structurés du registre » (fichier `path` absent du disque) : la lecture
+    // reste possible, jamais de 404 « fichier introuvable ».
+    const fallbackBanner = d.source === 'structured'
+      ? `<div class="doc-view-fallback-banner" style="margin:0 0 10px;padding:8px 10px;border-radius:6px;background:#3a2f12;border:1px solid #8a6d1f;color:#f0d48a;font-size:12px">Fichier absent — contenu du registre (contexte / décision / conséquences)</div>`
+      : '';
     showModal(`
       <div class="modal modal-doc-fullscreen">
         <div class="doc-view-head">
@@ -6047,10 +6053,15 @@ async function viewRefDoc(docId) {
             <button class="ghost" id="modal-cancel">Fermer</button>
           </div>
         </div>
+        ${fallbackBanner}
         ${html}
       </div>`);
     document.getElementById('modal-cancel').onclick = closeModal;
-  } catch (e) { alert('Lecture impossible : ' + (e.message || e)); }
+  } catch (e) {
+    // A007 — Message explicite : ni fichier ni champs structurés → contenu
+    // indisponible (l'alerte ambiguë « Lecture impossible » est supprimée).
+    alert('Contenu indisponible : ' + (e.message || e));
+  }
 }
 
 // ===========================================================================
@@ -6101,6 +6112,12 @@ function adrTableHtml(ctx = {}) {
     const targetHtml = (d.isGlobal || chips)
       ? `<div>${[adrGlobalBadge(d), chips].filter(Boolean).join(' ')}</div>`
       : '<span class="muted-sm">—</span>';
+    // A008 — « Regarder » désactivé (avec titre explicite) quand l'ADR n'a NI
+    // fichier NI champs structurés (`contentAvailable === false`, annoncé par
+    // GET /api/docs) ; inchangé sinon (aucune régression pour les ADR lisibles).
+    const viewBtn = d.contentAvailable === false
+      ? `<button type="button" class="ghost tiny" disabled title="Aucun contenu disponible (ni fichier ni champs structurés)">Regarder</button>`
+      : `<button type="button" class="ghost tiny" data-${prefix}-view="${esc(d.docId)}" title="Voir le document">Regarder</button>`;
     return `<tr data-status="${esc(attrs.status)}" data-repos="${esc(attrs.repos)}" data-search="${esc(attrs.search)}" data-missing="${isMissingFeature ? '1' : '0'}"${show ? '' : ' hidden'}>
       <td><strong>${esc(d.title || d.docId)}</strong>${d.description ? `<div class="muted-sm">${esc(d.description)}</div>` : ''}</td>
       <td>${adrStatusBadge(d.status)}</td>
@@ -6111,7 +6128,7 @@ function adrTableHtml(ctx = {}) {
       <td>${adrAttachmentsCell(d, prefix)}</td>
       <td class="adr-actions">
         <button type="button" class="ghost tiny" data-${prefix}-edit="${esc(d.docId)}" title="Éditer l'ADR">Éditer</button>
-        <button type="button" class="ghost tiny" data-${prefix}-view="${esc(d.docId)}" title="Voir le document">Regarder</button>
+        ${viewBtn}
         <button type="button" class="ghost tiny danger-text" data-${prefix}-del="${esc(d.docId)}" title="Supprimer l'ADR">Supprimer</button>
       </td>
     </tr>`;

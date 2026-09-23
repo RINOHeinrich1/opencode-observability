@@ -1927,7 +1927,10 @@ const server = createServer(async (req, res) => {
           repoId: url.searchParams.get("repoId") || undefined,
           includeRepoDocs: url.searchParams.get("includeRepoDocs") === "1",
         });
-        return sendJson(res, 200, { docs: (r && r.docs) || [] });
+        // A004 — Annonce au panneau, pour chaque doc, la disponibilité de son
+        // contenu (fichier présent et/ou champs structurés) afin d'activer/
+        // désactiver les actions « Regarder »/« Télécharger ».
+        return sendJson(res, 200, { docs: ((r && r.docs) || []).map((d) => ({ ...d, ...docContentAvailability(d) })) });
       } catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
     }
     if (path === "/api/docs" && req.method === "POST") {
@@ -2498,6 +2501,39 @@ const server = createServer(async (req, res) => {
         return;
       } catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
     }
+    // --- A001/A002/A003 — Disponibilité du contenu d'un document de référence ---
+    // Le `path` n'est qu'une RÉFÉRENCE fichier (ADR-004) : le contenu structuré du
+    // registre (context/décision/conséquences/description) doit rester lisible même
+    // si le fichier est absent du disque. Ces helpers centralisent ce test et sont
+    // déclarés en `function` (hoistés) car utilisés par GET /api/docs (plus haut).
+    // A001 — Le document porte-t-il un contenu structuré exploitable ?
+    function docHasStructuredContent(doc) {
+      if (!doc) return false;
+      return ["context", "decision", "consequences", "description"]
+        .some((k) => typeof doc[k] === "string" && doc[k].trim() !== "");
+    }
+    // A002 — Markdown de repli construit UNIQUEMENT depuis les champs structurés du
+    // registre (aucune lecture de fichier arbitraire). Renvoie null si vide.
+    function docStructuredMarkdown(doc) {
+      if (!docHasStructuredContent(doc)) return null;
+      const parts = [`# ${doc.title || doc.docId || "Document"}`];
+      if (doc.status) parts.push(`**Statut :** ${doc.status}`);
+      if (doc.description) parts.push(`## Description\n\n${doc.description}`);
+      if (doc.context) parts.push(`## Contexte\n\n${doc.context}`);
+      if (doc.decision) parts.push(`## Décision\n\n${doc.decision}`);
+      if (doc.consequences) parts.push(`## Conséquences\n\n${doc.consequences}`);
+      return parts.join("\n\n") + "\n";
+    }
+    // A003 — Disponibilité du contenu : fichier présent sur le disque (prioritaire)
+    // et/ou champs structurés du registre (repli). `contentAvailable` pilote
+    // l'activation des actions « Regarder »/« Télécharger » dans le panneau.
+    function docContentAvailability(doc) {
+      const p = doc && doc.path;
+      let hasFile = false;
+      try { hasFile = !!p && existsSync(p) && !statSync(p).isDirectory(); } catch { hasFile = false; }
+      const hasStructured = docHasStructuredContent(doc);
+      return { hasFile, hasStructured, contentAvailable: hasFile || hasStructured };
+    }
     // Lecture du CONTENU d'un document de référence (ADR-12) par docId : lit le
     // fichier au chemin enregistré (workspace/checkout ou storage/ref-docs) et le
     // rend (markdown / feature / texte brut). Restreint aux paths enregistrés.
@@ -2507,14 +2543,24 @@ const server = createServer(async (req, res) => {
         const doc = await pilot.docGet(docContentMatch[1]);
         if (!doc) return sendJson(res, 404, { error: "document inconnu" });
         const abs = doc.path;
-        if (!abs || !existsSync(abs)) return sendJson(res, 404, { error: "fichier introuvable au chemin : " + (abs || "—") });
-        const raw = readFileSync(abs, "utf8");
-        const isMd = /\.(md|markdown)$/i.test(abs);
-        const isFeature = /\.(feature)$/i.test(abs);
-        let html = null;
-        if (isMd) html = marked.parse(raw);
-        else if (isFeature) html = `<pre style="white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:12px">${String(raw).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre>`;
-        return sendJson(res, 200, { title: doc.title || doc.docId, kind: doc.kind, path: abs, html, raw: html ? null : raw.slice(0, 300000) });
+        // A005 — Priorité au fichier référencé s'il existe réellement sur le disque.
+        if (abs && existsSync(abs) && !statSync(abs).isDirectory()) {
+          const raw = readFileSync(abs, "utf8");
+          const isMd = /\.(md|markdown)$/i.test(abs);
+          const isFeature = /\.(feature)$/i.test(abs);
+          let html = null;
+          if (isMd) html = marked.parse(raw);
+          else if (isFeature) html = `<pre style="white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:12px">${String(raw).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre>`;
+          return sendJson(res, 200, { title: doc.title || doc.docId, kind: doc.kind, path: abs, source: "file", html, raw: html ? null : raw.slice(0, 300000) });
+        }
+        // Repli : contenu structuré du registre (le fichier n'est qu'une référence,
+        // ADR-004) — jamais de 404 « fichier introuvable » quand le contenu existe.
+        const fallbackMd = docStructuredMarkdown(doc);
+        if (fallbackMd) {
+          return sendJson(res, 200, { title: doc.title || doc.docId, kind: doc.kind, path: abs || null, source: "structured", html: marked.parse(fallbackMd), raw: null });
+        }
+        // Dernier recours : ni fichier ni contenu structuré → 404 explicite.
+        return sendJson(res, 404, { error: "aucun contenu disponible (ni fichier « " + (abs || "—") + " » ni champs structurés)" });
       } catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
     }
     // Téléchargement d'un document de référence (ADR-12) : renvoie le fichier
@@ -2525,17 +2571,37 @@ const server = createServer(async (req, res) => {
         const doc = await pilot.docGet(docDownloadMatch[1]);
         if (!doc) return sendJson(res, 404, { error: "document inconnu" });
         const abs = doc.path;
-        if (!abs || !existsSync(abs) || statSync(abs).isDirectory()) return sendJson(res, 404, { error: "fichier introuvable au chemin : " + (abs || "—") });
-        const ext = extname(abs) || "";
-        const base = ((doc.title || basename(abs, ext)) || "document").replace(/[^\w.\- ]+/g, "_").trim() || "document";
-        const filename = base.toLowerCase().endsWith(ext.toLowerCase()) ? base : base + ext;
-        const ct = MIME[ext.toLowerCase()] || (ext.toLowerCase() === ".feature" ? "text/plain; charset=utf-8" : "application/octet-stream");
-        res.writeHead(200, {
-          "Content-Type": ct,
-          "Content-Disposition": `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
-          "Cache-Control": "no-store",
-        });
-        createReadStream(abs).pipe(res);
+        // A006 — Priorité au fichier référencé s'il existe réellement sur le disque.
+        if (abs && existsSync(abs) && !statSync(abs).isDirectory()) {
+          const ext = extname(abs) || "";
+          const base = ((doc.title || basename(abs, ext)) || "document").replace(/[^\w.\- ]+/g, "_").trim() || "document";
+          const filename = base.toLowerCase().endsWith(ext.toLowerCase()) ? base : base + ext;
+          const ct = MIME[ext.toLowerCase()] || (ext.toLowerCase() === ".feature" ? "text/plain; charset=utf-8" : "application/octet-stream");
+          res.writeHead(200, {
+            "Content-Type": ct,
+            "Content-Disposition": `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+            "Cache-Control": "no-store",
+          });
+          createReadStream(abs).pipe(res);
+          return;
+        }
+        // Repli : pièce jointe `.md` générée depuis les champs structurés du registre
+        // (le fichier n'est qu'une référence — ADR-004) ; jamais de 404 si le contenu
+        // est disponible. Content-Disposition assaini + no-store conservés.
+        const fallbackMd = docStructuredMarkdown(doc);
+        if (fallbackMd) {
+          const base = ((doc.title || doc.docId || "document").replace(/[^\w.\- ]+/g, "_").trim()) || "document";
+          const filename = base.toLowerCase().endsWith(".md") ? base : base + ".md";
+          res.writeHead(200, {
+            "Content-Type": "text/markdown; charset=utf-8",
+            "Content-Disposition": `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+            "Cache-Control": "no-store",
+          });
+          res.end(fallbackMd);
+          return;
+        }
+        // Dernier recours : ni fichier ni contenu structuré → 404 explicite.
+        return sendJson(res, 404, { error: "aucun contenu disponible (ni fichier « " + (abs || "—") + " » ni champs structurés)" });
       } catch (e) { return sendJson(res, 500, { error: String((e && e.message) || e) }); }
     }
     if (path === "/api/projects" && req.method === "POST") {

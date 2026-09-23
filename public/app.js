@@ -3988,6 +3988,49 @@ function showSessionModelError(payload) {
   if (c) c.onclick = closeModal;
 }
 
+// Avertissement PROACTIF de cohérence « clé active fournisseur ↔ modèles des
+// agents » (ADR-005 §a). Liste EXPLICITEMENT chaque agent dont le modèle déclaré
+// n'est pas servi par la clé active (agent → modèle, fournisseur, raison) et
+// propose « Changer le modèle » (bouton → editAgentModelModal). NON bloquant :
+// l'action admin (création/activation de clé, édition de modèle) est appliquée.
+// Repli : `catalogAvailable:false` ⇒ mention « catalogue indisponible —
+// vérification partielle » (aucun faux blocage).
+function showCoherenceWarning(coherence, ctx = {}) {
+  const c = coherence || {};
+  const affected = Array.isArray(c.affected) ? c.affected : [];
+  const activeProviders = Array.isArray(c.activeProviders) ? c.activeProviders : [];
+  const partial = c.catalogAvailable === false;
+  const fallback = Array.isArray(c.fallbackCatalog) ? c.fallbackCatalog : [];
+  const sourceLabel = {
+    'provider-activate': 'l\'activation de la clé',
+    'provider-add': 'la création de la clé',
+    'agent-model': 'l\'édition du modèle',
+    'providers': 'l\'onglet Fournisseurs',
+  }[ctx.source] || 'le contrôle de cohérence';
+  const rows = affected.map((a) => `<div class="recette-item">
+      <code class="chip-project">${esc(a.agent)}</code> <span class="muted-sm">→</span> <code>${esc(a.model)}</code>
+      <span class="muted-sm">${esc(a.reason || '')}</span>
+      <button type="button" class="ghost tiny" data-coh-fix-agent="${esc(a.agent)}" data-coh-fix-model="${esc(a.model)}">Changer le modèle</button>
+    </div>`).join('');
+  showModal(`
+    <div class="modal modal-wide">
+      <h2>Cohérence des modèles d'agents</h2>
+      <p class="muted">Après ${esc(sourceLabel)}, <strong>${affected.length}</strong> agent(s) déclarent un modèle <strong>non servi</strong> par la clé active${activeProviders.length ? ` (clés actives : ${esc(activeProviders.join(', '))})` : ' <span class="muted-sm">(aucune clé active)</span>'}.</p>
+      ${partial ? '<p class="msg error">Catalogue des modèles indisponible (CLI opencode injoignable) — vérification <strong>partielle</strong>, repli sur les frontmatters. Aucun blocage.</p>' : ''}
+      ${rows ? `<div class="recette-list">${rows}</div>` : '<p class="muted-sm">Aucun agent affecté.</p>'}
+      ${partial && fallback.length ? `<div class="actions-section"><h3>Modèles déclarés (frontmatters, repli)</h3><div class="recette-list"><div class="recette-item">${esc(fallback.join(', '))}</div></div></div>` : ''}
+      <p class="muted-sm">Avertissement <strong>non bloquant</strong> : l'action a bien été appliquée. Corrigez les modèles pour éviter un échec au prochain lancement de session.</p>
+      <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.querySelectorAll('[data-coh-fix-agent]').forEach((b) => b.addEventListener('click', () => {
+    const agent = b.dataset.cohFixAgent;
+    const model = b.dataset.cohFixModel;
+    closeModal();
+    editAgentModelModal(agent, model);
+  }));
+}
+
 async function batchDetailModal(batchId) {
   let d;
   try { d = await api(`/api/batches/${encodeURIComponent(batchId)}`); } catch (e) { alert('Erreur : ' + (e.message || e)); return; }
@@ -5341,16 +5384,40 @@ function providerCard(p) {
   </article>`;
 }
 
+// Bandeau d'état de cohérence (ADR-005 §a) de l'onglet Fournisseurs : vert si
+// tous les modèles déclarés par les agents sont servis par la clé active ;
+// orange sinon (liste `agent → modèle` + bouton « Corriger » → showCoherenceWarning).
+// Purement informatif, aucun blocage. `null` (API indisponible) ⇒ aucun bandeau.
+function providerCoherenceBanner(coh) {
+  if (!coh || typeof coh.ok !== 'boolean') return '';
+  const affected = Array.isArray(coh.affected) ? coh.affected : [];
+  const partial = coh.catalogAvailable === false ? ' <span class="muted-sm">(vérification partielle — catalogue indisponible)</span>' : '';
+  if (coh.ok) {
+    return `<div class="eco-summary muted-sm"><span class="badge done">Cohérence OK</span> Clé active ↔ modèles déclarés par les agents : tous servis.${partial}</div>`;
+  }
+  const shown = affected.slice(0, 8).map((a) => `<code class="chip-project">${esc(a.agent)}</code> → <code>${esc(a.model)}</code>`).join(' · ');
+  return `<div class="eco-restart-bar" title="Contrôle proactif de cohérence (ADR-005)">
+      <span class="badge awaiting">⚠ ${affected.length} agent(s) sur un modèle non servi par la clé active</span>
+      <span class="muted-sm">${shown}${affected.length > 8 ? ' …' : ''}${partial}</span>
+      <button class="ghost tiny" id="prov-coh-fix">Corriger</button>
+    </div>`;
+}
+
 async function renderEcosystemProviders() {
   const el = document.getElementById('eco-tab-content');
   if (!el) return;
   el.innerHTML = '<p class="muted">Chargement…</p>';
-  let data;
-  try { data = await api('/api/providers'); }
-  catch (e) { el.innerHTML = `<p class="msg error">${esc(e.message || String(e))}</p>`; return; }
+  let data, coherence = null;
+  try {
+    [data, coherence] = await Promise.all([
+      api('/api/providers'),
+      api('/api/providers/coherence').catch(() => null),
+    ]);
+  } catch (e) { el.innerHTML = `<p class="msg error">${esc(e.message || String(e))}</p>`; return; }
   const providers = data.providers || [];
   el.innerHTML = `
     <div class="eco-summary muted-sm">Clés fournisseurs LLM stockées <strong>chiffrées (AES-256-GCM)</strong>. La valeur n'est <strong>jamais</strong> affichée. Fichier généré : <code>${esc(data.authPath || '')}</code></div>
+    ${providerCoherenceBanner(coherence)}
     <div class="eco-restart-bar">
       <button class="launch-btn" id="prov-add-btn">Ajouter une clé</button>
       <button class="launch-btn" id="prov-apply-btn" title="Régénère l'auth.json de toutes les instances et redémarre les sessions opencode">Appliquer &amp; redémarrer</button>
@@ -5367,6 +5434,8 @@ async function renderEcosystemProviders() {
   el.querySelectorAll('[data-prov-delete]').forEach((b) => b.addEventListener('click', () => providerKeyDelete(Number(b.dataset.provDelete), b, refresh)));
   const applyBtn = document.getElementById('prov-apply-btn');
   if (applyBtn) applyBtn.addEventListener('click', () => providerApply(applyBtn, refresh));
+  const cohFixBtn = document.getElementById('prov-coh-fix');
+  if (cohFixBtn) cohFixBtn.addEventListener('click', () => showCoherenceWarning(coherence, { source: 'providers' }));
 }
 
 // Modale d'ajout d'une clé. `provider` pré-rempli (et figé) depuis une carte ;
@@ -5394,8 +5463,11 @@ function providerKeyAddModal(provider = '') {
     if (!p || !key) { m.textContent = 'Fournisseur et clé requis.'; m.className = 'msg error'; return; }
     setBtnBusy(btn, 'Enregistrement');
     try {
-      await api('/api/providers/keys', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: p, label, key }) });
+      const d = await api('/api/providers/keys', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: p, label, key }) });
       closeModal();
+      // Contrôle proactif (ADR-005 §a) : à la CRÉATION d'une clé, signaler les
+      // agents dont le modèle déclaré n'est pas servi par la clé active.
+      if (d.coherence && !d.coherence.ok) showCoherenceWarning(d.coherence, { source: 'provider-add' });
       renderEcosystemProviders();
     } catch (e) {
       m.textContent = e.message || String(e); m.className = 'msg error';
@@ -5419,6 +5491,9 @@ async function providerKeyActivate(id, btn, refresh) {
     const restarted = (d.restarted || []).join(', ') || 'aucune';
     const nbFail = (d.failed || []).length;
     providerMsg(`Clé activée. auth.json régénéré (${(d.propagation && d.propagation.providers) || 0} fournisseur(s)). Redémarrées : <code>${esc(restarted)}</code>${nbFail ? ` <span class="error">(${nbFail} échec(s))</span>` : ''}`, nbFail > 0);
+    // Contrôle proactif (ADR-005 §a) : signaler les agents dont le modèle
+    // déclaré n'est pas servi par la (nouvelle) clé active — non bloquant.
+    if (d.coherence && !d.coherence.ok) showCoherenceWarning(d.coherence, { source: 'provider-activate' });
     refresh();
   } catch (e) {
     providerMsg(esc(e.message || String(e)), true);
@@ -5711,8 +5786,12 @@ async function editAgentModelModal(name, currentModel) {
     const model = document.getElementById('agent-model-select').value;
     const msg = document.getElementById('model-msg');
     try {
-      await api(`/api/agents/${encodeURIComponent(name)}/model`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model }) });
-      closeModal();
+      const d = await api(`/api/agents/${encodeURIComponent(name)}/model`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model }) });
+      // Contrôle proactif (ADR-005 §a) : après l'édition du modèle de l'agent,
+      // vérifier qu'il est bien servi par la clé active — avertissement non
+      // bloquant (showCoherenceWarning remplace le contenu de la modale).
+      if (d.coherence && !d.coherence.ok) showCoherenceWarning(d.coherence, { source: 'agent-model', agent: name });
+      else closeModal();
       refreshActive();
     } catch (e) {
       btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original;

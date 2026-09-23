@@ -6146,6 +6146,43 @@ function adrCellText(v, max = 140) {
   return `<span title="${esc(s)}">${esc(short)}</span>`;
 }
 
+// Contenu STRUCTURÉ INTÉGRAL (non tronqué) d'une ADR, prêt à afficher en place.
+// Source exclusive : les champs déjà renvoyés par GET /api/docs (context /
+// decision / consequences / description) — donc AUCUNE requête réseau et AUCUNE
+// dépendance au fichier référencé par `path`. Chaque champ est échappé (esc) et
+// rendu en `white-space:pre-wrap` (respect des retours à la ligne) ; un champ
+// vide affiche un état explicite. Si AUCUN champ structuré n'est renseigné, un
+// état global explicite mentionne le fichier référencé le cas échéant (jamais
+// d'échec silencieux).
+function adrFullContentHtml(d) {
+  const doc = d || {};
+  const blocks = [
+    ['Description', doc.description],
+    ['Contexte', doc.context],
+    ['Décision', doc.decision],
+    ['Conséquences', doc.consequences],
+  ];
+  const filled = (v) => v !== undefined && v !== null && String(v).trim() !== '';
+  if (!blocks.some(([, v]) => filled(v))) {
+    const ref = doc.path
+      ? ` Le fichier référencé est <code>${esc(doc.path)}</code>.`
+      : " Aucun fichier n'est référencé.";
+    return `<div class="adr-detail" style="padding:10px 12px;background:#15171c;border-radius:6px">`
+      + `<div class="muted-sm">Contenu indisponible : ni champ structuré (contexte / décision / conséquences) ni contenu lisible.${ref}</div>`
+      + `</div>`;
+  }
+  const body = blocks.map(([label, v]) => {
+    const inner = filled(v)
+      ? `<div style="white-space:pre-wrap">${esc(String(v))}</div>`
+      : `<span class="muted-sm">— non renseigné</span>`;
+    return `<div style="margin-bottom:10px">`
+      + `<div class="muted-sm" style="font-weight:600;margin-bottom:3px">${esc(label)}</div>`
+      + inner
+      + `</div>`;
+  }).join('');
+  return `<div class="adr-detail" style="padding:10px 12px;background:#15171c;border-radius:6px">${body}</div>`;
+}
+
 // Badge de source d'une pièce jointe d'ADR (item 122).
 function adrAttSourceBadge(source) {
   const map = {
@@ -6292,6 +6329,13 @@ function adrTableHtml(ctx = {}) {
     const viewBtn = d.contentAvailable === false
       ? `<button type="button" class="ghost tiny" disabled title="Aucun contenu disponible (ni fichier ni champs structurés)">Regarder</button>`
       : `<button type="button" class="ghost tiny" data-${prefix}-view="${esc(d.docId)}" title="Voir le document">Regarder</button>`;
+    // A002 — ligne de DÉTAIL repliée, immédiatement après la ligne principale :
+    // contenu structuré INTÉGRAL déjà chargé (adrFullContentHtml), aucune
+    // requête réseau, aucune dépendance au fichier `path`. Pas de `data-status`
+    // ⇒ exclue du filtrage et du compteur (colspan = 8 colonnes d'en-tête).
+    const detailRow = `<tr class="adr-detail-row" data-detail-for="${esc(d.docId)}" hidden>
+      <td colspan="8" style="padding:0">${adrFullContentHtml(d)}</td>
+    </tr>`;
     return `<tr data-status="${esc(attrs.status)}" data-repos="${esc(attrs.repos)}" data-search="${esc(attrs.search)}" data-missing="${isMissingFeature ? '1' : '0'}"${show ? '' : ' hidden'}>
       <td><strong>${esc(d.title || d.docId)}</strong>${d.description ? `<div class="muted-sm">${esc(d.description)}</div>` : ''}</td>
       <td>${adrStatusBadge(d.status)}</td>
@@ -6302,10 +6346,12 @@ function adrTableHtml(ctx = {}) {
       <td>${adrAttachmentsCell(d, prefix)}</td>
       <td class="adr-actions">
         <button type="button" class="ghost tiny" data-${prefix}-edit="${esc(d.docId)}" title="Éditer l'ADR">Éditer</button>
+        <button type="button" class="ghost tiny" data-${prefix}-full="${esc(d.docId)}" aria-expanded="false" title="Afficher le contenu complet (contexte / décision / conséquences)">▸ Complet</button>
         ${viewBtn}
         <button type="button" class="ghost tiny danger-text" data-${prefix}-del="${esc(d.docId)}" title="Supprimer l'ADR">Supprimer</button>
       </td>
-    </tr>`;
+    </tr>
+    ${detailRow}`;
   }).join('');
   return `
     <div class="adr-pane-filters">
@@ -6353,6 +6399,18 @@ function bindAdrTable(rootEl, ctx = {}) {
     adrFormModal(project, repos, adr, onChange);
   }));
   root.querySelectorAll(`[data-${prefix}-view]`).forEach((b) => b.addEventListener('click', () => viewRefDoc(attr(b, 'view'))));
+  // A003 — bascule « Complet » : déplie / replie la ligne de détail adjacente
+  // EN PLACE (contenu déjà rendu, aucune requête réseau). Libellé et
+  // `aria-expanded` synchronisés avec l'état `hidden` de la ligne de détail.
+  root.querySelectorAll(`[data-${prefix}-full]`).forEach((b) => b.addEventListener('click', () => {
+    const tr = b.closest('tr');
+    const detail = tr && tr.nextElementSibling;
+    if (!detail || !detail.classList.contains('adr-detail-row')) return;
+    const willShow = detail.hidden;
+    detail.hidden = !willShow;
+    b.textContent = willShow ? '▾ Complet' : '▸ Complet';
+    b.setAttribute('aria-expanded', willShow ? 'true' : 'false');
+  }));
   root.querySelectorAll(`[data-${prefix}-del]`).forEach((b) => b.addEventListener('click', async () => {
     if (!confirm('Supprimer cette ADR ?')) return;
     const original = b.innerHTML;
@@ -6410,6 +6468,13 @@ function bindAdrTable(rootEl, ctx = {}) {
       row.hidden = !show;
       if (show) visible++;
     }
+    // A004 — replier toutes les lignes de détail ouvertes : évite qu'une ligne
+    // de détail reste affichée sous une ligne principale masquée par un filtre.
+    root.querySelectorAll('.adr-detail-row').forEach((r) => { r.hidden = true; });
+    root.querySelectorAll(`[data-${prefix}-full]`).forEach((b) => {
+      b.textContent = '▸ Complet';
+      b.setAttribute('aria-expanded', 'false');
+    });
     if (countEl) countEl.textContent = `${visible} / ${rows.length} ADR`;
   };
   if (searchEl) searchEl.addEventListener('input', apply);

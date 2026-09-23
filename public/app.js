@@ -5630,9 +5630,54 @@ async function providerApply(btn, refresh) {
   }
 }
 
+// ADR-008 — bandeau de santé du token Coder (onglet Workspaces). LECTURE SEULE :
+// état (valide / expire bientôt / expiré / rotation en échec), date d'expiration,
+// dernière rotation, et signal EXPLICITE si le rafraîchissement n'a pas tourné.
+function coderTokenHealthBanner(h) {
+  if (!h || !h.status) return '';
+  const map = {
+    valid: ['running', 'Valide'],
+    expiring: ['review', 'Expire bientôt'],
+    expired: ['failed', 'Expiré'],
+    rotation_failed: ['blocked', 'Rotation en échec'],
+    no_config: ['aborted', 'Non configuré'],
+  };
+  const [cls, label] = map[h.status] || ['queued', h.status];
+  const exp = h.expiresAt
+    ? `${fmtDateTime(h.expiresAt)}${h.expiresAtEstimated ? ' <span class="muted-sm">(estimée)</span>' : ''}`
+    : '<span class="muted-sm">—</span>';
+  const remaining = h.remainingHours === null || h.remainingHours === undefined
+    ? ''
+    : ` <span class="muted-sm">(~${esc(String(h.remainingHours))} h)</span>`;
+  const lr = h.lastRotation || {};
+  const lastRotation = `${lr.status ? esc(lr.status) : '—'}${lr.at
+    ? ` <span class="muted-sm">(run ${fmtDateTime(lr.at)}${lr.successAt ? ` · succès ${fmtDateTime(lr.successAt)}` : ''})</span>`
+    : ''}`;
+  // Alerte EXPLICITE (ADR-008) : rotation non observée (heartbeat périmé/absent)
+  // OU état critique. `rotationStale` est ORTHOGONAL au statut : il n'est jamais
+  // masqué par un `status=valid` (bandeau d'alerte dédié).
+  const alert = h.rotationWarning
+    || (['expired', 'rotation_failed', 'expiring'].includes(h.status) ? h.detail : '');
+  return `
+    <div id="ws-token-health">
+      <div class="eco-restart-bar" style="gap:12px;flex-wrap:wrap">
+        <span><strong>Token Coder</strong> <span class="badge ${cls}">${esc(label)}</span></span>
+        <span class="muted-sm">Expiration : ${exp}${remaining}</span>
+        <span class="muted-sm">Dernière rotation : ${lastRotation}</span>
+      </div>
+      ${alert ? `<p class="msg error" id="ws-token-health-alert">${esc(alert)}</p>` : ''}
+      ${h.detail ? `<p class="muted-sm">${esc(h.detail)}</p>` : ''}
+    </div>`;
+}
+
 // --- Workspaces Coder (admin) ------------------------------------------------
 async function renderWorkspaces() {
-  const r = await fetch('/api/workspaces');
+  // ADR-008 — santé du token Coder : récupérée EN PARALLÈLE de la liste, sans
+  // jamais casser l'onglet si l'appel échoue (tolérant à l'échec → null).
+  const [r, tokenHealth] = await Promise.all([
+    fetch('/api/workspaces'),
+    api('/api/coder/token-health').catch(() => null),
+  ]);
   if (r.status === 403) {
     // Un 403 de PÉRIMÈTRE (ex. « workspace hors périmètre ») n'est pas un 403
     // « admin uniquement » : on affiche le message serveur réel, avec repli
@@ -5673,6 +5718,7 @@ async function renderWorkspaces() {
   const ideBadge = (w) => w.ideUrl ? `<a class="badge running ws-ide" href="/api/coder/ide?url=${encodeURIComponent(w.ideUrl)}" target="_blank" rel="noopener" title="Ouvrir l'IDE web Coder (session Coder posée automatiquement)">IDE</a>` : '';
   document.getElementById('pane-workspaces').innerHTML = `
     <h2>Workspaces Coder <span class="muted-sm">— ${wsList.length} workspace(s)</span></h2>
+    ${coderTokenHealthBanner(tokenHealth)}
     ${coderUnavailable ? `<p class="msg error" id="ws-coder-notice">Statut Coder indisponible${coderError ? ` — ${esc(coderError)}` : ''}. Le statut affiché provient de Docker ; l'accès IDE est conservé via une URL de repli.</p>` : ''}
     ${IS_ADMIN ? `<div class="eco-restart-bar"><button class="launch-btn" id="ws-create-btn">Créer un workspace</button><span id="ws-msg" class="muted-sm"></span></div>` : ''}
     <table><thead><tr><th>Workspace</th><th>Propriétaire</th><th>Statut</th><th>IDE</th><th>Conteneur</th><th>Volume</th><th>Projets</th>${IS_ADMIN ? '<th>Actions</th>' : ''}</tr></thead>

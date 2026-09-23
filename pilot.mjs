@@ -1230,9 +1230,6 @@ export async function deleteCadrage(args = {}) {
   return taskOrchestrator("cadrage_delete", { cadrageId: String(cadrageId) });
 }
 
-// Lance (ou reprend) la session dédiée de l'agent de CADRAGE TECHNIQUE
-// (`agent-cadrage`) pour un cadrage (objet « cadrage technique », ex-« recette »).
-// `force = true` : ignore la session rattachée et en démarre une nouvelle.
 // Préserve la CAUSE RÉELLE d'un échec de lancement de session (ADR-005) : une
 // erreur STRUCTURÉE (ex. ModelNotServedError, `code`) remonte TELLE QUELLE
 // (l'UI l'exploite) ; en l'absence de `code`, un message de repli explicite est
@@ -1246,6 +1243,9 @@ function rethrowLaunchFailure(e, fallbackMsg) {
   throw err;
 }
 
+// Lance (ou reprend) la session dédiée de l'agent de CADRAGE TECHNIQUE
+// (`agent-cadrage`) pour un cadrage (objet « cadrage technique », ex-« recette »).
+// `force = true` : ignore la session rattachée et en démarre une nouvelle.
 export async function launchCadrageSession({ cadrageId, force = false, adrIds, featureIds, ruleIds }) {
   if (!cadrageId) throw new Error("cadrageId requis");
   return withLaunchLock(`cadrage:${cadrageId}`, async () => {

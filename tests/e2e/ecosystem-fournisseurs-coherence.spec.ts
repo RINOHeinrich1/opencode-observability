@@ -69,7 +69,7 @@
  *
  * Paramètres (déclarés au registre sur l'entité ; surchargeables au run) :
  *   - baseUrl        (url)                 défaut https://dev.madatalk.fr — env E2E_BASE_URL
- *   - adminEmail     (secret/ref)          ECOSYSTEM_E2E_ADMIN_EMAIL
+ *   - adminUsername  (secret/ref)          ECOSYSTEM_E2E_ADMIN_USERNAME
  *   - adminPassword  (secret/ref)          ECOSYSTEM_E2E_ADMIN_PASSWORD
  *   - coherencePath  (string)              défaut /api/providers/coherence
  *   - requestedModel (string)              surcharge du modèle de référence ;
@@ -89,10 +89,10 @@ const BASE_URL =
   process.env.ECOSYSTEM_E2E_BASE_URL ||
   "https://dev.madatalk.fr";
 
-const ADMIN_EMAIL =
-  process.env.ECOSYSTEM_E2E_ADMIN_EMAIL ||
-  process.env.adminEmail ||
-  process.env.E2E_USER_EMAIL ||
+const ADMIN_USERNAME =
+  process.env.ECOSYSTEM_E2E_ADMIN_USERNAME ||
+  process.env.adminUsername ||
+  process.env.E2E_USER_USERNAME ||
   "";
 
 const ADMIN_PASSWORD =
@@ -151,9 +151,28 @@ interface Coherence {
   authPath?: string;
 }
 
+/**
+ * Écran « Choisir une organisation » (utilisateur appartenant à plusieurs
+ * organisations, sans organisation active dans la session) : il précède tout
+ * accès au panneau et intercepte les clics tant qu'aucune org n'est choisie.
+ * On sélectionne l'organisation PAR DÉFAUT (★) — périmètre du projet testé.
+ */
+async function selectOrganizationIfPrompted(page: Page): Promise<void> {
+  const firstPick = page.locator("#modal-backdrop [data-org-pick]").first();
+  const appeared = await firstPick
+    .waitFor({ state: "visible", timeout: 8_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!appeared) return; // utilisateur mono-organisation : aucun écran de choix
+  const star = page.locator("#modal-backdrop [data-org-pick]", { hasText: "★" }).first();
+  const button = (await star.count()) ? star : firstPick;
+  await button.click();
+  await expect(page.locator("#modal-backdrop")).toBeHidden({ timeout: 15_000 });
+}
+
 async function login(page: Page): Promise<void> {
   await page.goto(`${BASE_URL}/login`, { waitUntil: "domcontentloaded" });
-  await page.fill("#username", ADMIN_EMAIL);
+  await page.fill("#username", ADMIN_USERNAME);
   await page.fill("#password", ADMIN_PASSWORD);
   await Promise.all([
     page.waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 15_000 }),
@@ -161,6 +180,8 @@ async function login(page: Page): Promise<void> {
   ]);
   // Le panneau a chargé l'utilisateur (barre d'onglets rendue).
   await expect(page.locator("#tabs")).toBeVisible({ timeout: 15_000 });
+  // Écran de choix d'organisation éventuel (user multi-orgs) avant toute action.
+  await selectOrganizationIfPrompted(page);
 }
 
 /** Ouvre la page Écosystème puis le sous-onglet Fournisseurs (admin). */
@@ -194,7 +215,7 @@ function coherenceBanner(page: Page) {
 test("Onglet Fournisseurs — état incohérent (clé active ne servant pas le modèle déclaré) : le panneau affiche un avertissement proactif listant les agents/modèles affectés ET propose la mise à jour du modèle.", async ({
   page,
 }) => {
-  test.skip(!ADMIN_EMAIL || !ADMIN_PASSWORD, "Identifiants E2E absents (ECOSYSTEM_E2E_ADMIN_EMAIL / ECOSYSTEM_E2E_ADMIN_PASSWORD).");
+  test.skip(!ADMIN_USERNAME || !ADMIN_PASSWORD, "Identifiants E2E absents (ECOSYSTEM_E2E_ADMIN_USERNAME / ECOSYSTEM_E2E_ADMIN_PASSWORD).");
 
   await login(page);
 
@@ -270,7 +291,7 @@ test("Onglet Fournisseurs — état incohérent (clé active ne servant pas le m
 test("Onglet Fournisseurs — non-régression : si la clé active sert TOUS les modèles déclarés des agents, aucun avertissement de cohérence n'est affiché.", async ({
   page,
 }) => {
-  test.skip(!ADMIN_EMAIL || !ADMIN_PASSWORD, "Identifiants E2E absents (ECOSYSTEM_E2E_ADMIN_EMAIL / ECOSYSTEM_E2E_ADMIN_PASSWORD).");
+  test.skip(!ADMIN_USERNAME || !ADMIN_PASSWORD, "Identifiants E2E absents (ECOSYSTEM_E2E_ADMIN_USERNAME / ECOSYSTEM_E2E_ADMIN_PASSWORD).");
 
   await login(page);
 
@@ -297,7 +318,7 @@ test("Onglet Fournisseurs — non-régression : si la clé active sert TOUS les 
 test("Onglet Fournisseurs — édition du modèle d'un agent : le contrôle de cohérence est appliqué (avertissement si l'état est incohérent, silence sinon).", async ({
   page,
 }) => {
-  test.skip(!ADMIN_EMAIL || !ADMIN_PASSWORD, "Identifiants E2E absents (ECOSYSTEM_E2E_ADMIN_EMAIL / ECOSYSTEM_E2E_ADMIN_PASSWORD).");
+  test.skip(!ADMIN_USERNAME || !ADMIN_PASSWORD, "Identifiants E2E absents (ECOSYSTEM_E2E_ADMIN_USERNAME / ECOSYSTEM_E2E_ADMIN_PASSWORD).");
 
   await login(page);
 
@@ -373,7 +394,7 @@ test("Onglet Fournisseurs — édition du modèle d'un agent : le contrôle de c
 test("Onglet Fournisseurs — fournisseur par défaut « opencode » (sans clé) : aucun modèle opencode/* n'est signalé « non servi » par la clé active.", async ({
   page,
 }) => {
-  test.skip(!ADMIN_EMAIL || !ADMIN_PASSWORD, "Identifiants E2E absents (ECOSYSTEM_E2E_ADMIN_EMAIL / ECOSYSTEM_E2E_ADMIN_PASSWORD).");
+  test.skip(!ADMIN_USERNAME || !ADMIN_PASSWORD, "Identifiants E2E absents (ECOSYSTEM_E2E_ADMIN_USERNAME / ECOSYSTEM_E2E_ADMIN_PASSWORD).");
 
   await login(page);
 

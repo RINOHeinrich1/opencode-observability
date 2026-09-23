@@ -48,7 +48,7 @@
  *
  * Paramètres (déclarés au registre sur l'entité ; surchargeables au run) :
  *   - baseUrl        (url)     défaut  https://dev.madatalk.fr   — env E2E_BASE_URL
- *   - adminEmail     (secret)  ref     ECOSYSTEM_E2E_ADMIN_EMAIL
+ *   - adminUsername  (secret)  ref     ECOSYSTEM_E2E_ADMIN_USERNAME
  *   - adminPassword  (secret)  ref     ECOSYSTEM_E2E_ADMIN_PASSWORD
  */
 import { test, expect, type Page } from "@playwright/test";
@@ -62,10 +62,10 @@ const BASE_URL =
   process.env.ECOSYSTEM_E2E_BASE_URL ||
   "https://dev.madatalk.fr";
 
-const ADMIN_EMAIL =
-  process.env.ECOSYSTEM_E2E_ADMIN_EMAIL ||
-  process.env.adminEmail ||
-  process.env.E2E_USER_EMAIL ||
+const ADMIN_USERNAME =
+  process.env.ECOSYSTEM_E2E_ADMIN_USERNAME ||
+  process.env.adminUsername ||
+  process.env.E2E_USER_USERNAME ||
   "";
 
 const ADMIN_PASSWORD =
@@ -112,9 +112,28 @@ const TARGET_BATCH_ID = process.env.E2E_BATCH_ID || "";
 // est précisément la régression que l'on verrouille.
 const SILENT_TIMEOUT_MS = Number(process.env.E2E_SILENT_TIMEOUT_MS || 25_000);
 
+/**
+ * Écran « Choisir une organisation » (utilisateur appartenant à plusieurs
+ * organisations, sans organisation active dans la session) : il précède tout
+ * accès au panneau et intercepte les clics tant qu'aucune org n'est choisie.
+ * On sélectionne l'organisation PAR DÉFAUT (★) — périmètre du projet testé.
+ */
+async function selectOrganizationIfPrompted(page: Page): Promise<void> {
+  const firstPick = page.locator("#modal-backdrop [data-org-pick]").first();
+  const appeared = await firstPick
+    .waitFor({ state: "visible", timeout: 8_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!appeared) return; // utilisateur mono-organisation : aucun écran de choix
+  const star = page.locator("#modal-backdrop [data-org-pick]", { hasText: "★" }).first();
+  const button = (await star.count()) ? star : firstPick;
+  await button.click();
+  await expect(page.locator("#modal-backdrop")).toBeHidden({ timeout: 15_000 });
+}
+
 async function login(page: Page): Promise<void> {
   await page.goto(`${BASE_URL}/login`, { waitUntil: "domcontentloaded" });
-  await page.fill("#username", ADMIN_EMAIL);
+  await page.fill("#username", ADMIN_USERNAME);
   await page.fill("#password", ADMIN_PASSWORD);
   await Promise.all([
     page.waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 15_000 }),
@@ -122,14 +141,16 @@ async function login(page: Page): Promise<void> {
   ]);
   // Le panneau a chargé l'utilisateur (onglets rendus).
   await expect(page.locator("#tabs")).toBeVisible({ timeout: 15_000 });
+  // Écran de choix d'organisation éventuel (user multi-orgs) avant toute action.
+  await selectOrganizationIfPrompted(page);
 }
 
 test("Dans l'écosystème admin, créer un batch en mode session unique avec un fournisseur dont la clé active ne sert pas le modèle déclaré de l'orchestrator : lancer le batch → l'UI affiche une erreur explicite (modèle demandé + fournisseur clé active) OU la session démarre avec un modèle compatible ; jamais un blocage silencieux au-delà du timeout.", async ({
   page,
 }) => {
   test.skip(
-    !ADMIN_EMAIL || !ADMIN_PASSWORD,
-    "Identifiants E2E absents (ECOSYSTEM_E2E_ADMIN_EMAIL / ECOSYSTEM_E2E_ADMIN_PASSWORD).",
+    !ADMIN_USERNAME || !ADMIN_PASSWORD,
+    "Identifiants E2E absents (ECOSYSTEM_E2E_ADMIN_USERNAME / ECOSYSTEM_E2E_ADMIN_PASSWORD).",
   );
 
   await login(page);

@@ -408,12 +408,20 @@ async function orgManageModal() {
   }));
   document.querySelectorAll('#modal-backdrop [data-org-del]').forEach((b) => b.addEventListener('click', async () => {
     if (!confirm(`Supprimer l'organisation ${b.dataset.orgDel} ?`)) return;
+    const original = b.innerHTML;
+    setBtnBusy(b, 'Suppression');
     try { await api(`/api/orgs/${encodeURIComponent(b.dataset.orgDel)}`, { method: 'DELETE' }); await loadOrganizations(); closeModal(); orgManageModal(); refreshActive(); }
-    catch (e) { const m = document.getElementById('org-msg'); if (m) { m.textContent = e.message || String(e); m.className = 'msg error'; } }
+    catch (e) {
+      b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
+      const m = document.getElementById('org-msg'); if (m) { m.textContent = e.message || String(e); m.className = 'msg error'; }
+    }
   }));
   const form = document.getElementById('org-form');
   if (form) form.addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = e.submitter || e.target.querySelector('button[type="submit"]');
+    const original = btn ? btn.innerHTML : null;
+    setBtnBusy(btn, 'Enregistrement');
     const m = document.getElementById('org-msg');
     try {
       await api('/api/orgs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
@@ -426,27 +434,41 @@ async function orgManageModal() {
         gitToken: document.getElementById('org-git-token').value.trim() || undefined,
       }) });
       await loadOrganizations(); closeModal(); orgManageModal(); refreshActive();
-    } catch (err) { if (m) { m.textContent = err.message || String(err); m.className = 'msg error'; } }
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+      if (m) { m.textContent = err.message || String(err); m.className = 'msg error'; }
+    }
   });
   // --- Tokens git additionnels (v0.10) : add / delete ---
   document.querySelectorAll('#modal-backdrop [data-org-git-del]').forEach((b) => b.addEventListener('click', async () => {
     const tokenId = b.dataset.orgGitDel;
     const tokenName = b.dataset.orgGitDelName || tokenId;
     if (!confirm(`Supprimer le token git « ${tokenName} » ? Les liaisons repo↔projet qui le référençaient repassent au token par défaut.`)) return;
+    const original = b.innerHTML;
+    setBtnBusy(b, 'Suppression');
     try { await api(`/api/orgs/${encodeURIComponent(selectedOrgId)}/git-tokens/${encodeURIComponent(tokenId)}`, { method: 'DELETE' }); await loadOrganizations(); closeModal(); orgManageModal(); }
-    catch (e) { const m = document.getElementById('org-git-msg'); if (m) { m.textContent = e.message || String(e); m.className = 'msg error'; } }
+    catch (e) {
+      b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
+      const m = document.getElementById('org-git-msg'); if (m) { m.textContent = e.message || String(e); m.className = 'msg error'; }
+    }
   }));
   const gitTokenForm = document.getElementById('org-git-token-form');
   if (gitTokenForm) gitTokenForm.addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = e.submitter || e.target.querySelector('button[type="submit"]');
+    const original = btn ? btn.innerHTML : null;
     const m = document.getElementById('org-git-msg');
     const nameVal = document.getElementById('org-git-token-name').value.trim();
     const tokenVal = document.getElementById('org-git-token-value').value.trim();
     if (!nameVal || !tokenVal) { if (m) { m.textContent = 'Libellé et token requis.'; m.className = 'msg error'; } return; }
+    setBtnBusy(btn, 'Ajout');
     try {
       await api(`/api/orgs/${encodeURIComponent(selectedOrgId)}/git-tokens`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: nameVal, token: tokenVal }) });
       await loadOrganizations(); closeModal(); orgManageModal();
-    } catch (err) { if (m) { m.textContent = err.message || String(err); m.className = 'msg error'; } }
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+      if (m) { m.textContent = err.message || String(err); m.className = 'msg error'; }
+    }
   });
 }
 
@@ -569,13 +591,18 @@ async function loadAdrVigilances() {
     b.addEventListener('click', async () => {
       const reason = prompt('Raison de la levée (tracée, obligatoire) :');
       if (!reason || !reason.trim()) return;
+      const original = b.innerHTML;
+      setBtnBusy(b, 'Levée');
       try {
         await api('/api/adr-vigilances/' + encodeURIComponent(b.dataset.adrVigResolve) + '/resolve', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ resolution: reason.trim(), resolutionKind: 'manual' }),
         });
         await loadAdrVigilances();
-      } catch (e) { alert('Échec de la levée : ' + (e.message || e)); }
+      } catch (e) {
+        b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
+        alert('Échec de la levée : ' + (e.message || e));
+      }
     });
   });
 }
@@ -1079,10 +1106,15 @@ async function renderDecisions() {
       const st = b.dataset.approve ? 'approved' : 'rejected';
       const input = b.closest('.decision-row').querySelector('.decision-remarks');
       const resolution = input ? input.value.trim() : '';
+      const original = b.innerHTML;
+      setBtnBusy(b, st === 'approved' ? 'Approbation' : 'Rejet');
       try {
         await resolveDecision(decisionId, st, resolution);
         refreshActive();
-      } catch (err) { alert('Échec : ' + (err.message || err)); }
+      } catch (err) {
+        b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
+        alert('Échec : ' + (err.message || err));
+      }
     });
   });
 }
@@ -1171,11 +1203,16 @@ async function decisionReviewModal(decision, back) {
     const status = resolveBtn.dataset.drResolve;
     const resolution = document.getElementById('dr-remarks') ? document.getElementById('dr-remarks').value.trim() : '';
     if (status === 'rejected' && !resolution) { alert('Pour rejeter, merci d\'indiquer une remarque (sera transmise en rework).'); return; }
+    const original = resolveBtn.innerHTML;
+    setBtnBusy(resolveBtn, status === 'approved' ? 'Approbation' : 'Rejet');
     try {
       await resolveDecision(decision.decision_id, status, resolution);
       closeModal();
       if (back) back(); else refreshActive();
-    } catch (err) { alert('Échec : ' + (err.message || err)); }
+    } catch (err) {
+      resolveBtn.disabled = false; resolveBtn.classList.remove('ws-busy'); resolveBtn.innerHTML = original;
+      alert('Échec : ' + (err.message || err));
+    }
   });
 }
 
@@ -1197,10 +1234,18 @@ async function renderUsers() {
     <tbody>${users.map((u) => `<tr><td>${esc(u.username)}</td><td>${roleOpts(u)}</td><td><button class="ghost tiny" data-user-orgs="${u.id}" data-user-name="${esc(u.username)}">Gérer</button></td><td><button class="ghost tiny" data-user-projects="${u.id}" data-user-name="${esc(u.username)}">Gérer</button></td><td><button class="ghost tiny" data-user-oc="${u.id}" data-user-name="${esc(u.username)}">Accès</button></td><td><button class="ghost tiny" data-user-email="${u.id}" data-user-name="${esc(u.username)}" data-user-email-val="${esc(u.notifyEmail || '')}" title="Configurer l'email de notification">${u.notifyEmail ? esc(u.notifyEmail) : '—'}</button></td><td class="code">${esc((u.created_at || '').replace('T', ' ').slice(0, 19))}</td>    <td><div class="icon-actions"><button class="ghost tiny" data-oc-restart="${esc(u.username)}" title="Redémarrer l'instance opencode@${esc(u.username)}.service">Redémarrer</button><button class="danger" data-del="${u.id}">Supprimer</button></div></td></tr>`).join('')}</tbody></table>`;
   document.getElementById('add-user-btn').addEventListener('click', () => userCreateModal());
   document.querySelectorAll('#pane-users [data-del]').forEach((b) => b.addEventListener('click', async () => {
-    await fetch(`/api/users/${b.dataset.del}`, { method: 'DELETE' });
-    renderUsers();
+    const original = b.innerHTML;
+    setBtnBusy(b, 'Suppression');
+    try {
+      await fetch(`/api/users/${b.dataset.del}`, { method: 'DELETE' });
+      renderUsers();
+    } catch (e) {
+      b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
+      const msg = document.getElementById('users-msg'); if (msg) msg.textContent = e.message || String(e);
+    }
   }));
   document.querySelectorAll('#pane-users .role-sel').forEach((sel) => sel.addEventListener('change', async () => {
+    sel.disabled = true;
     const rr = await fetch(`/api/users/${sel.dataset.user}/role`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: sel.value }) });
     const msg = document.getElementById('users-msg');
     if (!rr.ok) msg.textContent = (await rr.json()).error || 'Erreur';
@@ -1262,10 +1307,16 @@ async function userCreateModal() {
     const projectIds = [...document.querySelectorAll('#modal-backdrop .uc-proj:checked')].map((c) => c.value);
     const m = document.getElementById('uc-msg');
     if (!username) { m.textContent = 'Le nom d\'utilisateur est requis.'; m.className = 'msg error'; return; }
+    const btn = document.getElementById('uc-create');
+    const original = btn.innerHTML;
+    setBtnBusy(btn, 'Création');
     try {
       await api('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password, role, organizationId, projectIds }) });
       closeModal(); renderUsers();
-    } catch (e) { m.textContent = e.message || String(e); m.className = 'msg error'; }
+    } catch (e) {
+      btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original;
+      m.textContent = e.message || String(e); m.className = 'msg error';
+    }
   };
 }
 
@@ -1274,8 +1325,8 @@ async function restartOpencodeSession(username) {
   if (!confirm(`Redémarrer la session opencode de « ${username} » ?\nL'instance systemd opencode@${username}.service sera relancée (recharge la config des agents : modèles, permissions, skills, MCP).`)) return;
   const msg = document.getElementById('users-msg');
   const btn = [...document.querySelectorAll('#pane-users [data-oc-restart]')].find((x) => x.dataset.ocRestart === username);
-  const prevLabel = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = 'redémarrage…'; }
+  const prevHtml = btn ? btn.innerHTML : '';
+  setBtnBusy(btn, 'Redémarrage');
   try {
     const r = await fetch(`/api/opencode/restart-user/${encodeURIComponent(username)}`, { method: 'POST' });
     const d = await r.json().catch(() => ({}));
@@ -1284,7 +1335,7 @@ async function restartOpencodeSession(username) {
   } catch (e) {
     if (msg) { msg.textContent = e.message || String(e); msg.className = 'msg error'; }
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = prevLabel; }
+    if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = prevHtml; }
   }
 }
 
@@ -1311,15 +1362,26 @@ async function userOpencodeModal(userId, username) {
   document.getElementById('modal-cancel').onclick = closeModal;
   document.querySelectorAll('#modal-backdrop [data-copy-oc]').forEach((b) => b.addEventListener('click', () => { navigator.clipboard && navigator.clipboard.writeText(b.dataset.copyOc); }));
   document.getElementById('oc-prov').onclick = async () => {
+    const btn = document.getElementById('oc-prov');
+    const original = btn.innerHTML;
+    setBtnBusy(btn, 'Provisionnement');
     const m = document.getElementById('oc-msg');
     try { m.textContent = 'Provisionnement…'; m.className = 'msg'; await api(`/api/users/${userId}/opencode`, { method: 'POST' }); closeModal(); userOpencodeModal(userId, username); }
-    catch (e) { if (m) { m.textContent = e.message || String(e); m.className = 'msg error'; } }
+    catch (e) {
+      btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original;
+      if (m) { m.textContent = e.message || String(e); m.className = 'msg error'; }
+    }
   };
   const dep = document.getElementById('oc-deprov');
   if (dep) dep.onclick = async () => {
     if (!confirm('Déprovisionner l\'instance opencode de cet utilisateur ?')) return;
+    const original = dep.innerHTML;
+    setBtnBusy(dep, 'Déprovisionnement');
     try { await api(`/api/users/${userId}/opencode`, { method: 'DELETE' }); closeModal(); userOpencodeModal(userId, username); }
-    catch (e) { const m = document.getElementById('oc-msg'); if (m) { m.textContent = e.message || String(e); m.className = 'msg error'; } }
+    catch (e) {
+      dep.disabled = false; dep.classList.remove('ws-busy'); dep.innerHTML = original;
+      const m = document.getElementById('oc-msg'); if (m) { m.textContent = e.message || String(e); m.className = 'msg error'; }
+    }
   };
 }
 
@@ -1378,11 +1440,17 @@ async function userProjectsModal(userId, username) {  let all = [];
   document.getElementById('modal-cancel').onclick = closeModal;
   document.getElementById('up-save').onclick = async () => {
     const ids = [...document.querySelectorAll('#modal-backdrop .up-proj:checked')].map((c) => c.value);
+    const btn = document.getElementById('up-save');
+    const original = btn.innerHTML;
+    setBtnBusy(btn, 'Enregistrement');
     const m = document.getElementById('up-msg');
     try {
       await api(`/api/users/${userId}/projects`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectIds: ids }) });
       closeModal(); renderUsers();
-    } catch (e) { if (m) { m.textContent = e.message || String(e); m.className = 'msg error'; } }
+    } catch (e) {
+      btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original;
+      if (m) { m.textContent = e.message || String(e); m.className = 'msg error'; }
+    }
   };
 }
 
@@ -1406,11 +1474,17 @@ async function userOrgsModal(userId, username) {
   document.getElementById('modal-cancel').onclick = closeModal;
   document.getElementById('uo-save').onclick = async () => {
     const ids = [...document.querySelectorAll('#modal-backdrop .uo-org:checked')].map((c) => c.value);
+    const btn = document.getElementById('uo-save');
+    const original = btn.innerHTML;
+    setBtnBusy(btn, 'Enregistrement');
     const m = document.getElementById('uo-msg');
     try {
       await api(`/api/users/${userId}/organizations`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ organizationIds: ids }) });
       closeModal(); renderUsers();
-    } catch (e) { if (m) { m.textContent = e.message || String(e); m.className = 'msg error'; } }
+    } catch (e) {
+      btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original;
+      if (m) { m.textContent = e.message || String(e); m.className = 'msg error'; }
+    }
   };
 }
 
@@ -1530,6 +1604,9 @@ async function artAddModal(onSaved) {
   document.getElementById('modal-cancel').onclick = closeModal;
   document.getElementById('art-add-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = e.submitter || e.target.querySelector('button[type="submit"]');
+    const original = btn ? btn.innerHTML : null;
+    setBtnBusy(btn, 'Ajout');
     const msg = document.getElementById('art-add-msg');
     try {
       const body = {
@@ -1544,7 +1621,10 @@ async function artAddModal(onSaved) {
       closeModal();
       msg('Artefact ajouté.');
       if (onSaved) await onSaved();
-    } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+      msg.textContent = err.message; msg.className = 'msg error';
+    }
   });
 }
 
@@ -1943,6 +2023,9 @@ async function agentSessionModal() {
 
   document.getElementById('agent-session-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = e.submitter || e.target.querySelector('button[type="submit"]');
+    const original = btn ? btn.innerHTML : null;
+    setBtnBusy(btn, 'Ouverture');
     const msg = document.getElementById('agent-session-msg');
     msg.textContent = 'Ouverture de la session…'; msg.className = 'msg';
     try {
@@ -1957,9 +2040,13 @@ async function agentSessionModal() {
         closeModal();
         window.open(sessionHref(r.sessionId), '_blank');
       } else {
+        if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
         msg.textContent = r.error || 'Session ouverte (id inconnu).'; msg.className = 'msg error';
       }
-    } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+      msg.textContent = err.message || String(err); msg.className = 'msg error';
+    }
   });
 }
 
@@ -2055,8 +2142,8 @@ async function e2eDetailModal(e2eTestId) {
   document.getElementById('e2e-launch-btn').onclick = () => { closeModal(); e2eRunModal(e2eTestId); };
   const e2eIncBtn = document.getElementById('e2e-incoherent-btn');
   if (e2eIncBtn) e2eIncBtn.onclick = () => e2eIncoherentModal(e2eTestId, () => e2eDetailModal(e2eTestId));
-  document.querySelectorAll('#modal-backdrop [data-e2e-session]').forEach((b) => b.addEventListener('click', () => openTestSession(b.dataset.e2eSession, false)));
-  document.querySelectorAll('#modal-backdrop [data-e2e-session-force]').forEach((b) => b.addEventListener('click', () => openTestSession(b.dataset.e2eSessionForce, true)));
+  document.querySelectorAll('#modal-backdrop [data-e2e-session]').forEach((b) => b.addEventListener('click', () => openTestSession(b.dataset.e2eSession, false, b)));
+  document.querySelectorAll('#modal-backdrop [data-e2e-session-force]').forEach((b) => b.addEventListener('click', () => openTestSession(b.dataset.e2eSessionForce, true, b)));
   document.querySelectorAll('#modal-backdrop [data-e2e-create-task]').forEach((b) => b.addEventListener('click', () => e2eCreateTaskModal(b.dataset.e2eCreateTask)));
   document.querySelectorAll('#modal-backdrop [data-e2e-task-goto]').forEach((b) => b.addEventListener('click', () => { closeModal(); taskActionsModal(b.dataset.e2eTaskGoto); }));
   document.querySelectorAll('#modal-backdrop [data-e2e-video]').forEach((b) => b.addEventListener('click', () => openE2EVideoModal(b.dataset.e2eVideo, b.dataset.title, b.dataset.exec)));
@@ -2064,14 +2151,23 @@ async function e2eDetailModal(e2eTestId) {
 
 // Ouvre la session de création/mise à jour d'un test (agent test-agent).
 // Reprend la session rattachée si elle existe ; `force = true` en démarre une.
-async function openTestSession(e2eTestId, force) {
+async function openTestSession(e2eTestId, force, btn) {
+  const original = btn ? btn.innerHTML : null;
+  setBtnBusy(btn, 'Ouverture');
   try {
     const r = await api(`/api/e2e-tests/${encodeURIComponent(e2eTestId)}/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: !!force }) });
-    if (r.sessionId && /^ses_/.test(r.sessionId)) window.open(sessionHref(r.sessionId), '_blank');
-    else alert(r.error || 'Aucune session test-agent disponible.');
-    closeModal();
-    refreshActive();
-  } catch (e) { alert('Échec de la session test-agent : ' + (e.message || e)); }
+    if (r.sessionId && /^ses_/.test(r.sessionId)) {
+      window.open(sessionHref(r.sessionId), '_blank');
+      closeModal();
+      refreshActive();
+    } else {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+      alert(r.error || 'Aucune session test-agent disponible.');
+    }
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+    alert('Échec de la session test-agent : ' + (e.message || e));
+  }
 }
 
 // Crée une tâche requise depuis un test (contrat BDD/TDD) — lien REQUIRED auto.
@@ -2116,6 +2212,9 @@ ${gherkin ? '\nGherkin (comportement cible) :\n' + esc(gherkin) : ''}</textarea>
     const title = document.getElementById('ct-title').value.trim();
     const request = document.getElementById('ct-request').value.trim();
     if (!title || !request) { msg.textContent = 'Titre et demande requis.'; msg.className = 'msg error'; return; }
+    const btn = ev.submitter || ev.target.querySelector('button[type="submit"]');
+    const original = btn ? btn.innerHTML : null;
+    setBtnBusy(btn, 'Création');
     msg.textContent = 'Création de la tâche…';
     msg.className = 'msg';
     const scopeRaw = document.getElementById('ct-scope').value.trim();
@@ -2130,7 +2229,10 @@ ${gherkin ? '\nGherkin (comportement cible) :\n' + esc(gherkin) : ''}</textarea>
       closeModal();
       if (r && r.taskId) { alert('Tâche créée : ' + r.taskId + ' — liée au test en REQUIRED.'); goToTab('tasks'); }
       refreshActive();
-    } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+      msg.textContent = err.message || String(err); msg.className = 'msg error';
+    }
   });
 }
 
@@ -2260,6 +2362,9 @@ async function e2eRunModal(e2eTestId) {
     };
     // Run ASYNCHRONE : le POST répond immédiatement (worker détaché) ; on suit le
     // job en polling puis on ouvre l'historique du test quand il est terminé.
+    const btn = ev.submitter || ev.target.querySelector('button[type="submit"]');
+    const original = btn ? btn.innerHTML : null;
+    setBtnBusy(btn, 'Lancement');
     msg.textContent = 'Lancement du run en arrière-plan…';
     msg.className = 'msg';
     let jobId = null;
@@ -2277,11 +2382,14 @@ async function e2eRunModal(e2eTestId) {
         msg.className = r && r.error ? 'msg error' : 'msg';
       }
     } catch (err) {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
       const m = err && err.message ? String(err.message) : String(err);
       msg.textContent = 'Échec du lancement : ' + m;
       msg.className = 'msg error';
       return;
     }
+    // POST terminé : le suivi du job se fait hors bouton → restaurer immédiatement.
+    if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
     // Polling du job : tant qu'il est RUNNING on attend ; à la fin on ouvre le détail.
     let pollTries = 0;
     let cancelled = false;
@@ -2342,6 +2450,9 @@ async function e2eRunModalEvaluateur(e2eTestId, test) {
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
   document.getElementById('e2e-run-go').onclick = async () => {
+    const btn = document.getElementById('e2e-run-go');
+    const original = btn.innerHTML;
+    setBtnBusy(btn, 'Lancement');
     const msg = document.getElementById('e2e-run-msg');
     msg.textContent = 'Lancement du run en arrière-plan…';
     msg.className = 'msg';
@@ -2353,7 +2464,10 @@ async function e2eRunModalEvaluateur(e2eTestId, test) {
       closeModal();
       if (r && r.jobId) e2eRunJobWait(e2eTestId, r.jobId);
       else alert((r && r.message) || (r && r.error) || 'Run terminé.');
-    } catch (e) { msg.textContent = 'Échec : ' + (e.message || e); msg.className = 'msg error'; }
+    } catch (e) {
+      btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original;
+      msg.textContent = 'Échec : ' + (e.message || e); msg.className = 'msg error';
+    }
   };
 }
 
@@ -2385,6 +2499,8 @@ function e2eRunFromGitModal(e2eTestId, pre) {
   document.querySelectorAll('#modal-backdrop [data-run-ref]').forEach((b) => b.addEventListener('click', async () => {
     const msg = document.getElementById('git-run-msg');
     const sha = b.dataset.runRef;
+    const original = b.innerHTML;
+    setBtnBusy(b, 'Lancement');
     const runBody = { origin: 'manual', runFromRef: sha };
     msg.textContent = `Création d'un worktree temporaire au commit ${short(sha)} puis lancement… (peut prendre plusieurs minutes)`;
     msg.className = 'msg';
@@ -2395,7 +2511,10 @@ function e2eRunFromGitModal(e2eTestId, pre) {
       closeModal();
       if (r && r.jobId) e2eRunJobWait(e2eTestId, r.jobId);
       else alert((r && r.message) || 'Run terminé.');
-    } catch (err) { msg.textContent = 'Échec : ' + (err.message || err); msg.className = 'msg error'; }
+    } catch (err) {
+      b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
+      msg.textContent = 'Échec : ' + (err.message || err); msg.className = 'msg error';
+    }
   }));
 }
 
@@ -2435,12 +2554,18 @@ function e2eObsoleteModal(e2eTestId) {
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
   document.getElementById('modal-confirm').onclick = async () => {
+    const btn = document.getElementById('modal-confirm');
+    const original = btn.innerHTML;
+    setBtnBusy(btn, 'Obsolète');
     const msg = document.getElementById('e2e-obsolete-msg');
     try {
       await api(`/api/e2e-tests/${encodeURIComponent(e2eTestId)}/obsolete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
       closeModal();
       refreshActive();
-    } catch (e) { msg.textContent = e.message || String(e); msg.className = 'msg error'; }
+    } catch (e) {
+      btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original;
+      msg.textContent = e.message || String(e); msg.className = 'msg error';
+    }
   };
 }
 
@@ -2464,14 +2589,20 @@ function e2eIncoherentModal(e2eTestId, onDone) {
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
   document.getElementById('modal-confirm').onclick = async () => {
+    const btn = document.getElementById('modal-confirm');
+    const original = btn.innerHTML;
     const msg = document.getElementById('e2e-incoherent-msg');
     const remarks = (document.getElementById('e2e-incoherent-remarks').value || '').trim();
     if (!remarks) { msg.textContent = 'Remarques obligatoires : décrivez l\'incohérence constatée.'; msg.className = 'msg error'; return; }
+    setBtnBusy(btn, 'Signalement');
     try {
       await api(`/api/e2e-tests/${encodeURIComponent(e2eTestId)}/incoherent`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ remarks }) });
       closeModal();
       if (typeof onDone === 'function') onDone(); else refreshActive();
-    } catch (e) { msg.textContent = e.message || String(e); msg.className = 'msg error'; }
+    } catch (e) {
+      btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original;
+      msg.textContent = e.message || String(e); msg.className = 'msg error';
+    }
   };
 }
 
@@ -2575,6 +2706,9 @@ async function e2eRegisterModal(projects, projOpts) {
     if (!project || !specFile || !scenario) { msg.textContent = 'project, specFile et scenario sont requis pour un test existant.'; msg.className = 'msg error'; return; }
     const params = collectE2EParams('er', msg);
     if (params === null) return;
+    const btn = ev.submitter || ev.target.querySelector('button[type="submit"]');
+    const original = btn ? btn.innerHTML : null;
+    setBtnBusy(btn, 'Enregistrement');
     const pid = document.getElementById('er-project').value;
     projRepoIds[pid] = selectedRepoIds();
     try {
@@ -2588,7 +2722,10 @@ async function e2eRegisterModal(projects, projOpts) {
       }) });
       closeModal();
       refreshActive();
-    } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+      msg.textContent = err.message; msg.className = 'msg error';
+    }
   });
 }
 
@@ -2678,6 +2815,9 @@ async function e2eCreateViaAgentModal(projects, projOpts) {
     const project = document.getElementById('ea-project').value;
     const title = document.getElementById('ea-title').value.trim();
     if (!project || !title) { msg.textContent = 'project et comportement (titre) sont requis.'; msg.className = 'msg error'; return; }
+    const btn = ev.submitter || ev.target.querySelector('button[type="submit"]');
+    const original = btn ? btn.innerHTML : null;
+    setBtnBusy(btn, 'Création');
     msg.textContent = 'Création de l\'entité + lancement de la session test-agent… (peut prendre quelques secondes).';
     msg.className = 'msg';
     const pid = document.getElementById('ea-project').value;
@@ -2700,7 +2840,10 @@ async function e2eCreateViaAgentModal(projects, projOpts) {
         alert((r.session && r.session.error) ? ('Test DRAFT créé mais session indisponible : ' + r.session.error) : 'Test créé (DRAFT).');
       }
       refreshActive();
-    } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+      msg.textContent = err.message || String(err); msg.className = 'msg error';
+    }
   });
 }
 
@@ -2895,7 +3038,7 @@ async function renderCadrages() {
   document.querySelectorAll('#pane-cadrages [data-rec-items]').forEach((b) => b.addEventListener('click', () => cadrageDetailItemsModal(b.dataset.recItems)));
   document.querySelectorAll('#pane-cadrages [data-rec-docs]').forEach((b) => b.addEventListener('click', () => cadrageDocsModal(b.dataset.recDocs)));
   document.querySelectorAll('#pane-cadrages [data-rec-detail]').forEach((b) => b.addEventListener('click', () => cadrageDetailModal(b.dataset.recDetail)));
-  document.querySelectorAll('#pane-cadrages [data-rec-del]').forEach((b) => b.addEventListener('click', () => deleteCadrageFlow(b.dataset.recDel, b.dataset.recTitle, refreshActive)));
+  document.querySelectorAll('#pane-cadrages [data-rec-del]').forEach((b) => b.addEventListener('click', () => deleteCadrageFlow(b.dataset.recDel, b.dataset.recTitle, refreshActive, b)));
   document.querySelectorAll('#pane-cadrages [data-batch-session]').forEach((b) => b.addEventListener('click', () => openBatchSession(b.dataset.batchSession, b)));
   document.querySelectorAll('#pane-cadrages [data-batch-detail]').forEach((b) => b.addEventListener('click', () => batchDetailModal(b.dataset.batchDetail)));
 }
@@ -3092,7 +3235,7 @@ async function renderRecettes() {
   document.querySelectorAll('#pane-recettes [data-eval-detail]').forEach((b) => b.addEventListener('click', () => recetteDetailModal(b.dataset.evalDetail)));
   document.querySelectorAll('#pane-recettes [data-eval-pieces]').forEach((b) => b.addEventListener('click', () => recettePiecesModal(b.dataset.evalPieces)));
   document.querySelectorAll('#pane-recettes [data-eval-session]').forEach((b) => b.addEventListener('click', () => openRecetteSession(b.dataset.evalSession, false, b)));
-  document.querySelectorAll('#pane-recettes [data-eval-finish]').forEach((b) => b.addEventListener('click', () => recetteFinishConfirm(b.dataset.evalFinish)));
+  document.querySelectorAll('#pane-recettes [data-eval-finish]').forEach((b) => b.addEventListener('click', () => recetteFinishConfirm(b.dataset.evalFinish, b)));
 }
 
 // Modale de CRÉATION : parcours évalué + fonctionnalités + règles + pièces.
@@ -3211,6 +3354,9 @@ async function recetteCreateModal() {
 
   document.getElementById('eval-modal-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = e.submitter || e.target.querySelector('button[type="submit"]');
+    const original = btn ? btn.innerHTML : null;
+    setBtnBusy(btn, 'Création');
     const msg = document.getElementById('eval-modal-msg');
     try {
       const proj = currentProject;
@@ -3245,7 +3391,10 @@ async function recetteCreateModal() {
       }) });
       closeModal();
       refreshActive();
-    } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+      msg.textContent = err.message; msg.className = 'msg error';
+    }
   });
 }
 
@@ -3420,15 +3569,25 @@ async function recetteDetailModal(recetteId) {
   }));
   document.querySelectorAll('#modal-backdrop [data-eval-item-del]').forEach((b) => b.addEventListener('click', async () => {
     if (!confirm('Retirer cet élément ?')) return;
+    const original = b.innerHTML;
+    setBtnBusy(b, 'Suppression');
     try { await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/items/${b.dataset.evalItemDel}`, { method: 'DELETE' }); recetteDetailModal(recetteId); }
-    catch (e) { alert('Échec : ' + (e.message || e)); }
+    catch (e) {
+      b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
+      alert('Échec : ' + (e.message || e));
+    }
   }));
   // Décision ADMIN (« à traiter » / « non retenu ») — route admin-only côté serveur.
   document.querySelectorAll('#modal-backdrop [data-eval-item-decide]').forEach((b) => b.addEventListener('click', async () => {
+    const original = b.innerHTML;
+    setBtnBusy(b, 'Décision');
     try {
       await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/items/${b.dataset.evalItemDecide}/decision`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision: b.dataset.decision }) });
       recetteDetailModal(recetteId);
-    } catch (e) { alert('Échec de la décision : ' + (e.message || e)); }
+    } catch (e) {
+      b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
+      alert('Échec de la décision : ' + (e.message || e));
+    }
   }));
   // Pièces portées par un élément (`itemId`).
   document.querySelectorAll('#modal-backdrop [data-eval-item-piece]').forEach((b) => b.addEventListener('click', () => recetteItemPieceModal(recetteId, Number(b.dataset.evalItemPiece))));
@@ -3442,11 +3601,14 @@ async function recetteDetailModal(recetteId) {
   const perfForm = document.getElementById('eval-perf-form');
   if (perfForm) perfForm.addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = e.submitter || e.target.querySelector('button[type="submit"]');
+    const original = btn ? btn.innerHTML : null;
     const msg = document.getElementById('epf-msg');
     const out = document.getElementById('epf-result');
     msg.textContent = ''; msg.className = 'msg';
     const targetUrl = document.getElementById('epf-url').value.trim();
     if (!targetUrl) { msg.textContent = 'URL préprod requise'; msg.className = 'msg error'; return; }
+    setBtnBusy(btn, 'Tests en cours');
     const pages = document.getElementById('epf-pages').value.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
     const routes = document.getElementById('epf-routes').value.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
     try {
@@ -3463,8 +3625,12 @@ async function recetteDetailModal(recetteId) {
       });
       msg.textContent = `Tests standard lancés (job ${r.jobId})…`;
       out.textContent = 'En cours — parcours + capture erreurs + stress. Cela peut prendre plusieurs minutes.';
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
       pollRecettePerfJob(recetteId, r.jobId, out, msg);
-    } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+      msg.textContent = err.message; msg.className = 'msg error';
+    }
   });
 }
 
@@ -3503,6 +3669,9 @@ function recetteItemModal(recetteId, item) {
   document.getElementById('modal-cancel').onclick = closeModal;
   document.getElementById('eval-item-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = e.submitter || e.target.querySelector('button[type="submit"]');
+    const original = btn ? btn.innerHTML : null;
+    setBtnBusy(btn, isEdit ? 'Enregistrement' : 'Ajout');
     const msg = document.getElementById('eval-item-msg');
     try {
       const body = {
@@ -3518,7 +3687,10 @@ function recetteItemModal(recetteId, item) {
         await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/items`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       }
       recetteDetailModal(recetteId);
-    } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+      msg.textContent = err.message; msg.className = 'msg error';
+    }
   });
 }
 
@@ -3581,12 +3753,20 @@ async function recetteItemPieceModal(recetteId, itemId) {
     modeSel.addEventListener('change', sync); sync();
   }
   document.querySelectorAll('#modal-backdrop [data-eval-item-doc-del]').forEach((b) => b.addEventListener('click', async () => {
+    const original = b.innerHTML;
+    setBtnBusy(b, 'Retrait');
     try { await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/documents/${b.dataset.evalItemDocDel}`, { method: 'DELETE' }); recetteItemPieceModal(recetteId, itemId); }
-    catch (e) { alert('Échec : ' + (e.message || e)); }
+    catch (e) {
+      b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
+      alert('Échec : ' + (e.message || e));
+    }
   }));
   const itemPieceForm = document.getElementById('eval-item-piece-form');
   if (itemPieceForm) itemPieceForm.addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = e.submitter || e.target.querySelector('button[type="submit"]');
+    const original = btn ? btn.innerHTML : null;
+    setBtnBusy(btn, 'Ajout');
     const msg = document.getElementById('eval-item-piece-msg');
     try {
       const mode = modeSel.value;
@@ -3605,7 +3785,10 @@ async function recetteItemPieceModal(recetteId, itemId) {
       }
       await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/documents`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       recetteItemPieceModal(recetteId, itemId);
-    } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+      msg.textContent = err.message; msg.className = 'msg error';
+    }
   });
 }
 
@@ -3665,12 +3848,20 @@ async function recettePiecesModal(recetteId) {
     modeSel.addEventListener('change', sync); sync();
   }
   document.querySelectorAll('#modal-backdrop [data-eval-doc-del]').forEach((b) => b.addEventListener('click', async () => {
+    const original = b.innerHTML;
+    setBtnBusy(b, 'Retrait');
     try { await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/documents/${b.dataset.evalDocDel}`, { method: 'DELETE' }); recettePiecesModal(recetteId); }
-    catch (e) { alert('Échec : ' + (e.message || e)); }
+    catch (e) {
+      b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
+      alert('Échec : ' + (e.message || e));
+    }
   }));
   const form = document.getElementById('eval-piece-form');
   if (form) form.addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = e.submitter || e.target.querySelector('button[type="submit"]');
+    const original = btn ? btn.innerHTML : null;
+    setBtnBusy(btn, 'Ajout');
     const msg = document.getElementById('eval-piece-msg');
     try {
       const mode = modeSel.value;
@@ -3689,17 +3880,25 @@ async function recettePiecesModal(recetteId) {
       }
       await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/documents`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       recettePiecesModal(recetteId);
-    } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+      msg.textContent = err.message; msg.className = 'msg error';
+    }
   });
 }
 
 // Clôture d'une recette évaluateur (aucune tâche créée).
-async function recetteFinishConfirm(recetteId) {
+async function recetteFinishConfirm(recetteId, btn) {
   if (!confirm('Terminer cette recette ? (aucune tâche ne sera créée)')) return;
+  const original = btn ? btn.innerHTML : null;
+  setBtnBusy(btn, 'Clôture');
   try {
     await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/finish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
     refreshActive();
-  } catch (e) { alert('Échec : ' + (e.message || e)); }
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+    alert('Échec : ' + (e.message || e));
+  }
 }
 
 // --- Batches d'orchestration (v0.9.41) : mode session unique / manuel ---------
@@ -3874,17 +4073,27 @@ async function cadrageDetailModal(cadrageId) {
       })();
     }
     document.querySelectorAll('#modal-backdrop [data-rec-task-del]').forEach((b) => b.addEventListener('click', async () => {
+      const original = b.innerHTML;
+      setBtnBusy(b, 'Retrait');
       try {
         await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}/tasks/${encodeURIComponent(b.dataset.recTaskDel)}`, { method: 'DELETE' });
         closeModal(); cadrageDetailModal(cadrageId);
-      } catch (e) { alert('Échec : ' + (e.message || e)); }
+      } catch (e) {
+        b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
+        alert('Échec : ' + (e.message || e));
+      }
     }));
     document.querySelectorAll('#modal-backdrop [data-rec-item-del]').forEach((b) => b.addEventListener('click', async () => {
       if (!confirm(`Retirer cet ${T.element} ? (utilisé pour la fusion/consolidation d'éléments)`)) return;
+      const original = b.innerHTML;
+      setBtnBusy(b, 'Retrait');
       try {
         await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}/items/${b.dataset.recItemDel}`, { method: 'DELETE' });
         closeModal(); cadrageDetailModal(cadrageId);
-      } catch (e) { alert('Échec : ' + (e.message || e)); }
+      } catch (e) {
+        b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
+        alert('Échec : ' + (e.message || e));
+      }
     }));
     // Reprise d'un ÉLÉMENT DE CADRAGE ÉVALUATEUR « à traiter » (sélection en
     // contexte) — traçage « repris par le cadrage X ».
@@ -3908,10 +4117,15 @@ async function cadrageDetailModal(cadrageId) {
       })();
     }
     document.querySelectorAll('#modal-backdrop [data-rec-eval-item-del]').forEach((b) => b.addEventListener('click', async () => {
+      const original = b.innerHTML;
+      setBtnBusy(b, 'Retrait');
       try {
         await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}/recette-items/${b.dataset.recEvalItemDel}`, { method: 'DELETE' });
         closeModal(); cadrageDetailModal(cadrageId);
-      } catch (e) { alert('Échec : ' + (e.message || e)); }
+      } catch (e) {
+        b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
+        alert('Échec : ' + (e.message || e));
+      }
     }));
   }
 }
@@ -3943,10 +4157,15 @@ async function cadrageDocsModal(cadrageId) {
   document.getElementById('modal-cancel').onclick = closeModal;
   document.getElementById('rec-doc-add').onclick = () => cadrageDocAddModal(cadrageId);
   document.querySelectorAll('#modal-backdrop [data-doc-del]').forEach((b) => b.addEventListener('click', async () => {
+    const original = b.innerHTML;
+    setBtnBusy(b, 'Suppression');
     try {
       await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}/documents/${b.dataset.docDel}`, { method: 'DELETE' });
       closeModal(); cadrageDocsModal(cadrageId);
-    } catch (e) { alert('Échec : ' + (e.message || e)); }
+    } catch (e) {
+      b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
+      alert('Échec : ' + (e.message || e));
+    }
   }));
   document.querySelectorAll('#modal-backdrop [data-doc-view]').forEach((b) => b.addEventListener('click', async () => {
     try {
@@ -3991,6 +4210,9 @@ async function cadrageDocAddModal(cadrageId) {
   });
   document.getElementById('rec-doc-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = e.submitter || e.target.querySelector('button[type="submit"]');
+    const original = btn ? btn.innerHTML : null;
+    setBtnBusy(btn, 'Ajout');
     const msg = document.getElementById('rec-doc-msg');
     try {
       const mode = modeSel.value;
@@ -4007,10 +4229,14 @@ async function cadrageDocAddModal(cadrageId) {
       }
       await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}/documents`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       closeModal();
-      cadrageDocsModal(cadrageId);
-    } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
+      refreshActive();
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+      msg.textContent = err.message; msg.className = 'msg error';
+    }
   });
 }
+
 
 async function cadrageCreateModal() {
   const T = cadrageTerms();
@@ -4206,6 +4432,9 @@ async function cadrageCreateModal() {
 
   document.getElementById('recette-modal-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = e.submitter || e.target.querySelector('button[type="submit"]');
+    const original = btn ? btn.innerHTML : null;
+    setBtnBusy(btn, 'Création');
     const msg = document.getElementById('recette-modal-msg');
     try {
       const proj = currentProject;
@@ -4256,14 +4485,16 @@ async function cadrageCreateModal() {
         msg.textContent = `Cadrage ${createdId} créé, mais ${linkErrors.length} élément(s) non repris : ${linkErrors.join(' ; ')}`;
         msg.className = 'msg error';
         // Empêche une double création si le formulaire est renvoyé.
-        const submitBtn = e.target.querySelector('button[type="submit"]');
-        if (submitBtn) submitBtn.disabled = true;
+        if (btn) btn.disabled = true;
         refreshActive();
         return;
       }
       closeModal();
       refreshActive();
-    } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+      msg.textContent = err.message; msg.className = 'msg error';
+    }
   });
 }
 
@@ -4456,6 +4687,8 @@ async function cadrageItemsModal(cadrageId, mode = 'finish') {
       b.addEventListener('click', async () => {
         const reason = prompt('Raison de la levée (tracée, obligatoire) :');
         if (!reason || !reason.trim()) return;
+        const original = b.innerHTML;
+        setBtnBusy(b, 'Levée');
         try {
           await api('/api/adr-vigilances/' + encodeURIComponent(b.dataset.vigId) + '/resolve', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -4472,7 +4705,10 @@ async function cadrageItemsModal(cadrageId, mode = 'finish') {
             if (confirmBtn) confirmBtn.disabled = false;
             if (noTasksBtn) noTasksBtn.disabled = false;
           }
-        } catch (e) { alert('Échec de la levée : ' + (e.message || e)); }
+        } catch (e) {
+          b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
+          alert('Échec de la levée : ' + (e.message || e));
+        }
       });
     });
   };
@@ -4743,11 +4979,15 @@ async function openArchiveConfirm(taskId) {
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
   document.getElementById('modal-confirm').onclick = async () => {
+    const btn = document.getElementById('modal-confirm');
+    const original = btn.innerHTML;
+    setBtnBusy(btn, 'Archivage');
     try {
       await api(`/api/tasks/${encodeURIComponent(taskId)}/archive`, { method: 'POST' });
       closeModal();
       refreshActive();
     } catch (e) {
+      btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original;
       alert('Échec de l\'archivage : ' + (e.message || e));
     }
   };
@@ -4768,11 +5008,15 @@ function openRestoreConfirm(taskId, archive) {
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
   document.getElementById('modal-confirm').onclick = async () => {
+    const btn = document.getElementById('modal-confirm');
+    const original = btn.innerHTML;
+    setBtnBusy(btn, 'Restauration');
     try {
       await api(`/api/tasks/${encodeURIComponent(taskId)}/restore`, { method: 'POST' });
       closeModal();
       refreshActive();
     } catch (e) {
+      btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original;
       alert('Échec de la restauration : ' + (e.message || e));
     }
   };
@@ -4799,11 +5043,14 @@ function openDeleteConfirm(taskId, archive) {
   document.getElementById('modal-cancel').onclick = closeModal;
   btn.onclick = async () => {
     if (input.value.trim() !== taskId) return;
+    const original = btn.innerHTML;
+    setBtnBusy(btn, 'Suppression');
     try {
       await api(`/api/tasks/${encodeURIComponent(taskId)}/delete`, { method: 'POST' });
       closeModal();
       refreshActive();
     } catch (e) {
+      btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original;
       alert('Échec de la suppression : ' + (e.message || e));
     }
   };
@@ -5135,10 +5382,13 @@ function workspaceCreateModal() {
       </div>
     </div>`);
   document.getElementById('ws-create-go').addEventListener('click', async () => {
+    const btn = document.getElementById('ws-create-go');
+    const original = btn.innerHTML;
     const msg = document.getElementById('ws-create-msg');
     const org = document.getElementById('ws-create-org').value;
     const name = document.getElementById('ws-create-name').value.trim();
     if (!name) { msg.textContent = 'Nom requis'; return; }
+    setBtnBusy(btn, 'Création');
     const body = {
       name,
       org,
@@ -5153,7 +5403,10 @@ function workspaceCreateModal() {
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error((d && d.error) || `HTTP ${r.status}`);
       msg.textContent = ''; closeModal(); renderWorkspaces();
-    } catch (e) { msg.textContent = e.message || String(e); msg.className = 'msg error'; }
+    } catch (e) {
+      btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original;
+      msg.textContent = e.message || String(e); msg.className = 'msg error';
+    }
   });
 }
 
@@ -5163,7 +5416,8 @@ async function restartAllOpencodeSessions() {
   if (!confirm('Redémarrer toutes les sessions opencode ?\nChaque instance systemd opencode@<user>.service (et opencode.service) sera relancée. Les sessions en cours seront interrompues.')) return;
   const btn = document.getElementById('eco-restart-all');
   const msg = document.getElementById('eco-restart-msg');
-  if (btn) { btn.disabled = true; btn.textContent = 'redémarrage…'; }
+  const prevHtml = btn ? btn.innerHTML : '';
+  setBtnBusy(btn, 'Redémarrage');
   if (msg) { msg.textContent = ''; msg.className = ''; }
   try {
     const r = await fetch('/api/opencode/restart-all', { method: 'POST' });
@@ -5178,7 +5432,7 @@ async function restartAllOpencodeSessions() {
   } catch (e) {
     if (msg) { msg.textContent = e.message || String(e); msg.className = 'msg error'; }
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Redémarrer toutes les sessions opencode'; }
+    if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = prevHtml; }
   }
 }
 
@@ -5203,13 +5457,19 @@ async function editAgentModelModal(name, currentModel) {
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
   document.getElementById('modal-confirm').onclick = async () => {
+    const btn = document.getElementById('modal-confirm');
+    const original = btn.innerHTML;
+    setBtnBusy(btn, 'Enregistrement');
     const model = document.getElementById('agent-model-select').value;
     const msg = document.getElementById('model-msg');
     try {
       await api(`/api/agents/${encodeURIComponent(name)}/model`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model }) });
       closeModal();
       refreshActive();
-    } catch (e) { msg.textContent = e.message; msg.className = 'msg error'; }
+    } catch (e) {
+      btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original;
+      msg.textContent = e.message; msg.className = 'msg error';
+    }
   };
 }
 
@@ -5430,17 +5690,28 @@ async function projectDetailModal(projectId, tab = 'projet') {
     const pForm = document.getElementById('pd-projet-form');
     if (pForm) pForm.addEventListener('submit', async (e) => {
       e.preventDefault();
+      const btn = e.submitter || e.target.querySelector('button[type="submit"]');
+      const original = btn ? btn.innerHTML : null;
+      setBtnBusy(btn, 'Enregistrement');
       try {
         await api('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: p0.id, name: document.getElementById('pd-p-name').value.trim() }) });
         projects = ((await api('/api/projects')).projects || []);
         msg('Projet enregistré.'); render();
-      } catch (err) { msg(err.message || String(err), false); }
+      } catch (err) {
+        if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+        msg(err.message || String(err), false);
+      }
     });
     const pDel = document.getElementById('pd-p-del');
     if (pDel) pDel.addEventListener('click', async () => {
       if (!confirm(`Supprimer le projet ${p0.id} ? Les tâches conservent leur référence.`)) return;
+      const original = pDel.innerHTML;
+      setBtnBusy(pDel, 'Suppression');
       try { await api(`/api/projects/${encodeURIComponent(p0.id)}`, { method: 'DELETE' }); closeModal(); refreshActive(); }
-      catch (err) { msg(err.message || String(err), false); }
+      catch (err) {
+        pDel.disabled = false; pDel.classList.remove('ws-busy'); pDel.innerHTML = original;
+        msg(err.message || String(err), false);
+      }
     });
     // REPOS : associer / retirer / éditer / créer.
     const linkGo = document.getElementById('pd-link-go');
@@ -5449,6 +5720,8 @@ async function projectDetailModal(projectId, tab = 'projet') {
       const role = document.getElementById('pd-link-role').value.trim() || undefined;
       const gitTokenIdEl = document.getElementById('pd-link-git-token');
       const gitTokenId = gitTokenIdEl && gitTokenIdEl.value.trim() || undefined;
+      const original = linkGo.innerHTML;
+      setBtnBusy(linkGo, 'Association');
       try {
         await api(`/api/projects/${encodeURIComponent(p0.id)}/repos/${encodeURIComponent(repoId)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role, gitTokenId }) });
         await refreshDetailData();
@@ -5457,14 +5730,22 @@ async function projectDetailModal(projectId, tab = 'projet') {
           msg('Repo associé — aucun workspace Coder : provisionnement possible.');
           if (IS_ADMIN) provisionRepoModal(rr, { projectId: p0.id, gitTokenId, onProvisioned: async (pr) => { await refreshDetailData(); render(); msg('Repo associé et workspace provisionné : ' + pr.workspace); } });
         } else { msg('Repo associé.'); render(); }
-      } catch (err) { msg(err.message || String(err), false); }
+      } catch (err) {
+        linkGo.disabled = false; linkGo.classList.remove('ws-busy'); linkGo.innerHTML = original;
+        msg(err.message || String(err), false);
+      }
     });
     panel.querySelectorAll('[data-pd-unlink-repo]').forEach((b) => b.addEventListener('click', async () => {
       if (!confirm(`Retirer le repo ${b.dataset.pdUnlinkRepo} du projet ? Le repo reste enregistré.`)) return;
+      const original = b.innerHTML;
+      setBtnBusy(b, 'Retrait');
       try {
         await api(`/api/projects/${encodeURIComponent(p0.id)}/repos/${encodeURIComponent(b.dataset.pdUnlinkRepo)}`, { method: 'DELETE' });
         await refreshDetailData(); msg('Repo retiré.'); render();
-      } catch (err) { msg(err.message || String(err), false); }
+      } catch (err) {
+        b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
+        msg(err.message || String(err), false);
+      }
     }));
     panel.querySelectorAll('[data-pd-edit-repo]').forEach((b) => b.addEventListener('click', () => editRepoInline(b.dataset.pdEditRepo)));
     panel.querySelectorAll('[data-pd-provision-repo]').forEach((b) => b.addEventListener('click', () => {
@@ -5474,6 +5755,9 @@ async function projectDetailModal(projectId, tab = 'projet') {
     const rForm = document.getElementById('pd-repo-form');
     if (rForm) rForm.addEventListener('submit', async (e) => {
       e.preventDefault();
+      const btn = e.submitter || e.target.querySelector('button[type="submit"]');
+      const original = btn ? btn.innerHTML : null;
+      setBtnBusy(btn, 'Création');
       try {
         const body = {
           id: document.getElementById('pd-r-id').value.trim(),
@@ -5494,7 +5778,10 @@ async function projectDetailModal(projectId, tab = 'projet') {
           if (IS_ADMIN) provisionRepoModal(nrr, { onProvisioned: async (pr) => { await refreshDetailData(); render(); msg('Repo créé, associé et workspace provisionné : ' + pr.workspace); } });
           else render();
         } else { msg('Repo créé et associé.'); render(); }
-      } catch (err) { msg(err.message || String(err), false); }
+      } catch (err) {
+        if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+        msg(err.message || String(err), false);
+      }
     });
     // PIÈCES CLIENT : mode + ajout / suppression / téléchargement.
     const pcMode = document.getElementById('pd-pc-mode');
@@ -5512,6 +5799,9 @@ async function projectDetailModal(projectId, tab = 'projet') {
     const pcForm = document.getElementById('pd-piece-form');
     if (pcForm) pcForm.addEventListener('submit', async (e) => {
       e.preventDefault();
+      const btn = e.submitter || e.target.querySelector('button[type="submit"]');
+      const original = btn ? btn.innerHTML : null;
+      setBtnBusy(btn, 'Ajout');
       try {
         const body = {
           projectId: p0.id,
@@ -5537,12 +5827,20 @@ async function projectDetailModal(projectId, tab = 'projet') {
         }
         await api('/api/pieces', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         await loadPieces(); msg('Pièce ajoutée.'); render();
-      } catch (err) { msg(err.message || String(err), false); }
+      } catch (err) {
+        if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+        msg(err.message || String(err), false);
+      }
     });
     panel.querySelectorAll('[data-piece-del]').forEach((b) => b.addEventListener('click', async () => {
       if (!confirm('Supprimer cette pièce client ?')) return;
+      const original = b.innerHTML;
+      setBtnBusy(b, 'Suppression');
       try { await api(`/api/pieces/${encodeURIComponent(b.dataset.pieceDel)}`, { method: 'DELETE' }); await loadPieces(); msg('Pièce supprimée.'); render(); }
-      catch (err) { msg(err.message || String(err), false); }
+      catch (err) {
+        b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
+        msg(err.message || String(err), false);
+      }
     }));
     panel.querySelectorAll('[data-piece-dl]').forEach((b) => b.addEventListener('click', () => {
       window.open(`/api/pieces/file?path=${encodeURIComponent(b.dataset.pieceDl)}`, '_blank');
@@ -5574,6 +5872,9 @@ async function projectDetailModal(projectId, tab = 'projet') {
     document.getElementById('pe-cancel').onclick = () => render();
     document.getElementById('pd-edit-repo-form').addEventListener('submit', async (e) => {
       e.preventDefault();
+      const btn = e.submitter || e.target.querySelector('button[type="submit"]');
+      const original = btn ? btn.innerHTML : null;
+      setBtnBusy(btn, 'Enregistrement');
       try {
         await api('/api/repos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
           id: r.id,
@@ -5588,7 +5889,10 @@ async function projectDetailModal(projectId, tab = 'projet') {
           e2eBaseUrl: document.getElementById('pe-e2e-url').value.trim() || undefined,
         }) });
         await refreshDetailData(); render();
-      } catch (err) { msg(err.message || String(err), false); }
+      } catch (err) {
+        if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+        msg(err.message || String(err), false);
+      }
     });
   };
 
@@ -5837,8 +6141,13 @@ function bindAdrTable(rootEl, ctx = {}) {
   root.querySelectorAll(`[data-${prefix}-view]`).forEach((b) => b.addEventListener('click', () => viewRefDoc(attr(b, 'view'))));
   root.querySelectorAll(`[data-${prefix}-del]`).forEach((b) => b.addEventListener('click', async () => {
     if (!confirm('Supprimer cette ADR ?')) return;
+    const original = b.innerHTML;
+    setBtnBusy(b, 'Suppression');
     try { await api(`/api/docs/${encodeURIComponent(attr(b, 'del'))}`, { method: 'DELETE' }); await onChange(); }
-    catch (err) { alert('Suppression impossible : ' + (err.message || err)); }
+    catch (err) {
+      b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
+      alert('Suppression impossible : ' + (err.message || err));
+    }
   }));
 
   // Pièces jointes : ajout / retrait / lecture d'un document du registre.
@@ -5847,10 +6156,15 @@ function bindAdrTable(rootEl, ctx = {}) {
   }));
   root.querySelectorAll(`[data-${prefix}-att-del]`).forEach((b) => b.addEventListener('click', async () => {
     if (!confirm('Retirer cette pièce jointe ?')) return;
+    const original = b.innerHTML;
+    setBtnBusy(b, 'Retrait');
     try {
       await api(`/api/docs/${encodeURIComponent(attr(b, 'att-doc'))}/attachments/${encodeURIComponent(attr(b, 'att-del'))}`, { method: 'DELETE' });
       await onChange();
-    } catch (err) { alert('Retrait impossible : ' + (err.message || err)); }
+    } catch (err) {
+      b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
+      alert('Retrait impossible : ' + (err.message || err));
+    }
   }));
   root.querySelectorAll(`[data-${prefix}-att-view]`).forEach((b) => b.addEventListener('click', (e) => {
     e.preventDefault();
@@ -5992,6 +6306,9 @@ function sprintFormModal(pieces, onSaved) {
   document.getElementById('sp-start').addEventListener('change', syncEnd);
   document.getElementById('sp-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = e.submitter || e.target.querySelector('button[type="submit"]');
+    const original = btn ? btn.innerHTML : null;
+    setBtnBusy(btn, 'Création');
     try {
       const body = {
         projectId: currentProject,
@@ -6005,7 +6322,10 @@ function sprintFormModal(pieces, onSaved) {
       await api('/api/sprints', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       closeModal();
       if (typeof onSaved === 'function') await onSaved();
-    } catch (err) { msg(err.message || String(err), false); }
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+      msg(err.message || String(err), false);
+    }
   });
 }
 
@@ -6027,9 +6347,12 @@ function sprintPiecesModal(sprintId, pieces, onSaved) {
   </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
   document.getElementById('sp-att-go').onclick = async () => {
+    const btn = document.getElementById('sp-att-go');
+    const original = btn.innerHTML;
     const msg = document.getElementById('sp-att-msg');
     const pieceIds = [...document.querySelectorAll('.sp-att-piece:checked')].map((c) => c.value);
     if (!pieceIds.length) { msg.textContent = 'Sélectionnez au moins une pièce.'; msg.className = 'msg error'; return; }
+    setBtnBusy(btn, 'Rattachement');
     try {
       await api(`/api/sprints/${encodeURIComponent(sprintId)}/pieces`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -6037,7 +6360,10 @@ function sprintPiecesModal(sprintId, pieces, onSaved) {
       });
       closeModal();
       if (typeof onSaved === 'function') await onSaved();
-    } catch (e) { msg.textContent = e.message || String(e); msg.className = 'msg error'; }
+    } catch (e) {
+      btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original;
+      msg.textContent = e.message || String(e); msg.className = 'msg error';
+    }
   };
 }
 
@@ -6110,27 +6436,42 @@ async function renderSprints() {
   pane.querySelectorAll('[data-sp-session]').forEach((b) => b.addEventListener('click', () => openSprintSession(b.dataset.spSession, false, b)));
   pane.querySelectorAll('[data-sp-close]').forEach((b) => b.addEventListener('click', async () => {
     if (!confirm('Clôturer ce sprint ? Les éléments suivants seront marqués émergents (traçage, non bloquant).')) return;
+    const original = b.innerHTML;
+    setBtnBusy(b, 'Clôture');
     try {
       await api(`/api/sprints/${encodeURIComponent(b.dataset.spClose)}/close`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
       await renderSprints();
-    } catch (e) { alert('Clôture impossible : ' + (e.message || e)); }
+    } catch (e) {
+      b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
+      alert('Clôture impossible : ' + (e.message || e));
+    }
   }));
   pane.querySelectorAll('[data-sp-reopen]').forEach((b) => b.addEventListener('click', async () => {
     if (!confirm('Reprendre (rouvrir) ce sprint ? La garde d\'émergence est suspendue.')) return;
+    const original = b.innerHTML;
+    setBtnBusy(b, 'Reprise');
     try {
       await api(`/api/sprints/${encodeURIComponent(b.dataset.spReopen)}/reopen`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
       await renderSprints();
-    } catch (e) { alert('Reprise impossible : ' + (e.message || e)); }
+    } catch (e) {
+      b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
+      alert('Reprise impossible : ' + (e.message || e));
+    }
   }));
   // Suppression d'un sprint (bouton masqué pour le sprint par défaut) :
   // confirmation → DELETE ; le registre refuse (409) le sprint par défaut ou
   // portant tâches/cadrages → message explicite affiché tel quel.
   pane.querySelectorAll('[data-sp-del]').forEach((b) => b.addEventListener('click', async () => {
     if (!confirm('Supprimer ce sprint ? Ses liens (fonctionnalités, règles, pièces) seront détachés ; les entités restent au projet.')) return;
+    const original = b.innerHTML;
+    setBtnBusy(b, 'Suppression');
     try {
       await api(`/api/sprints/${encodeURIComponent(b.dataset.spDel)}`, { method: 'DELETE' });
       await renderSprints();
-    } catch (e) { alert('Suppression impossible : ' + ((e && e.message) || e)); }
+    } catch (e) {
+      b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
+      alert('Suppression impossible : ' + ((e && e.message) || e));
+    }
   }));
 }
 
@@ -6284,6 +6625,9 @@ function linkModal(preset, entityId, refs, onSaved) {
   fillTargets();
   document.getElementById('lk-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = e.submitter || e.target.querySelector('button[type="submit"]');
+    const original = btn ? btn.innerHTML : null;
+    setBtnBusy(btn, 'Liaison');
     const msg = document.getElementById('lk-msg');
     const kind = document.getElementById('lk-kind').value;
     const target = document.getElementById('lk-target').value.trim();
@@ -6294,7 +6638,10 @@ function linkModal(preset, entityId, refs, onSaved) {
       await api('/api/links', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, a, b }) });
       closeModal();
       if (typeof onSaved === 'function') await onSaved();
-    } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+      msg.textContent = err.message || String(err); msg.className = 'msg error';
+    }
   });
 }
 
@@ -6353,6 +6700,9 @@ function featureFormModal(feature, pieces, onSaved, opts = {}) {
   document.getElementById('modal-cancel').onclick = closeModal;
   document.getElementById('feat-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = e.submitter || e.target.querySelector('button[type="submit"]');
+    const original = btn ? btn.innerHTML : null;
+    setBtnBusy(btn, isEdit ? 'Enregistrement' : 'Création');
     const msg = document.getElementById('feat-msg');
     const impl = document.getElementById('feat-impl').value;
     const implNote = document.getElementById('feat-impl-note').value.trim();
@@ -6361,6 +6711,7 @@ function featureFormModal(feature, pieces, onSaved, opts = {}) {
     const devStatusSource = document.getElementById('feat-dev-source').value;
     const devStatusNote = document.getElementById('feat-dev-note').value.trim();
     if (devStatus && !devStatusSource) {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
       msg.textContent = 'Statut de développement : la source est obligatoire (analyse code / évaluateur / agent / humain).';
       msg.className = 'msg error';
       return;
@@ -6403,7 +6754,10 @@ function featureFormModal(feature, pieces, onSaved, opts = {}) {
       }
       closeModal();
       if (typeof onSaved === 'function') await onSaved(result);
-    } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+      msg.textContent = err.message || String(err); msg.className = 'msg error';
+    }
   });
 }
 
@@ -6465,6 +6819,9 @@ function ruleFormModal(rule, pieces, onSaved, projectRoles, opts = {}) {
   syncRoleDisabled();
   document.getElementById('rule-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = e.submitter || e.target.querySelector('button[type="submit"]');
+    const original = btn ? btn.innerHTML : null;
+    setBtnBusy(btn, isEdit ? 'Enregistrement' : 'Création');
     const msg = document.getElementById('rule-msg');
     const impl = document.getElementById('rule-impl').value;
     const implNote = document.getElementById('rule-impl-note').value.trim();
@@ -6475,6 +6832,7 @@ function ruleFormModal(rule, pieces, onSaved, projectRoles, opts = {}) {
     const roleGlobal = !!(document.getElementById('rule-role-global') || {}).checked;
     const roles = roleGlobal ? [] : Array.from(document.querySelectorAll('.rule-role-cb:checked')).map((c) => c.value);
     if (!roleGlobal && !roles.length) {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
       msg.textContent = 'Association requise : sélectionnez au moins 1 rôle ou cochez « Rôle global (tous les rôles) ».';
       msg.className = 'msg error';
       return;
@@ -6514,7 +6872,10 @@ function ruleFormModal(rule, pieces, onSaved, projectRoles, opts = {}) {
       }
       closeModal();
       if (typeof onSaved === 'function') await onSaved(result);
-    } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+      msg.textContent = err.message || String(err); msg.className = 'msg error';
+    }
   });
 }
 
@@ -6680,6 +7041,9 @@ function frQualifyModal(kind, id, current, onSaved) {
   document.getElementById('modal-cancel').onclick = closeModal;
   document.getElementById('frq-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = e.submitter || e.target.querySelector('button[type="submit"]');
+    const original = btn ? btn.innerHTML : null;
+    setBtnBusy(btn, 'Enregistrement');
     const msg = document.getElementById('frq-msg');
     const val = document.getElementById('frq-impl').value;
     const note = document.getElementById('frq-note').value.trim();
@@ -6690,7 +7054,10 @@ function frQualifyModal(kind, id, current, onSaved) {
       await api(path, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       closeModal();
       if (typeof onSaved === 'function') await onSaved();
-    } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+      msg.textContent = err.message || String(err); msg.className = 'msg error';
+    }
   });
 }
 
@@ -6774,19 +7141,26 @@ function frFilterRules(rules, filter, linkIndex) {
 // Si le registre refuse (`[ADR_LAST_FEATURE]` : l'ADR perdrait sa dernière
 // fonctionnalité), une 2ᵉ confirmation propose la cascade ADR
 // (`?cascadeAdrs=1`). Aucune suppression silencieuse d'ADR.
-async function deleteFeatureFlow(featureId, onDone) {
+async function deleteFeatureFlow(featureId, onDone, btn) {
   if (!featureId) return;
   if (!confirm('Supprimer cette fonctionnalité ? Ses liens (règles, Gherkin, ADR, sprints, tâches, cadrages) seront détachés.')) return;
+  const original = btn ? btn.innerHTML : null;
   const del = (cascade) => api(`/api/features/${encodeURIComponent(featureId)}${cascade ? '?cascadeAdrs=1' : ''}`, { method: 'DELETE' });
+  setBtnBusy(btn, 'Suppression');
   try {
     await del(false);
     if (typeof onDone === 'function') await onDone();
   } catch (e) {
+    if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
     const msg = String((e && e.message) || e);
     if (msg.includes('ADR_LAST_FEATURE')) {
       if (!confirm(`${msg}\n\nSupprimer AUSSI l'ADR (cascade) ? Cette action est définitive.`)) return;
+      if (btn) setBtnBusy(btn, 'Suppression');
       try { await del(true); if (typeof onDone === 'function') await onDone(); }
-      catch (e2) { alert('Suppression impossible : ' + ((e2 && e2.message) || e2)); }
+      catch (e2) {
+        if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+        alert('Suppression impossible : ' + ((e2 && e2.message) || e2));
+      }
     } else {
       alert('Suppression impossible : ' + msg);
     }
@@ -6795,13 +7169,18 @@ async function deleteFeatureFlow(featureId, onDone) {
 
 // Suppression d'une RÈGLE MÉTIER depuis le panneau : confirmation → DELETE
 // (liens `fonctionnalite_regles` / `sprint_regles` détachés en CASCADE).
-async function deleteRuleFlow(ruleId, onDone) {
+async function deleteRuleFlow(ruleId, onDone, btn) {
   if (!ruleId) return;
   if (!confirm('Supprimer cette règle métier ? Ses liens (fonctionnalités, sprints) seront détachés.')) return;
+  const original = btn ? btn.innerHTML : null;
+  setBtnBusy(btn, 'Suppression');
   try {
     await api(`/api/rules/${encodeURIComponent(ruleId)}`, { method: 'DELETE' });
     if (typeof onDone === 'function') await onDone();
-  } catch (e) { alert('Suppression impossible : ' + ((e && e.message) || e)); }
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+    alert('Suppression impossible : ' + ((e && e.message) || e));
+  }
 }
 
 // Suppression d'une CADRAGE ENTIÈRE (cadrage technique) depuis le panneau —
@@ -6810,15 +7189,20 @@ async function deleteRuleFlow(ruleId, onDone) {
 // tâches, documents/artefacts, points de vigilance ADR liés, liens
 // sprint/fonctionnalité/règle/ADR/projet, signaux de cardinalité ouverts). Les
 // tâches et éléments de recette évaluateur rattachés RESTENT au registre.
-async function deleteCadrageFlow(cadrageId, title, onDone) {
+async function deleteCadrageFlow(cadrageId, title, onDone, btn) {
   if (!cadrageId) return;
   const label = title || cadrageId;
   if (!confirm(`Supprimer DÉFINITIVEMENT ${label} ?\n\nToute sa famille sera nettoyée (éléments, liens de tâches, documents, points de vigilance ADR, liens sprint/fonctionnalité/règle/ADR). Les tâches et éléments de recette évaluateur rattachés restent au registre.`)) return;
   if (!confirm(`Confirmer la suppression IRRÉVERSIBLE de ${cadrageId} ?`)) return;
+  const original = btn ? btn.innerHTML : null;
+  setBtnBusy(btn, 'Suppression');
   try {
     await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}`, { method: 'DELETE' });
     if (typeof onDone === 'function') await onDone();
-  } catch (e) { alert('Suppression impossible : ' + ((e && e.message) || e)); }
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+    alert('Suppression impossible : ' + ((e && e.message) || e));
+  }
 }
 
 // Table ISOLÉE du sous-onglet Fonctionnalités (US-xxx) — Ref (badge émergent),
@@ -6948,7 +7332,7 @@ function renderFrFeaturePanel(features, refs, pieces, linkIndex, sprints) {
     panel.querySelectorAll('[data-fr-edit]').forEach((b) => b.addEventListener('click', () => featureFormModal(features.find((x) => x.id === b.dataset.frEdit), pieces, renderFeaturesRules)));
     panel.querySelectorAll('[data-fr-detail]').forEach((b) => b.addEventListener('click', () => featureDetailModal(b.dataset.frDetail)));
     panel.querySelectorAll('[data-fr-link]').forEach((b) => b.addEventListener('click', () => linkModal(LINK_PRESETS.feature, b.dataset.frLink, refs, renderFeaturesRules)));
-    panel.querySelectorAll('[data-fr-del]').forEach((b) => b.addEventListener('click', () => deleteFeatureFlow(b.dataset.frDel, renderFeaturesRules)));
+    panel.querySelectorAll('[data-fr-del]').forEach((b) => b.addEventListener('click', () => deleteFeatureFlow(b.dataset.frDel, renderFeaturesRules, b)));
     // Liens E2E cliquables → détail du test E2E (entité de 1er niveau).
     panel.querySelectorAll('[data-fr-e2e]').forEach((b) => b.addEventListener('click', () => e2eDetailModal(b.dataset.frE2e)));
   };
@@ -7039,7 +7423,7 @@ function renderFrRulePanel(rules, refs, pieces, linkIndex, sprints, projectRoles
     panel.querySelectorAll('[data-rule-edit]').forEach((b) => b.addEventListener('click', () => ruleFormModal(rules.find((x) => x.id === b.dataset.ruleEdit), pieces, renderFeaturesRules, roles)));
     panel.querySelectorAll('[data-rule-detail]').forEach((b) => b.addEventListener('click', () => ruleDetailModal(b.dataset.ruleDetail)));
     panel.querySelectorAll('[data-rule-link]').forEach((b) => b.addEventListener('click', () => linkModal(LINK_PRESETS.rule, b.dataset.ruleLink, refs, renderFeaturesRules)));
-    panel.querySelectorAll('[data-rule-del]').forEach((b) => b.addEventListener('click', () => deleteRuleFlow(b.dataset.ruleDel, renderFeaturesRules)));
+    panel.querySelectorAll('[data-rule-del]').forEach((b) => b.addEventListener('click', () => deleteRuleFlow(b.dataset.ruleDel, renderFeaturesRules, b)));
   };
   const rerender = () => {
     frRuleFilters = {
@@ -7280,11 +7664,16 @@ async function cardinalitySignalsModal() {
   body.querySelectorAll('[data-card-resolve]').forEach((b) => b.addEventListener('click', async () => {
     const resolution = prompt('Résolution (raison tracée obligatoire) :');
     if (!resolution || !resolution.trim()) return;
+    const original = b.innerHTML;
+    setBtnBusy(b, 'Clôture');
     try {
       await api(`/api/cardinality/signals/${encodeURIComponent(b.dataset.cardResolve)}/resolve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ resolution: resolution.trim() }) });
       cardinalityCache = { projectId: null, at: 0, rep: null, promise: null };
       await cardinalitySignalsModal();
-    } catch (e) { alert('Clôture impossible : ' + (e.message || e)); }
+    } catch (e) {
+      b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
+      alert('Clôture impossible : ' + (e.message || e));
+    }
   }));
 }
 
@@ -7659,6 +8048,9 @@ function adrFormModal(p, repos, adr, onSaved) {
     modeEl.addEventListener('change', sync); sync();
   }
   document.getElementById('adr-save').onclick = async () => {
+    const btn = document.getElementById('adr-save');
+    const original = btn.innerHTML;
+    setBtnBusy(btn, isEdit ? 'Enregistrement' : 'Création');
     try {
       const body = {
         kind: 'adr-tech',
@@ -7696,7 +8088,10 @@ function adrFormModal(p, repos, adr, onSaved) {
       }
       closeModal();
       if (typeof onSaved === 'function') await onSaved();
-    } catch (e) { msg(e.message || String(e), false); }
+    } catch (e) {
+      btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original;
+      msg(e.message || String(e), false);
+    }
   };
 }
 
@@ -7752,6 +8147,9 @@ function adrAttachmentModal(docId, docs, onSaved) {
   };
   modeEl.addEventListener('change', sync); sync();
   document.getElementById('adr-att-save').onclick = async () => {
+    const btn = document.getElementById('adr-att-save');
+    const original = btn.innerHTML;
+    setBtnBusy(btn, 'Ajout');
     try {
       let body;
       if (modeEl.value === 'upload') {
@@ -7774,7 +8172,10 @@ function adrAttachmentModal(docId, docs, onSaved) {
       });
       closeModal();
       if (typeof onSaved === 'function') await onSaved();
-    } catch (e) { msg(e.message || String(e), false); }
+    } catch (e) {
+      btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original;
+      msg(e.message || String(e), false);
+    }
   };
 }
 
@@ -7846,9 +8247,10 @@ function provisionRepoModal(repo, opts = {}) {
   document.getElementById('prov-cancel').onclick = closeModal;
   document.getElementById('prov-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const btn = e.target.querySelector('button[type=submit]');
+    const btn = e.submitter || e.target.querySelector('button[type="submit"]');
+    const original = btn ? btn.innerHTML : null;
+    setBtnBusy(btn, 'Création');
     const msgEl = document.getElementById('prov-msg');
-    btn.disabled = true;
     msgEl.textContent = 'Création du workspace Coder… (clone du remote + masquage du token)';
     msgEl.className = 'msg ok';
     try {
@@ -7873,7 +8275,7 @@ function provisionRepoModal(repo, opts = {}) {
     } catch (err) {
       msgEl.textContent = (err.message || String(err));
       msgEl.className = 'msg error';
-      btn.disabled = false;
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
     }
   });
 }
@@ -7904,6 +8306,9 @@ async function projectFormModal(project) {
   document.getElementById('modal-cancel').onclick = closeModal;
   document.getElementById('project-modal-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = e.submitter || e.target.querySelector('button[type="submit"]');
+    const original = btn ? btn.innerHTML : null;
+    setBtnBusy(btn, editing ? 'Enregistrement' : 'Création');
     const msg = document.getElementById('project-modal-msg');
     try {
       const body = {
@@ -7914,7 +8319,10 @@ async function projectFormModal(project) {
       await api('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       closeModal();
       refreshActive();
-    } catch (err) { msg.textContent = err.message || String(err); msg.className = 'msg error'; }
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+      msg.textContent = err.message || String(err); msg.className = 'msg error';
+    }
   });
 }
 
@@ -8035,6 +8443,9 @@ async function taskCreateModal() {
       .filter((l) => l.taskId);
     const pid = projSel.value;
     projRepoIds[pid] = selectedRepoIds();
+    const btn = e.submitter || e.target.querySelector('button[type="submit"]');
+    const original = btn ? btn.innerHTML : null;
+    setBtnBusy(btn, 'Création');
     try {
       await api('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         project: pid,
@@ -8051,7 +8462,10 @@ async function taskCreateModal() {
       }) });
       closeModal();
       refreshActive();
-    } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+      msg.textContent = err.message; msg.className = 'msg error';
+    }
   });
 }
 
@@ -8176,18 +8590,22 @@ async function taskActionsModal(taskId) {
   const kill = document.getElementById('act-kill');
   if (kill) kill.onclick = () => {
     if (!confirm('Arrêter la session ? (process arrêté — la session reste consultable — tâche abandonnée)')) return;
+    const original = kill.innerHTML;
+    setBtnBusy(kill, 'Arrêt');
     closeModal();
     api(`/api/tasks/${encodeURIComponent(taskId)}/kill-session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
       .then((r) => { alert('Session arrêtée.' + (r.aborted ? ' Tâche abandonnée.' : '')); refreshActive(); })
-      .catch((e) => alert('Échec : ' + (e.message || e)));
+      .catch((e) => { kill.disabled = false; kill.classList.remove('ws-busy'); kill.innerHTML = original; alert('Échec : ' + (e.message || e)); });
   };
   const relaunch = document.getElementById('act-relaunch');
   if (relaunch) relaunch.onclick = () => {
     if (!confirm('Relancer la tâche ? (réinitialisation + nouvelle session orchestrateur)')) return;
+    const original = relaunch.innerHTML;
+    setBtnBusy(relaunch, 'Relance');
     closeModal();
     api(`/api/tasks/${encodeURIComponent(taskId)}/relaunch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
       .then((r) => { alert('Tâche relancée : ' + (r.sessionId || '—')); refreshActive(); })
-      .catch((e) => alert('Échec : ' + (e.message || e)));
+      .catch((e) => { relaunch.disabled = false; relaunch.classList.remove('ws-busy'); relaunch.innerHTML = original; alert('Échec : ' + (e.message || e)); });
   };
   document.querySelectorAll('[data-goto]').forEach((b) => b.addEventListener('click', () => { closeModal(); goToTab(b.dataset.goto, taskId); }));
   const decById = {}; awaiting.forEach((d) => { decById[d.decision_id] = d; });
@@ -8200,11 +8618,16 @@ async function taskActionsModal(taskId) {
       const st = b.dataset.approve ? 'approved' : 'rejected';
       const resolution = '';
       if (st === 'rejected' && !confirm('Rejeter sans remarque ? (recommandé d\'expliquer via « Examiner »)')) return;
+      const original = b.innerHTML;
+      setBtnBusy(b, st === 'approved' ? 'Approbation' : 'Rejet');
       try {
         await resolveDecision(decisionId, st, resolution);
         closeModal();
         refreshActive();
-      } catch (err) { alert('Échec : ' + (err.message || err)); }
+      } catch (err) {
+        b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
+        alert('Échec : ' + (err.message || err));
+      }
     });
   });
   renderTaskE2ELink(taskId);
@@ -8284,6 +8707,9 @@ async function taskEditModal(taskId, detail) {
     const linkedTasks = [...teLinksList.querySelectorAll('.link-row')]
       .map((r) => ({ taskId: r.querySelector('.te-link-task').value.trim(), description: r.querySelector('.te-link-desc').value.trim() }))
       .filter((l) => l.taskId);
+    const btn = e.submitter || e.target.querySelector('button[type="submit"]');
+    const original = btn ? btn.innerHTML : null;
+    setBtnBusy(btn, 'Enregistrement');
     try {
       await api(`/api/tasks/${encodeURIComponent(taskId)}/edit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         title: document.getElementById('te-title').value.trim(),
@@ -8296,7 +8722,10 @@ async function taskEditModal(taskId, detail) {
       }) });
       closeModal();
       refreshActive();
-    } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+      msg.textContent = err.message; msg.className = 'msg error';
+    }
   });
 }
 
@@ -8339,6 +8768,9 @@ async function launchTaskModal(taskId) {
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
   document.getElementById('modal-confirm').onclick = async () => {
+    const btn = document.getElementById('modal-confirm');
+    const original = btn.innerHTML;
+    setBtnBusy(btn, 'Lancement');
     try {
       const r = await api(`/api/tasks/${encodeURIComponent(taskId)}/launch`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -8347,7 +8779,10 @@ async function launchTaskModal(taskId) {
       closeModal();
       alert('Session lancée : ' + (r.sessionId || '—'));
       refreshActive();
-    } catch (e) { alert('Échec du lancement : ' + (e.message || e)); }
+    } catch (e) {
+      btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original;
+      alert('Échec du lancement : ' + (e.message || e));
+    }
   };
 }
 
@@ -8392,6 +8827,9 @@ async function reworkTaskModal(taskId) {
     document.getElementById('rework-session-wrap').hidden = modeSel.value !== 'continue';
   });
   document.getElementById('modal-confirm').onclick = async () => {
+    const btn = document.getElementById('modal-confirm');
+    const original = btn.innerHTML;
+    setBtnBusy(btn, 'Reprise');
     try {
       const mode = modeSel.value;
       const remarks = document.getElementById('rework-remarks').value.trim();
@@ -8403,7 +8841,10 @@ async function reworkTaskModal(taskId) {
       closeModal();
       alert(mode === 'continue' ? 'Remarques injectées dans la session.' : 'Nouvelle session lancée : ' + (r.sessionId || '—'));
       refreshActive();
-    } catch (e) { alert('Échec de la reprise : ' + (e.message || e)); }
+    } catch (e) {
+      btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original;
+      alert('Échec de la reprise : ' + (e.message || e));
+    }
   };
 }
 
@@ -8846,8 +9287,13 @@ async function renderE2ESecrets() {
   document.querySelectorAll('#pane-e2esecrets [data-secret-delete]').forEach((b) => b.addEventListener('click', async () => {
     const name = b.dataset.secretDelete;
     if (!confirm(`Supprimer « ${name} » (projet ${selected}) ? Définitif.`)) return;
+    const original = b.innerHTML;
+    setBtnBusy(b, 'Suppression');
     try { await api(`/api/e2e-vars?project=${encodeURIComponent(selected)}&name=${encodeURIComponent(name)}`, { method: 'DELETE' }); refreshActive(); }
-    catch (e) { alert('Échec suppression : ' + (e.message || e)); }
+    catch (e) {
+      b.disabled = false; b.classList.remove('ws-busy'); b.innerHTML = original;
+      alert('Échec suppression : ' + (e.message || e));
+    }
   }));
 }
 
@@ -8907,13 +9353,19 @@ function e2eVarModal(project, projects, existingName) {
       purpose: document.getElementById('sec-f-purpose').value.trim() || undefined,
     };
     if (!body.project || !body.name || !body.value) { msg.textContent = 'Projet, nom et valeur requis.'; msg.className = 'msg error'; return; }
+    const btn = ev.submitter || ev.target.querySelector('button[type="submit"]');
+    const original = btn ? btn.innerHTML : null;
+    setBtnBusy(btn, isEdit ? 'Remplacement' : 'Création');
     msg.textContent = isEdit ? 'Remplacement…' : 'Création…';
     msg.className = 'msg';
     try {
       await api('/api/e2e-vars', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       closeModal();
       refreshActive();
-    } catch (e) { msg.textContent = e.message || String(e); msg.className = 'msg error'; }
+    } catch (e) {
+      if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
+      msg.textContent = e.message || String(e); msg.className = 'msg error';
+    }
   });
 }
 

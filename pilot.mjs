@@ -31,6 +31,11 @@ export function agentsForType(type, auditTarget) {
 export async function listWorkspaces(org) {
   const disc = (await coderWorkspaces("workspace_list", {})) || {};
   let workspaces = disc.workspaces || disc.discovered || [];
+  // État de l'enrichissement Coder (`coder list`) : un échec (ex. token expiré)
+  // n'est PLUS avalé — il est remonté à l'appelant (et donc à l'UI) pour que la
+  // panne soit VISIBLE au lieu de disparaître en silence (ADR-008).
+  let coderUnavailable = false;
+  let coderError = null;
   // Enrichit la découverte Docker avec le VRAI statut Coder (coder list) : les
   // transitions (starting/stopping/restarting/deleting) ne sont pas visibles
   // via Docker, et le statut "stopped" après un stop l'est à peine.
@@ -38,37 +43,60 @@ export async function listWorkspaces(org) {
     const cfg = await getOrganizationCoderConfig(org || "onirtech");
     if (cfg && cfg.url && cfg.token) {
       const env = { ...process.env, CODER_URL: cfg.url, CODER_SESSION_TOKEN: cfg.token };
-      const list = JSON.parse(execFileSync("coder", ["list", "--output", "json"], { encoding: "utf8", env, timeout: 30000 }));
-      const sub = (x, k) => (x && x[k]) || null;
-      const stateOf = (w) => {
-        const lb = w.latest_build || {};
-        const status = lb.status || null; // started/running/succeeded/failed…
-        const transition = lb.transition || null; // start/stop/delete/restart
-        const job = (lb.job && lb.job.status) || null; // pending/running/succeeded/failed
-        const transitioning = job && ["pending", "running", "started"].includes(job);
-        let label = transitioning ? `${transition || "?"}ing` : status;
-        if (!label) label = "unknown";
-        return { label, transition, buildStatus: status, job, transitioning };
-      };
-      const byName = new Map(list.map((w) => [`${w.owner_name}/${w.name}`, w]));
-      // Match par owner/name (RINOHeinrich1/myxmax), sinon par name simple.
-      workspaces = workspaces.map((w) => {
-        const ownerName = (w.owner || "").toLowerCase();
-        const key = `${ownerName}/${String(w.name).toLowerCase()}`;
-        const match = byName.get(key.toLowerCase()) || [...byName.entries()].find(([k]) => k.toLowerCase().endsWith(`/${String(w.name).toLowerCase()}`))?.[1];
-        const st = match ? stateOf(match) : null;
-        // URL de l'IDE web Coder (code-server / vscode) — ouverte dans un nouvel onglet.
-        const ideUrl = (() => {
-          if (!match) return null;
-          const resources = (match.latest_build || {}).resources || [];
-          for (const r of resources) for (const a of r.agents || []) for (const app of a.apps || []) if (app.slug) return `${cfg.url}/@${match.owner_name}/${match.name}/apps/${app.slug}/`;
-          return null;
-        })();
-        return { ...w, ...(st ? { coderStatus: st.label, coderTransition: st.transition, coderBuildStatus: st.buildStatus, jobStatus: st.job, transitioning: st.transitioning } : {}), ideUrl: ideUrl || undefined };
-      });
+      let list = null;
+      try {
+        list = JSON.parse(execFileSync("coder", ["list", "--output", "json"], { encoding: "utf8", env, timeout: 30000 }));
+      } catch (e) {
+        // Échec d'enrichissement : on le rend visible (statut Coder indisponible)
+        // et on poursuit avec la SEULE découverte Docker, enrichie d'une URL IDE
+        // de repli (l'accès IDE n'est pas silencieusement retiré).
+        coderUnavailable = true;
+        coderError = String((e && e.stderr) || (e && e.message) || e).slice(0, 500);
+      }
+      if (Array.isArray(list)) {
+        const sub = (x, k) => (x && x[k]) || null;
+        const stateOf = (w) => {
+          const lb = w.latest_build || {};
+          const status = lb.status || null; // started/running/succeeded/failed…
+          const transition = lb.transition || null; // start/stop/delete/restart
+          const job = (lb.job && lb.job.status) || null; // pending/running/succeeded/failed
+          const transitioning = job && ["pending", "running", "started"].includes(job);
+          let label = transitioning ? `${transition || "?"}ing` : status;
+          if (!label) label = "unknown";
+          return { label, transition, buildStatus: status, job, transitioning };
+        };
+        const byName = new Map(list.map((w) => [`${w.owner_name}/${w.name}`, w]));
+        // Match par owner/name (RINOHeinrich1/myxmax), sinon par name simple.
+        workspaces = workspaces.map((w) => {
+          const ownerName = (w.owner || "").toLowerCase();
+          const key = `${ownerName}/${String(w.name).toLowerCase()}`;
+          const match = byName.get(key.toLowerCase()) || [...byName.entries()].find(([k]) => k.toLowerCase().endsWith(`/${String(w.name).toLowerCase()}`))?.[1];
+          const st = match ? stateOf(match) : null;
+          // URL de l'IDE web Coder (code-server / vscode) — ouverte dans un nouvel onglet.
+          const ideUrl = (() => {
+            if (!match) return null;
+            const resources = (match.latest_build || {}).resources || [];
+            for (const r of resources) for (const a of r.agents || []) for (const app of a.apps || []) if (app.slug) return `${cfg.url}/@${match.owner_name}/${match.name}/apps/${app.slug}/`;
+            return null;
+          })();
+          return { ...w, ...(st ? { coderStatus: st.label, coderTransition: st.transition, coderBuildStatus: st.buildStatus, jobStatus: st.job, transitioning: st.transitioning } : {}), ideUrl: ideUrl || undefined };
+        });
+      }
+      // URL IDE de repli DÉRIVABLE pour tout workspace sans URL applicative :
+      // `<cfg.url>/@<owner>/<name>` (owner + name connus de la découverte Docker).
+      // Garantit que l'accès n'est jamais retiré en silence, même en mode dégradé.
+      workspaces = workspaces.map((w) => (w.ideUrl || !w.owner || !w.name ? w : { ...w, ideUrl: `${cfg.url}/@${w.owner}/${w.name}` }));
+    } else {
+      // Configuration Coder incomplète : enrichissement impossible → dégradé visible.
+      coderUnavailable = true;
+      coderError = `Config Coder incomplète pour l'org ${org || "onirtech"}`;
     }
-  } catch { /* enrichissement best-effort : on garde la découverte Docker */ }
-  return { count: workspaces.length, workspaces };
+  } catch (e) {
+    // Échec inattendu de l'enrichissement : on le rend visible plutôt que de le taire.
+    coderUnavailable = true;
+    coderError = String((e && e.message) || e).slice(0, 500);
+  }
+  return { count: workspaces.length, workspaces, coderUnavailable, coderError };
 }
 
 // --- Workspaces Coder : opérations CRUD via coder CLI (admin) ---------------
@@ -117,20 +145,40 @@ export async function openCoderIde({ org, targetUrl }) {
   return { ok: true, location: target.href, cookies };
 }
 
-// Lance une commande coder en ARRIÈRE-PLAN (non bloquant) : répond immédiatement
-// avec {queued:true}, le statut évolue ensuite dans la liste (polling).
+// Lance une commande coder en ARRIÈRE-PLAN (non bloquant) : répond immédiatement,
+// le statut évolue ensuite dans la liste (polling). DISTINGUE succès et échec :
+//  - exitCode === 0 → { ok:true, queued:true, exitCode:0 } (action prise en compte) ;
+//  - exitCode !== 0 → { ok:false, queued:false, exitCode, error } avec la vraie
+//    cause (stderr de `coder`, tronqué). Jamais d'échec déguisé en succès
+//    (ADR-008 : « fin de la panne silencieuse »). Le stderr est capturé sur un
+//    buffer borné (évite une accumulation illimitée), comme le prévoit ADR-005.
+const CODER_STDERR_MAX = 4000; // plafond d'accumulation du buffer stderr
+const CODER_STDERR_TRUNC = 500; // longueur remontée à l'appelant (≤ 500 car.)
 function coderActionAsync(org, args) {
   return new Promise((resolve, reject) => {
     getOrganizationCoderConfig(org || "onirtech").then((cfg) => {
       if (!cfg || !cfg.url || !cfg.token) { reject(new Error(`Config Coder incomplète pour l'org ${org || "onirtech"}`)); return; }
       const env = { ...process.env, CODER_URL: cfg.url, CODER_SESSION_TOKEN: cfg.token };
-      const child = spawn("coder", args, { env, stdio: "ignore" });
+      // stderr capturé en pipe (stdin/stdout ignorés) : la cause de l'échec est
+      // remontée, jamais avalée.
+      const child = spawn("coder", args, { env, stdio: ["ignore", "ignore", "pipe"] });
+      let stderr = "";
+      if (child.stderr) {
+        child.stderr.on("data", (chunk) => {
+          if (stderr.length >= CODER_STDERR_MAX) return;
+          stderr += String(chunk).slice(0, CODER_STDERR_MAX - stderr.length);
+        });
+      }
       const done = (code) => {
-        resolve({ queued: true, exitCode: code });
-        // collecte tronquée pour diagnostic si échec
+        const exitCode = code === null || code === undefined ? -1 : code;
+        if (exitCode === 0) { resolve({ ok: true, queued: true, exitCode: 0 }); return; }
+        const fallback = `coder ${(args || []).join(" ")} a échoué (exit ${exitCode})`;
+        resolve({ ok: false, queued: false, exitCode, error: (stderr.trim() || fallback).slice(0, CODER_STDERR_TRUNC) });
       };
       child.on("error", reject);
-      child.on("exit", done);
+      // « close » (et non « exit ») garantit que le buffer stderr est vidé avant
+      // de statuer sur la cause.
+      child.on("close", done);
     }).catch(reject);
   });
 }

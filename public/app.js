@@ -5558,6 +5558,12 @@ async function renderWorkspaces() {
   }
   const data = await r.json();
   const wsList = data.workspaces || data.discovered || [];
+  // État dégradé de l'enrichissement Coder (échec `coder list`, ex. token
+  // expiré) : remonté par l'API depuis A003 — on l'affiche explicitement au
+  // lieu de masquer la panne (ADR-008). L'accès IDE reste proposé via l'URL de
+  // repli (jamais retiré en silence).
+  const coderUnavailable = !!data.coderUnavailable;
+  const coderError = String(data.coderError || '');
   const stateLabel = (w) => {
     if (w.transitioning && w.coderTransition) {
       const map = { start: 'starting', stop: 'stopping', restart: 'restarting', delete: 'deleting' };
@@ -5581,6 +5587,7 @@ async function renderWorkspaces() {
   const ideBadge = (w) => w.ideUrl ? `<a class="badge running ws-ide" href="/api/coder/ide?url=${encodeURIComponent(w.ideUrl)}" target="_blank" rel="noopener" title="Ouvrir l'IDE web Coder (session Coder posée automatiquement)">IDE</a>` : '';
   document.getElementById('pane-workspaces').innerHTML = `
     <h2>Workspaces Coder <span class="muted-sm">— ${wsList.length} workspace(s)</span></h2>
+    ${coderUnavailable ? `<p class="msg error" id="ws-coder-notice">Statut Coder indisponible${coderError ? ` — ${esc(coderError)}` : ''}. Le statut affiché provient de Docker ; l'accès IDE est conservé via une URL de repli.</p>` : ''}
     ${IS_ADMIN ? `<div class="eco-restart-bar"><button class="launch-btn" id="ws-create-btn">Créer un workspace</button><span id="ws-msg" class="muted-sm"></span></div>` : ''}
     <table><thead><tr><th>Workspace</th><th>Propriétaire</th><th>Statut</th><th>IDE</th><th>Conteneur</th><th>Volume</th><th>Projets</th>${IS_ADMIN ? '<th>Actions</th>' : ''}</tr></thead>
     <tbody>${wsList.map((w) => {
@@ -5590,7 +5597,7 @@ async function renderWorkspaces() {
       <td><strong>${esc(w.name)}</strong></td>
       <td>${esc(w.owner || '—')}</td>
       <td>${statusBadge(w)}</td>
-      <td>${running ? ideBadge(w) : '<span class="muted-sm">—</span>'}</td>
+      <td>${running || (coderUnavailable && w.ideUrl) ? ideBadge(w) : '<span class="muted-sm">—</span>'}</td>
       <td><code class="muted-sm">${esc(w.container || '—')}</code></td>
       <td><code class="muted-sm">${esc((w.volume || '').slice(0, 30))}</code></td>
       <td>${attachedProjectsList(w)}</td>
@@ -5623,7 +5630,9 @@ async function workspaceAction(name, action, trigger) {
   try {
     const r = await fetch(`/api/workspaces/${encodeURIComponent(name)}/${action}`, { method: 'POST' });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error((d && d.error) || `HTTP ${r.status}`);
+    // Un échec Coder (502 {ok:false, error}) ne doit JAMAIS être présenté comme
+    // « lancé » : la cause remontée par l'API est affichée telle quelle (ADR-008).
+    if (!r.ok || (d && d.ok === false)) throw new Error((d && d.error) || `HTTP ${r.status}`);
     if (msg) { msg.textContent = `${labels[action] || action} « ${name} » lancé.`; msg.className = 'msg'; }
     followWorkspaces(name);
   } catch (e) {
@@ -5640,7 +5649,8 @@ async function workspaceDelete(name, trigger) {
   try {
     const r = await fetch(`/api/workspaces/${encodeURIComponent(name)}`, { method: 'DELETE' });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error((d && d.error) || `HTTP ${r.status}`);
+    // Même garde que workspaceAction : jamais « supprimé » sur un échec Coder.
+    if (!r.ok || (d && d.ok === false)) throw new Error((d && d.error) || `HTTP ${r.status}`);
     if (msg) { msg.textContent = `Workspace « ${name} » supprimé (en cours).`; msg.className = 'msg'; }
     followWorkspaces(name);
   } catch (e) {

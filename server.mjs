@@ -7,7 +7,9 @@ import { join, dirname, extname, normalize, basename, relative } from "node:path
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawn } from "node:child_process";
 import pg from "pg";
-import { openDb, getUserByUsername, verifyPassword, createUser, updateUserRole, updateUserOrganization, listUsers, listUserOrganizations, setUserOrganizations, listUsersByOrganization, listUserProjects, setUserProjects, listUsersByProject, getUserOpencode, setUserOpencode, listUsersOpencode, updatePassword, setUserNotifyEmail, deleteUser, createSession, deleteSession, setSessionOrganization, pruneSessions, listArchives, archivedTaskIds, archiveTask, restoreTask, getArchive, removeArchive } from "./panel-db.mjs";
+import { openDb, getUserByUsername, verifyPassword, createUser, updateUserRole, updateUserOrganization, listUsers, listUserOrganizations, setUserOrganizations, listUsersByOrganization, listUserProjects, setUserProjects, listUsersByProject, getUserOpencode, setUserOpencode, listUsersOpencode, updatePassword, setUserNotifyEmail, deleteUser, createSession, deleteSession, setSessionOrganization, pruneSessions, listArchives, archivedTaskIds, archiveTask, restoreTask, getArchive, removeArchive, listProviderKeys, getActiveProviderKeys, addProviderKey, setActiveProviderKey, deleteProviderKey } from "./panel-db.mjs";
+// Fournisseurs LLM : génération/propagation de l'auth.json (clé ACTIVE par fournisseur).
+import { SHARED_AUTH, regenerateAndPropagate, migrateFromAuthJson } from "./provider-auth.mjs";
 import { currentUser, sessionToken, cookieHeader, clearCookieHeader, allowedPages } from "./auth.mjs";
 import { scanEcosystem, updateAgentModel } from "./ecosystem.mjs";
 import { loadEnv } from "./env.mjs";
@@ -1651,6 +1653,47 @@ function listOpencodeUnits() {
   return [...units].sort();
 }
 
+// Redémarre toutes les unités opencode (instances dédiées + service partagé).
+// Réutilisé par l'application des clés fournisseurs (A009/A011) : un changement
+// de clé ACTIVE ne prend effet qu'après redémarrage des instances.
+function restartOpencodeUnits() {
+  let units;
+  try {
+    units = listOpencodeUnits();
+  } catch (e) {
+    throw new Error(`liste des services impossible : ${String((e && e.message) || e).slice(0, 500)}`);
+  }
+  if (!units.length) return { restarted: [], failed: [], notice: "aucune instance opencode trouvée" };
+  const restarted = [];
+  const failed = [];
+  for (const unit of units) {
+    try {
+      execFileSync("systemctl", ["restart", unit], { encoding: "utf8", timeout: 60000 });
+      restarted.push(unit);
+    } catch (e) {
+      failed.push({ unit, error: String((e && e.stderr) || (e && e.message) || e).slice(0, 300) });
+    }
+  }
+  return { restarted, failed };
+}
+
+// Garde commune des routes `/api/providers*` (v0.9.75) : ADMIN **et**
+// organisation par défaut (mêmes règles que `/api/ecosystem`). Renvoie `true`
+// (et écrit la réponse 403) si la requête est refusée. L'ACL fail-closed
+// `enforceRoleAcl` exclut déjà `evaluateur`/`executeur` (aucune entrée ajoutée).
+async function providerRouteDenied(user, res) {
+  if (!user.is_admin) {
+    sendJson(res, 403, { error: "réservé aux administrateurs" });
+    return true;
+  }
+  const def = await getDefaultOrgId();
+  if (def && user.activeOrganizationId !== def) {
+    sendJson(res, 403, { error: "réservé à l'organisation par défaut" });
+    return true;
+  }
+  return false;
+}
+
 // --- Router ----------------------------------------------------------------
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
@@ -1737,6 +1780,68 @@ const server = createServer(async (req, res) => {
       const def = await getDefaultOrgId();
       if (def && user.activeOrganizationId !== def) return sendJson(res, 403, { error: "réservé à l'organisation par défaut" });
       return sendJson(res, 200, scanEcosystem());
+    }
+    // --- Fournisseurs LLM : gestion admin des clés (v0.9.75) -----------------
+    // CRUD chiffré (AES-256-GCM). AUCUNE valeur de clé n'est JAMAIS retournée :
+    // seul un `fingerprint` sha256 tronqué (non réversible) est exposé.
+    if (path === "/api/providers" && req.method === "GET") {
+      if (await providerRouteDenied(user, res)) return;
+      const keys = await listProviderKeys();
+      const byProvider = new Map();
+      for (const k of keys) {
+        if (!byProvider.has(k.provider)) byProvider.set(k.provider, []);
+        byProvider.get(k.provider).push(k);
+      }
+      const providers = [...byProvider.entries()].map(([provider, list]) => ({ provider, keys: list }));
+      return sendJson(res, 200, { providers, authPath: SHARED_AUTH });
+    }
+    if (path === "/api/providers/keys" && req.method === "POST") {
+      if (await providerRouteDenied(user, res)) return;
+      const b = await readBody(req);
+      const provider = String(b.provider || "").trim();
+      const label = b.label != null ? String(b.label).trim() : null;
+      const key = String(b.key || "").trim();
+      if (!provider || !key) return sendJson(res, 400, { error: "provider et key requis" });
+      if (provider.length > 64 || !/^[a-zA-Z0-9._-]+$/.test(provider)) return sendJson(res, 400, { error: "provider invalide" });
+      try {
+        const created = await addProviderKey({ provider, label, key });
+        return sendJson(res, 201, { ok: true, key: created });
+      } catch (e) {
+        return sendJson(res, 400, { error: String((e && e.message) || e) });
+      }
+    }
+    const providerActivateMatch = path.match(/^\/api\/providers\/keys\/(\d+)\/activate$/);
+    if (providerActivateMatch && req.method === "POST") {
+      if (await providerRouteDenied(user, res)) return;
+      try {
+        await setActiveProviderKey(Number(providerActivateMatch[1]));
+        const propagation = await regenerateAndPropagate();
+        const { restarted, failed, notice } = restartOpencodeUnits();
+        return sendJson(res, 200, { ok: true, propagation, restarted, failed, ...(notice ? { notice } : {}) });
+      } catch (e) {
+        return sendJson(res, 400, { error: String((e && e.message) || e) });
+      }
+    }
+    const providerKeyMatch = path.match(/^\/api\/providers\/keys\/(\d+)$/);
+    if (providerKeyMatch && req.method === "DELETE") {
+      if (await providerRouteDenied(user, res)) return;
+      try {
+        const deleted = await deleteProviderKey(Number(providerKeyMatch[1]));
+        const propagation = deleted.wasActive ? await regenerateAndPropagate() : null;
+        return sendJson(res, 200, { ok: true, deleted, propagation });
+      } catch (e) {
+        return sendJson(res, 400, { error: String((e && e.message) || e) });
+      }
+    }
+    if (path === "/api/providers/apply" && req.method === "POST") {
+      if (await providerRouteDenied(user, res)) return;
+      try {
+        const propagation = await regenerateAndPropagate();
+        const { restarted, failed, notice } = restartOpencodeUnits();
+        return sendJson(res, 200, { ok: true, propagation, restarted, failed, ...(notice ? { notice } : {}) });
+      } catch (e) {
+        return sendJson(res, 500, { error: String((e && e.message) || e) });
+      }
     }
     if (path === "/api/models" && req.method === "GET") return sendJson(res, 200, { models: listModels() });
     const agentModelMatch = path.match(/^\/api\/agents\/([^/]+)\/model$/);
@@ -3642,6 +3747,15 @@ const server = createServer(async (req, res) => {
 });
 
 await openDb(); // init panel.db (users/sessions/archives) + bootstrap admin
+// Migration au PREMIER déploiement (v0.9.75) : importe les fournisseurs de
+// l'auth.json existant dans `provider_keys` (idempotent : ne fait rien si la
+// table est déjà peuplée). Jamais bloquant au démarrage.
+try {
+  const mig = await migrateFromAuthJson();
+  if (mig && mig.migrated) console.log(`[orchestrator-panel] fournisseurs importés depuis auth.json : ${mig.migrated}`);
+} catch (e) {
+  console.error(`[orchestrator-panel] migration fournisseurs ignorée : ${String((e && e.message) || e)}`);
+}
 
 server.listen(PORT, HOST, () => {
   console.log(`[orchestrator-panel] écoute sur http://${HOST}:${PORT}`);

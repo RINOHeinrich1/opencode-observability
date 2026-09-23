@@ -1,7 +1,10 @@
 // panel-db.mjs — Base d'authentification du panneau (users + sessions + archives),
 // SÉPARÉE du registre de tâches. PostgreSQL (base `panel`).
 import pg from "pg";
-import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { randomBytes, scryptSync, timingSafeEqual, createHash } from "node:crypto";
+// Chiffrement AES-256-GCM des clés fournisseurs LLM — module partagé (même
+// crypto que les secrets E2E ; ne JAMAIS le dupliquer).
+import { encryptSecret, decryptSecret } from "/root/.config/opencode/mcp/task-orchestrator/secret-crypto.mjs";
 
 const { Pool } = pg;
 const SESSION_TTL_H = Number(process.env.PANEL_SESSION_TTL_H || 24);
@@ -54,6 +57,20 @@ CREATE TABLE IF NOT EXISTS user_role_migrations (
   reverted_at TEXT,
   reverted_by TEXT
 );
+-- Fournisseurs LLM & clés API (v0.9.75) : N clés par fournisseur, UNE seule
+-- ACTIVE par fournisseur (index unique partiel). Les clés sont chiffrées
+-- AES-256-GCM (secret-crypto) : la valeur en clair n'est JAMAIS stockée ni
+-- retournée par l'API (seul un fingerprint non réversible est exposé).
+CREATE TABLE IF NOT EXISTS provider_keys (
+  id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  provider   TEXT NOT NULL,
+  label      TEXT,
+  key_enc    TEXT NOT NULL,
+  is_active  INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS provider_keys_active_uniq ON provider_keys(provider) WHERE is_active = 1;
 `;
 
 let _pool = null;
@@ -417,4 +434,126 @@ export async function restoreTask(taskId) {
 
 export async function removeArchive(taskId) {
   await pool().query("DELETE FROM archives WHERE task_id = $1", [taskId]);
+}
+
+// --- Fournisseurs LLM : clés API chiffrées (v0.9.75) -----------------------
+// Source de vérité des identifiants fournisseurs (deepinfra/deepseek/opencode-go…).
+// UNE clé ACTIVE par fournisseur (contrainte base : index unique partiel
+// `provider_keys_active_uniq`). La clé en clair n'est JAMAIS retournée :
+// `listProviderKeys` n'expose qu'un `fingerprint` (sha256 tronqué du CHIFFRÉ,
+// non réversible) ; le déchiffrement (`getActiveProviderKeys`) n'est utilisé que
+// pour GÉNÉRER l'auth.json des instances (provider-auth.mjs).
+
+function fingerprintOf(keyEnc) {
+  return createHash("sha256").update(String(keyEnc)).digest("hex").slice(0, 12);
+}
+
+// Liste SANS secret : jamais `key_enc`, jamais la clé en clair.
+export async function listProviderKeys() {
+  await ensureReady();
+  const res = await pool().query(
+    "SELECT id, provider, label, is_active, key_enc, created_at, updated_at FROM provider_keys ORDER BY provider, is_active DESC, id",
+  );
+  return res.rows.map((r) => ({
+    id: r.id,
+    provider: r.provider,
+    label: r.label ?? null,
+    isActive: r.is_active === 1,
+    hasKey: true,
+    fingerprint: fingerprintOf(r.key_enc),
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  }));
+}
+
+// Clés ACTIVES déchiffrées — usage INTERNE (génération auth.json), JAMAIS exposé
+// tel quel par l'API.
+export async function getActiveProviderKeys() {
+  await ensureReady();
+  const res = await pool().query("SELECT provider, key_enc FROM provider_keys WHERE is_active = 1 ORDER BY provider");
+  return res.rows.map((r) => ({ provider: r.provider, key: decryptSecret(r.key_enc) }));
+}
+
+// Ajoute une clé (chiffrée AES-256-GCM). La clé est ACTIVE automatiquement si
+// c'est la PREMIÈRE du fournisseur (un fournisseur a toujours ≥ 1 clé active).
+export async function addProviderKey({ provider, label = null, key }) {
+  await ensureReady();
+  const prov = String(provider || "").trim();
+  const plain = String(key || "").trim();
+  if (!prov) throw new Error("provider requis");
+  if (!plain) throw new Error("clé requise");
+  const enc = encryptSecret(plain);
+  const now = new Date().toISOString();
+  const client = await pool().connect();
+  try {
+    await client.query("BEGIN");
+    const cnt = await client.query("SELECT count(*)::int AS n FROM provider_keys WHERE provider = $1", [prov]);
+    const isFirst = cnt.rows[0].n === 0;
+    const ins = await client.query(
+      `INSERT INTO provider_keys (provider, label, key_enc, is_active, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$5) RETURNING id, provider, label, is_active, created_at, updated_at`,
+      [prov, label ? String(label) : null, enc, isFirst ? 1 : 0, now],
+    );
+    await client.query("COMMIT");
+    const r = ins.rows[0];
+    return { id: r.id, provider: r.provider, label: r.label ?? null, isActive: r.is_active === 1, hasKey: true, createdAt: r.created_at, updatedAt: r.updated_at };
+  } catch (e) {
+    try { await client.query("ROLLBACK"); } catch {}
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+// Désigne la clé ACTIVE d'un fournisseur : désactive les autres du MÊME
+// fournisseur puis active celle-ci — transaction atomique (respecte l'unicité).
+export async function setActiveProviderKey(id) {
+  await ensureReady();
+  const client = await pool().connect();
+  let provider = null;
+  try {
+    await client.query("BEGIN");
+    const row = (await client.query("SELECT id, provider FROM provider_keys WHERE id = $1 FOR UPDATE", [id])).rows[0];
+    if (!row) throw new Error("clé inconnue");
+    provider = row.provider;
+    const now = new Date().toISOString();
+    await client.query("UPDATE provider_keys SET is_active = 0, updated_at = $1 WHERE provider = $2 AND is_active = 1", [now, provider]);
+    await client.query("UPDATE provider_keys SET is_active = 1, updated_at = $1 WHERE id = $2", [now, id]);
+    await client.query("COMMIT");
+  } catch (e) {
+    try { await client.query("ROLLBACK"); } catch {}
+    throw e;
+  } finally {
+    client.release();
+  }
+  return { id, provider };
+}
+
+// Supprime une clé. GARDE : refuse de supprimer la DERNIÈRE clé d'un
+// fournisseur (un fournisseur garde toujours une clé). Si la clé supprimée était
+// ACTIVE, ré-active une autre clé du même fournisseur.
+export async function deleteProviderKey(id) {
+  await ensureReady();
+  const client = await pool().connect();
+  let deleted = null;
+  try {
+    await client.query("BEGIN");
+    const row = (await client.query("SELECT id, provider, is_active FROM provider_keys WHERE id = $1 FOR UPDATE", [id])).rows[0];
+    if (!row) throw new Error("clé inconnue");
+    const cnt = (await client.query("SELECT count(*)::int AS n FROM provider_keys WHERE provider = $1", [row.provider])).rows[0].n;
+    if (cnt <= 1) throw new Error("impossible de supprimer la dernière clé d'un fournisseur");
+    await client.query("DELETE FROM provider_keys WHERE id = $1", [id]);
+    deleted = { id, provider: row.provider, wasActive: row.is_active === 1 };
+    if (row.is_active === 1) {
+      const next = (await client.query("SELECT id FROM provider_keys WHERE provider = $1 ORDER BY updated_at DESC, id DESC LIMIT 1", [row.provider])).rows[0];
+      if (next) await client.query("UPDATE provider_keys SET is_active = 1, updated_at = $1 WHERE id = $2", [new Date().toISOString(), next.id]);
+    }
+    await client.query("COMMIT");
+  } catch (e) {
+    try { await client.query("ROLLBACK"); } catch {}
+    throw e;
+  } finally {
+    client.release();
+  }
+  return deleted;
 }

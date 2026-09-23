@@ -5,6 +5,40 @@
 > panneau, notifier). La version courante correspond à un tag git `vX.Y.Z` sur
 > chaque dépôt de l'écosystème (voir `06-versioning.md`).
 
+## 2026-09-23 · Onglet « Fournisseurs » — gestion multi-clés LLM par fournisseur (v0.9.75)
+
+La page **Écosystème** gagne un second sous-onglet **« Fournisseurs »** (admin,
+organisation par défaut) permettant d'enregistrer **N clés par fournisseur LLM**
+(deepinfra/deepseek/opencode-go…), d'en désigner **une seule ACTIVE par
+fournisseur**, avec **stockage chiffré AES-256-GCM** (module `secret-crypto`),
+**migration automatique** de l'`auth.json` existant au premier déploiement,
+**régénération + propagation** de l'`auth.json` de chaque instance puis
+**redémarrage** des sessions. **La valeur d'une clé n'est jamais retournée en
+clair** par l'API (seul un `fingerprint` sha256 tronqué non réversible est exposé).
+Voir le nouveau doc [`19-fournisseurs-llm.md`](19-fournisseurs-llm.md).
+
+- **Base** (`panel-db.mjs`) : table `provider_keys` (`provider`, `label`,
+  `key_enc` chiffré, `is_active`) + **index unique partiel**
+  `provider_keys_active_uniq ON provider_keys(provider) WHERE is_active = 1` (au
+  plus une clé active par fournisseur, garanti par la base) ; fonctions CRUD
+  transactionnelles `listProviderKeys` / `getActiveProviderKeys` /
+  `addProviderKey` / `setActiveProviderKey` / `deleteProviderKey` (jamais de clé
+  en clair retournée ; `delete` refuse la dernière clé d'un fournisseur).
+- **Module** `provider-auth.mjs` : `renderAuthJson`, `writeAuthJson`,
+  `regenerateAndPropagate`, `migrateFromAuthJson` — génération/propagation
+  **idempotente** (skip si identique, anti-boucle du path-unit systemd), garde
+  « aucune clé active ⇒ aucune écriture » (jamais de vidage de l'`auth.json`).
+- **API** (`server.mjs`) : `GET /api/providers`, `POST /api/providers/keys`,
+  `POST /api/providers/keys/:id/activate`, `DELETE /api/providers/keys/:id`,
+  `POST /api/providers/apply` (admin + org par défaut) + migration au démarrage.
+- **UI** (`public/app.js`, `public/style.css`) : sous-onglets « Agents » (contenu
+  inchangé) / « Fournisseurs » (masqué aux non-admins), cartes par fournisseur,
+  badge « actif », actions Activer/Supprimer, ajout de clé, « Appliquer &
+  redémarrer ».
+- **Scripts d'infra** (`opencode-user-provision.mjs`, `opencode-auth-sync.mjs`) :
+  génération/régénération de l'`auth.json` depuis la clé ACTIVE (repli copie
+  conservé pour ne jamais bloquer un provisioning).
+
 ## 2026-09-22 · Renommage des dossiers racines de stockage (`storage/`) — alignement ADR-004 (v0.9.74)
 
 Les **dossiers racines** de `storage/` conservaient l'ancienne appellation

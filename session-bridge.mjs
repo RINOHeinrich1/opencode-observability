@@ -80,6 +80,25 @@ export function getActiveProviderIds() {
   }
 }
 
+// Fournisseurs PAR DÉFAUT, SANS clé API : ils servent leurs modèles sans qu'une
+// clé soit requise dans `auth.json` (convention produit `kind: 'default'` ⇒
+// AUCUNE clé requise, modèles toujours servis — cf. élément de recette 24 et sa
+// maquette). `opencode` sert les modèles `opencode/<nom>` (ex. opencode/big-pickle).
+//
+// Source UNIQUE de la notion : ne PAS dupliquer la valeur ailleurs. L'exception
+// est portée par ce prédicat DÉDIÉ, JAMAIS par `getActiveProviderIds()` (qui
+// reste la liste des clés RÉELLES — un fournisseur par défaut n'y figure pas,
+// sinon `activeProviders` et les messages d'erreur mentiraient en l'affichant
+// comme « clé active »).
+export const DEFAULT_PROVIDER_IDS = new Set(["opencode"]);
+
+// Prédicat PUR : le fournisseur bénéficie-t-il de l'exception « par défaut sans
+// clé » ? Consommé par `checkModelServable` (contrôle de clé) et
+// `resolveAgentModel` (pool de repli politique B) — même sémantique partagée.
+export function isDefaultProvider(provider) {
+  return !!provider && DEFAULT_PROVIDER_IDS.has(provider);
+}
+
 // Cache court du catalogue `opencode models` (5 min) : l'appel CLI est coûteux
 // et le catalogue ne bouge pas à cette échelle de temps.
 let _modelsCache = { at: 0, models: [] };
@@ -151,6 +170,10 @@ export function checkModelServable({ model, activeProviders, catalog }) {
     if (!provider) {
       return { servable: true, provider: null, reason: "catalogue indisponible — modèle sans fournisseur : non vérifiable" };
     }
+    if (isDefaultProvider(provider)) {
+      // Fournisseur par défaut sans clé : servable par construction.
+      return { servable: true, provider, reason: `catalogue indisponible — fournisseur par défaut « ${provider} » (aucune clé requise)` };
+    }
     return act.has(provider)
       ? { servable: true, provider, reason: `catalogue indisponible — clé active présente pour « ${provider} »` }
       : { servable: false, provider, reason: `aucune clé active pour le fournisseur « ${provider} »` };
@@ -161,7 +184,10 @@ export function checkModelServable({ model, activeProviders, catalog }) {
       ? { servable: true, provider: null, reason: "modèle servi (sans fournisseur identifié)" }
       : { servable: false, provider: null, reason: `modèle « ${m} » absent du catalogue servi` };
   }
-  if (!act.has(provider)) {
+  // Le fournisseur par défaut n'a PAS de clé par construction : ne pas exiger
+  // `act.has(provider)`. Le contrôle de CATALOGUE reste appliqué juste après
+  // (un `opencode/<modèle inexistant>` demeure refusé — pas de sur-correction).
+  if (!act.has(provider) && !isDefaultProvider(provider)) {
     return { servable: false, provider, reason: `aucune clé active pour le fournisseur « ${provider} »` };
   }
   if (!cat.includes(m)) {
@@ -170,6 +196,10 @@ export function checkModelServable({ model, activeProviders, catalog }) {
       provider,
       reason: `le modèle « ${m} » n'est pas servi par le fournisseur « ${provider} » (clé active)`,
     };
+  }
+  if (!act.has(provider)) {
+    // Fournisseur par défaut sans clé, modèle présent au catalogue ⇒ servi.
+    return { servable: true, provider, reason: `modèle « ${m} » servi par le fournisseur par défaut « ${provider} » (aucune clé requise)` };
   }
   return { servable: true, provider, reason: `modèle « ${m} » servi par « ${provider} » (clé active)` };
 }
@@ -193,13 +223,18 @@ export function resolveAgentModel(agent, { activeProviders, catalog, allowFallba
   }
 
   // Politique B — opt-in explicite et tracé : choisir un modèle COMPATIBLE.
+  // Un modèle est candidat s'il est servi par un fournisseur à clé ACTIVE **ou**
+  // par un fournisseur par défaut sans clé (même prédicat que `checkModelServable`,
+  // sinon un repli vers `opencode/*` serait refusé par le contrôle de clé alors
+  // que le pool l'aurait exclu — asymétrie corrigée).
+  const isActiveOrDefault = (p) => act.has(p) || isDefaultProvider(p);
   let chosen = null;
   if (fallbackModel && checkModelServable({ model: fallbackModel, activeProviders: act, catalog: cat }).servable) {
     chosen = fallbackModel;
   } else if (check.provider) {
-    chosen = cat.find((x) => x.startsWith(check.provider + "/") && act.has(x.slice(0, x.indexOf("/")))) || null;
+    chosen = cat.find((x) => x.startsWith(check.provider + "/") && isActiveOrDefault(x.slice(0, x.indexOf("/")))) || null;
   }
-  if (!chosen) chosen = cat.find((x) => act.has(x.slice(0, x.indexOf("/")))) || null;
+  if (!chosen) chosen = cat.find((x) => isActiveOrDefault(x.slice(0, x.indexOf("/")))) || null;
   if (!chosen) {
     throw new ModelNotServedError({
       model,

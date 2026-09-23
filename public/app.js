@@ -5878,24 +5878,94 @@ async function restartAllOpencodeSessions() {
 }
 
 // --- Édition globale du modèle d'un agent (Écosystème) ----------------------
-async function editAgentModelModal(name, currentModel) {
-  let models = [];
-  try { models = (await api('/api/models')).models || []; } catch {}
-  let opts = models.map((m) => `<option value="${esc(m)}" ${m === currentModel ? 'selected' : ''}>${esc(m)}</option>`).join('');
-  if (currentModel && !models.includes(currentModel)) {
-    opts = `<option value="${esc(currentModel)}" selected>${esc(currentModel)}</option>` + opts;
+// Badge de STATUT DE CLÉ d'un fournisseur. Réutilise les classes CSS EXISTANTES
+// (`.prov-key-badge`, `.prov-key-badge.active`) : le scope de la tâche n'inclut
+// pas `public/style.css`, aucune nouvelle classe n'est introduite.
+function modelKeyStatusBadge(keyStatus) {
+  const map = {
+    active: { cls: 'prov-key-badge active', label: 'clé active ✓' },
+    default_no_key: { cls: 'prov-key-badge', label: 'défaut sans clé' },
+    no_key: { cls: 'prov-key-badge', label: 'aucune clé' },
+  };
+  const b = map[keyStatus] || map.no_key;
+  return `<span class="${b.cls}">${esc(b.label)}</span>`;
+}
+
+// Construit le HTML des `<optgroup>`/`<option>` du sélecteur depuis le catalogue
+// enrichi (`cat.providers[]`, contrat `GET /api/models`). `query` filtre de
+// façon insensible à la casse (fournisseur OU identifiant de modèle). Les
+// modèles NON SERVIS sont marqués « ⚠ non servi » (`title` = raison). Le modèle
+// courant est `selected` ; s'il est absent du catalogue ou exclu par le filtre,
+// il est TOUJOURS réaffiché via un repli explicite (aucun faux blocage).
+function renderAgentModelOptions(cat, currentModel, query) {
+  const providers = (cat && Array.isArray(cat.providers)) ? cat.providers : [];
+  const q = String(query || '').trim().toLowerCase();
+  const match = (s) => !q || String(s).toLowerCase().includes(q);
+  const current = String(currentModel || '');
+  const groups = [];
+  let hasCurrent = false;
+  for (const p of providers) {
+    const opts = (p.models || [])
+      .filter((m) => match(m.id) || match(p.provider))
+      .map((m) => {
+        if (m.id === current) hasCurrent = true;
+        const sel = m.id === current ? ' selected' : '';
+        const mark = m.served ? '' : ' ⚠ non servi';
+        const title = m.served ? '' : ` title="${esc(m.reason || 'modèle non servi par la clé active')}"`;
+        return `<option value="${esc(m.id)}"${sel}${title}>${esc(m.id)}${mark}</option>`;
+      });
+    if (opts.length) {
+      groups.push(`<optgroup label="${esc(p.provider)} — ${esc(p.keyLabel)}">${opts.join('')}</optgroup>`);
+    }
   }
+  if (current && !hasCurrent) {
+    groups.unshift(`<optgroup label="modèle courant"><option value="${esc(current)}" selected>${esc(current)}</option></optgroup>`);
+  }
+  return groups.join('');
+}
+
+async function editAgentModelModal(name, currentModel) {
+  // Catalogue ENRICHI : groupement par fournisseur, statut de clé, servabilité.
+  // Repli NON bloquant si la route/le catalogue est indisponible.
+  let cat = null;
+  try { cat = await api('/api/models'); } catch {}
+  const catalogAvailable = !!(cat && cat.catalogAvailable);
+  const current = String(currentModel || '');
+
+  const providers = (cat && Array.isArray(cat.providers)) ? cat.providers : [];
+  const legendStatuses = [...new Set(providers.map((p) => p.keyStatus))];
+  const legend = legendStatuses.length
+    ? `<p class="muted-sm">Statut des fournisseurs : ${legendStatuses.map((s) => modelKeyStatusBadge(s)).join(' ')}</p>`
+    : '';
+  const currentChip = current
+    ? `<p class="muted-sm">Modèle courant : <code class="chip-project">${esc(current)}</code></p>`
+    : '';
+  const fallbackMsg = (!catalogAvailable && current)
+    ? '<p class="msg error">Catalogue des modèles indisponible (CLI opencode injoignable) — repli sur le modèle courant. Aucun blocage.</p>'
+    : '';
+
   showModal(`
     <div class="modal">
       <h2>Modèle — <span class="code">${esc(name)}</span></h2>
       <p class="muted-sm">Modification <strong>globale</strong> du modèle de cet agent (s'applique à toutes les tâches futures).</p>
-      <select id="agent-model-select" class="model-select">${opts}</select>
+      ${currentChip}
+      ${legend}
+      ${fallbackMsg}
+      <input type="search" id="agent-model-search" placeholder="Rechercher un modèle (fournisseur/modèle)…" autocomplete="off" spellcheck="false">
+      <select id="agent-model-select" class="model-select">${renderAgentModelOptions(cat, current, '')}</select>
       <div class="modal-actions">
         <button class="ghost" id="modal-cancel">Annuler</button>
         <button class="launch-btn" id="modal-confirm">Enregistrer</button>
       </div>
       <div id="model-msg" class="msg"></div>
     </div>`);
+  const search = document.getElementById('agent-model-search');
+  if (search) {
+    search.addEventListener('input', () => {
+      const sel = document.getElementById('agent-model-select');
+      if (sel) sel.innerHTML = renderAgentModelOptions(cat, current, search.value);
+    });
+  }
   document.getElementById('modal-cancel').onclick = closeModal;
   document.getElementById('modal-confirm').onclick = async () => {
     const btn = document.getElementById('modal-confirm');

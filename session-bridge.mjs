@@ -64,20 +64,101 @@ function readAgentModel(agent) {
 // façon SILENCIEUSE (timeout 20 s + session fantôme rattachée). Politique A
 // (défaut) : échec explicite et lisible. Politique B (fallback compatible) :
 // uniquement en opt-in EXPLICITE et tracé.
+//
+// DISTINCTION DES CAUSES (A001→A007) — l'erreur « aucune clé active » recouvrait
+// DEUX causes de nature opposée, désormais séparées :
+//   1. ABSENCE de clé — `auth.json` lisible mais sans entrée pour le fournisseur
+//      du modèle déclaré : CONFIGURATION à corriger (NON transitoire) ;
+//   2. `auth.json` TRANSITOIREMENT ILLISIBLE — lecture/parse en échec (ex.
+//      pendant « Appliquer & redémarrer » qui réécrit le fichier) : cause
+//      indéterminée À RÉESSAYER, JAMAIS interprétée comme une configuration
+//      invalide (cause `auth_unreadable`, `transient: true`).
+// Un cas intermédiaire est distingué : `auth.json` ABSENT (`auth_absent`).
+// `getActiveProvidersStatus()` expose l'état de lecture STRUCTURÉ (ok / absent /
+// illisible) + le chemin d'auth EFFECTIF ; `getActiveProviderIds()` en dérive la
+// liste des clés actives (contrat `Set` INCHANGÉ). `ModelNotServedError` porte
+// `authPath`/`authExists`/`authReadable`/`cause`/`transient` ; le `code` reste
+// `MODEL_NOT_SERVED` (contrat HTTP 400 de `server.mjs` préservé).
 
-// auth.json de référence (dérivé de `provider_keys` par provider-auth.mjs :
-// une clé par fournisseur actif). `OPENCODE_SHARED_AUTH` prioritaire.
-const AUTH_JSON_PATH = process.env.OPENCODE_SHARED_AUTH || "/root/.local/share/opencode/auth.json";
+// Chemin d'auth de référence (dérivé de `provider_keys` par provider-auth.mjs :
+// une clé par fournisseur actif). `OPENCODE_SHARED_AUTH` prioritaire, sinon défaut.
+const DEFAULT_AUTH_JSON_PATH = "/root/.local/share/opencode/auth.json";
+
+// Chemin d'auth EFFECTIF, lu À L'EXÉCUTION (comme `ocServerUrl()`) : le .env du
+// panneau est chargé APRÈS les imports ES, une lecture top-level serait obsolète.
+// L'ADMIN peut ainsi confirmer le chemin réellement utilisé (`OPENCODE_SHARED_AUTH`).
+export function getAuthJsonPath() {
+  return process.env.OPENCODE_SHARED_AUTH || DEFAULT_AUTH_JSON_PATH;
+}
+
+// État de LECTURE de l'auth partagé, STRUCTURÉ — jamais le contenu du fichier,
+// seulement les NOMS de fournisseurs et un statut (sécurité : aucune clé exposée).
+//
+// Retour : `{ path, exists, readable, providers:Set, error }`
+//   - `exists`   : le fichier existe-t-il ? (`false` ⇒ cause `absent`, NON transitoire) ;
+//   - `readable` : a-t-il pu être lu ET parsé ? (`false` + `exists` ⇒ `illisible`, transitoire) ;
+//   - `providers`: fournisseurs à clé active (`∅` si absent/illisible) ;
+//   - `error`    : code d'erreur BORNÉ (jamais le contenu d'auth.json), ou `null`.
+export function getActiveProvidersStatus() {
+  const path = getAuthJsonPath();
+  if (!existsSync(path)) {
+    return { path, exists: false, readable: false, providers: new Set(), error: null };
+  }
+  try {
+    const obj = JSON.parse(readFileSync(path, "utf8"));
+    return { path, exists: true, readable: true, providers: new Set(Object.keys(obj || {}).filter(Boolean)), error: null };
+  } catch (e) {
+    // Cause TRANSITOIRE possible (ex. réécriture pendant « Appliquer & redémarrer »).
+    // Message BORNÉ : code/nom d'erreur seul — JAMAIS le contenu du fichier.
+    const code = e && (e.code || e.name) ? String(e.code || e.name) : "ERREUR_LECTURE";
+    return { path, exists: true, readable: false, providers: new Set(), error: code };
+  }
+}
 
 // Fournisseurs à clé ACTIVE = clés de `auth.json`. `∅` si le fichier est
 // illisible/absent (⇒ repli sur le seul catalogue, cf. checkModelServable).
+// DÉLÈGUE à `getActiveProvidersStatus()` : source UNIQUE de lecture, contrat
+// `Set` CONSERVÉ (backward-compat `server.mjs` l.1706).
 export function getActiveProviderIds() {
-  try {
-    const obj = JSON.parse(readFileSync(AUTH_JSON_PATH, "utf8"));
-    return new Set(Object.keys(obj || {}).filter(Boolean));
-  } catch {
-    return new Set();
+  return getActiveProvidersStatus().providers;
+}
+
+// Dérive (cause, transient, reason) de l'absence de clé active EN DISTINGUANT les
+// trois causes à partir de `authStatus` (A001). Sans `authStatus` (appelant
+// historique), on retombe sur le message neutre d'origine — comportement inchangé.
+function authCauseReason(provider, authStatus) {
+  const st = authStatus && typeof authStatus === "object" ? authStatus : null;
+  if (st && !st.exists) {
+    return {
+      cause: "auth_absent",
+      transient: false,
+      reason: `auth.json absent (chemin « ${st.path} ») — aucune clé active pour le fournisseur « ${provider} »`,
+    };
   }
+  if (st && st.exists && !st.readable) {
+    return {
+      cause: "auth_unreadable",
+      transient: true,
+      reason: `auth.json transitoirement ILLISIBLE (chemin « ${st.path} ») — lecture impossible, incident à RÉESSAYER (PAS une configuration invalide) : clés actives non vérifiables pour le fournisseur « ${provider} »`,
+    };
+  }
+  if (st && st.readable) {
+    return {
+      cause: "provider_key_absent",
+      transient: false,
+      reason: `aucune clé active pour le fournisseur « ${provider} »`,
+    };
+  }
+  return { cause: null, transient: false, reason: `aucune clé active pour le fournisseur « ${provider} »` };
+}
+
+// Résultat de `checkModelServable` pour une clé absente. Enrichi de `cause`/
+// `transient` UNIQUEMENT si `authStatus` est fourni : sans lui, la forme est
+// EXACTEMENT celle d'origine (`{ servable, provider, reason }`) — contrat préservé.
+function keyAbsenceResult(provider, authStatus) {
+  const { cause, transient, reason } = authCauseReason(provider, authStatus);
+  const base = { servable: false, provider, reason };
+  return authStatus && typeof authStatus === "object" ? { ...base, cause, transient } : base;
 }
 
 // Fournisseurs PAR DÉFAUT, SANS clé API : ils servent leurs modèles sans qu'une
@@ -135,13 +216,16 @@ export function listServedModels({ force = false } = {}) {
 // Erreur STRUCTURÉE « modèle non servi par la clé active » (politique A). Porte
 // tout le nécessaire à une raison lisible (UI + logs) et au HTTP 400 dédié.
 export class ModelNotServedError extends Error {
-  constructor({ model, provider, activeProviders, catalog, reason }) {
+  constructor({ model, provider, activeProviders, catalog, reason, authPath = null, authExists = null, authReadable = null, cause = null, transient = false }) {
     const act = [...(activeProviders || [])];
     const cat = catalog || [];
     const detail =
       reason || `le modèle « ${model} » n'est pas servi par la clé active du fournisseur « ${provider} »`;
+    // Marqueur lisible : un incident TRANSITOIRE (auth.json illisible) ne doit
+    // JAMAIS être présenté comme une configuration invalide (A004).
+    const transientTag = transient ? " [incident TRANSITOIRE — à réessayer, PAS une configuration invalide]" : "";
     super(
-      `${detail} (fournisseurs à clé active : ${act.length ? act.join(", ") : "aucun"} ; catalogue servi : ${cat.length} modèle(s))`,
+      `${detail}${transientTag} (fournisseurs à clé active : ${act.length ? act.join(", ") : "aucun"} ; catalogue servi : ${cat.length} modèle(s))`,
     );
     this.name = "ModelNotServedError";
     this.code = "MODEL_NOT_SERVED";
@@ -150,6 +234,12 @@ export class ModelNotServedError extends Error {
     this.activeProviders = act;
     this.catalog = cat;
     this.reason = detail;
+    // Diagnostic de lecture d'auth.json (distinction des causes — ADR-005 §b) :
+    this.authPath = authPath || null;
+    this.authExists = authExists === null || authExists === undefined ? null : !!authExists;
+    this.authReadable = authReadable === null || authReadable === undefined ? null : !!authReadable;
+    this.cause = cause || null;
+    this.transient = !!transient;
   }
 }
 
@@ -157,7 +247,12 @@ export class ModelNotServedError extends Error {
 // clé active et du catalogue servi. Distingue les causes (fournisseur sans clé
 // active vs modèle absent du catalogue). Quand le catalogue est VIDE (CLI
 // injoignable), on ne se fie QU'AU fournisseur — jamais de faux blocage.
-export function checkModelServable({ model, activeProviders, catalog }) {
+//
+// `authStatus` (OPTIONNEL, A001) : état de lecture d'auth.json. Fourni, il
+// permet de distinguer « clé réellement absente » (`provider_key_absent`),
+// « auth.json illisible » (`auth_unreadable`, `transient: true`) et « auth.json
+// absent » (`auth_absent`). Omis, le comportement est INCHANGÉ (message neutre).
+export function checkModelServable({ model, activeProviders, catalog, authStatus }) {
   const act = activeProviders instanceof Set ? activeProviders : new Set(activeProviders || []);
   const cat = Array.isArray(catalog) ? catalog : [];
   const m = String(model || "").trim();
@@ -176,7 +271,7 @@ export function checkModelServable({ model, activeProviders, catalog }) {
     }
     return act.has(provider)
       ? { servable: true, provider, reason: `catalogue indisponible — clé active présente pour « ${provider} »` }
-      : { servable: false, provider, reason: `aucune clé active pour le fournisseur « ${provider} »` };
+      : keyAbsenceResult(provider, authStatus);
   }
 
   if (!provider) {
@@ -188,7 +283,7 @@ export function checkModelServable({ model, activeProviders, catalog }) {
   // `act.has(provider)`. Le contrôle de CATALOGUE reste appliqué juste après
   // (un `opencode/<modèle inexistant>` demeure refusé — pas de sur-correction).
   if (!act.has(provider) && !isDefaultProvider(provider)) {
-    return { servable: false, provider, reason: `aucune clé active pour le fournisseur « ${provider} »` };
+    return keyAbsenceResult(provider, authStatus);
   }
   if (!cat.includes(m)) {
     return {
@@ -212,14 +307,27 @@ export function resolveAgentModel(agent, { activeProviders, catalog, allowFallba
   const model = readAgentModel(agent);
   if (!model) return { model: null, fallback: false, reason: "aucun modèle déclaré par l'agent" };
 
-  const act = activeProviders instanceof Set ? activeProviders : getActiveProviderIds();
+  // État de lecture d'auth.json lu UNE fois (A005) : sert à dériver le `Set` des
+  // fournisseurs à clé active ET à propager la distinction des causes jusqu'à
+  // l'erreur (authPath/authExists/authReadable/cause/transient).
+  const authStatus = getActiveProvidersStatus();
+  const act = activeProviders instanceof Set ? activeProviders : authStatus.providers;
   const cat = Array.isArray(catalog) ? catalog : listServedModels();
-  const check = checkModelServable({ model, activeProviders: act, catalog: cat });
+  const check = checkModelServable({ model, activeProviders: act, catalog: cat, authStatus });
   if (check.servable) return { model, fallback: false, reason: check.reason };
+
+  // Diagnostic de lecture porté par l'erreur, dérivé de l'état RÉEL d'auth.json :
+  const authDiag = {
+    authPath: authStatus.path,
+    authExists: authStatus.exists,
+    authReadable: authStatus.readable,
+    cause: check.cause || (authStatus.exists ? (authStatus.readable ? "provider_key_absent" : "auth_unreadable") : "auth_absent"),
+    transient: check.transient === undefined ? authStatus.exists && !authStatus.readable : check.transient,
+  };
 
   if (!allowFallback) {
     // Politique A : échec explicite (jamais de `--model` non servi).
-    throw new ModelNotServedError({ model, provider: check.provider, activeProviders: act, catalog: cat, reason: check.reason });
+    throw new ModelNotServedError({ model, provider: check.provider, activeProviders: act, catalog: cat, reason: check.reason, ...authDiag });
   }
 
   // Politique B — opt-in explicite et tracé : choisir un modèle COMPATIBLE.
@@ -242,6 +350,7 @@ export function resolveAgentModel(agent, { activeProviders, catalog, allowFallba
       activeProviders: act,
       catalog: cat,
       reason: `${check.reason} — aucun modèle de repli compatible (politique B)`,
+      ...authDiag,
     });
   }
   return { model: chosen, fallback: true, reason: `${check.reason} → repli sur « ${chosen} » (politique B, opt-in explicite)` };

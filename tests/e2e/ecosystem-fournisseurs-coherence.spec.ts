@@ -22,7 +22,8 @@
  *   Scenario 1 (oracle) : état incohérent visible SANS action
  *     Given l'administrateur ouvre la page Écosystème → sous-onglet « Fournisseurs »
  *     And la clé active d'un fournisseur ne sert PAS le modèle déclaré d'au moins
- *         un agent (ex. orchestrator → deepseek/deepseek-v4-flash)
+ *         un agent (ex. orchestrator → modèle RÉSOLU dynamiquement via GET
+ *         /api/ecosystem ; aujourd'hui deepseek/deepseek-v4-pro)
  *     When l'onglet Fournisseurs est rendu
  *     Then un bandeau d'état explicite signale « N agent(s) sur un modèle non servi
  *          par la clé active » et liste les couples « agent → modèle »
@@ -65,7 +66,10 @@
  *   - adminEmail     (secret/ref)          ECOSYSTEM_E2E_ADMIN_EMAIL
  *   - adminPassword  (secret/ref)          ECOSYSTEM_E2E_ADMIN_PASSWORD
  *   - coherencePath  (string)              défaut /api/providers/coherence
- *   - requestedModel (string)              défaut deepseek/deepseek-v4-flash
+ *   - requestedModel (string)              surcharge du modèle de référence ;
+ *                                          défaut = modèle DÉCLARÉ par l'agent
+ *                                          orchestrator (GET /api/ecosystem ;
+ *                                          repli deepseek/deepseek-v4-pro)
  *   - activeProvider (string)              défaut deepseek
  */
 import { test, expect, type Page, type APIResponse } from "@playwright/test";
@@ -95,8 +99,35 @@ const COHERENCE_PATH = process.env.coherencePath || "/api/providers/coherence";
 
 // Contexte produit « sous test » : modèle déclaré par l'agent orchestrator et
 // fournisseur de la clé active (cf. ADR-005 / constat 13).
-const REQUESTED_MODEL = process.env.requestedModel || process.env.E2E_REQUESTED_MODEL || "deepseek/deepseek-v4-flash";
+//
+// Le modèle de référence n'est JAMAIS figé : il est RÉSOLU dynamiquement depuis
+// le frontmatter réel de l'agent `orchestrator` exposé par GET /api/ecosystem
+// (`agents[].model`) — la même source que le serveur (`agentsModelCoherence()`
+// lit `scanEcosystem().agents`). Surcharge au run : paramètre `requestedModel`
+// / E2E_REQUESTED_MODEL. Repli documenté si l'API est indisponible : DECLARED_MODEL_FALLBACK.
+const DECLARED_MODEL_FALLBACK = "deepseek/deepseek-v4-pro";
 const ACTIVE_PROVIDER = process.env.activeProvider || process.env.E2E_ACTIVE_PROVIDER || "deepseek";
+
+/**
+ * Résout le modèle DÉCLARÉ par un agent (frontmatter) via GET /api/ecosystem —
+ * source de vérité du serveur (aucune version de modèle codée en dur).
+ * Priorité : surcharge `requestedModel`/E2E_REQUESTED_MODEL > modèle déclaré > repli documenté.
+ */
+async function resolveDeclaredModel(page: Page, agent = "orchestrator"): Promise<string> {
+  const override = process.env.requestedModel || process.env.E2E_REQUESTED_MODEL;
+  if (override) return override;
+  try {
+    const resp = await page.request.get(`${BASE_URL}/api/ecosystem`);
+    if (resp.ok()) {
+      const body = (await resp.json()) as { agents?: Array<{ name?: string; model?: string | null }> };
+      const model = String((body.agents || []).find((a) => a.name === agent)?.model || "").trim();
+      if (model) return model;
+    }
+  } catch {
+    // API indisponible : repli documenté (le run se poursuit avec la valeur par défaut).
+  }
+  return DECLARED_MODEL_FALLBACK;
+}
 
 // --- Types du contrat de cohérence (Plan A — server.mjs::agentsModelCoherence) -
 interface CoherenceAffected {
@@ -161,6 +192,10 @@ test("Onglet Fournisseurs — état incohérent (clé active ne servant pas le m
 
   await login(page);
 
+  // Modèle de référence RÉSOLU dynamiquement depuis le frontmatter réel de
+  // l'agent orchestrator (GET /api/ecosystem) — jamais figé.
+  const requestedModel = await resolveDeclaredModel(page);
+
   // --- Given : état de cohérence lu depuis l'API (sans mutation) -------------
   const coherence = await fetchCoherence(page);
   test.skip(
@@ -221,8 +256,8 @@ test("Onglet Fournisseurs — état incohérent (clé active ne servant pas le m
 
   // Le modèle demandé/proposé est porté par l'URL funct. attendue côté produit.
   expect(
-    REQUESTED_MODEL.length,
-    "modèle de référence déclaré (paramètre requestedModel)",
+    requestedModel.length,
+    "modèle de référence déclaré (résolu dynamiquement via GET /api/ecosystem)",
   ).toBeGreaterThan(0);
 });
 

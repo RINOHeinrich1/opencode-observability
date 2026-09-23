@@ -56,6 +56,169 @@ function readAgentModel(agent) {
   }
 }
 
+// --- Cohérence « clé active fournisseur ↔ modèle déclaré » (ADR-005) --------
+//
+// Point d'étranglement UNIQUE de tout lancement de session : le modèle déclaré
+// par l'agent (frontmatter `model:`) DOIT être servi par une clé fournisseur
+// ACTIVE. Sinon, le `--model` forcé fait échouer opencode — historiquement de
+// façon SILENCIEUSE (timeout 20 s + session fantôme rattachée). Politique A
+// (défaut) : échec explicite et lisible. Politique B (fallback compatible) :
+// uniquement en opt-in EXPLICITE et tracé.
+
+// auth.json de référence (dérivé de `provider_keys` par provider-auth.mjs :
+// une clé par fournisseur actif). `OPENCODE_SHARED_AUTH` prioritaire.
+const AUTH_JSON_PATH = process.env.OPENCODE_SHARED_AUTH || "/root/.local/share/opencode/auth.json";
+
+// Fournisseurs à clé ACTIVE = clés de `auth.json`. `∅` si le fichier est
+// illisible/absent (⇒ repli sur le seul catalogue, cf. checkModelServable).
+export function getActiveProviderIds() {
+  try {
+    const obj = JSON.parse(readFileSync(AUTH_JSON_PATH, "utf8"));
+    return new Set(Object.keys(obj || {}).filter(Boolean));
+  } catch {
+    return new Set();
+  }
+}
+
+// Cache court du catalogue `opencode models` (5 min) : l'appel CLI est coûteux
+// et le catalogue ne bouge pas à cette échelle de temps.
+let _modelsCache = { at: 0, models: [] };
+const MODELS_CACHE_TTL_MS = 5 * 60 * 1000;
+
+// Catalogue des modèles SERVIS (`provider/model`) tel que listé par le CLI
+// opencode. `[]` si le CLI est indisponible — l'appelant ne doit alors PAS
+// bloquer sur le catalogue (cf. checkModelServable).
+export function listServedModels({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && _modelsCache.at && now - _modelsCache.at < MODELS_CACHE_TTL_MS) {
+    return _modelsCache.models;
+  }
+  let models = [];
+  try {
+    assertBinary();
+    const out = execFileSync(OPENCODE_BIN, ["models"], {
+      env: ocEnv(),
+      timeout: 15000,
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    models = String(out)
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l && l.includes("/"));
+  } catch {
+    models = [];
+  }
+  _modelsCache = { at: now, models };
+  return models;
+}
+
+// Erreur STRUCTURÉE « modèle non servi par la clé active » (politique A). Porte
+// tout le nécessaire à une raison lisible (UI + logs) et au HTTP 400 dédié.
+export class ModelNotServedError extends Error {
+  constructor({ model, provider, activeProviders, catalog, reason }) {
+    const act = [...(activeProviders || [])];
+    const cat = catalog || [];
+    const detail =
+      reason || `le modèle « ${model} » n'est pas servi par la clé active du fournisseur « ${provider} »`;
+    super(
+      `${detail} (fournisseurs à clé active : ${act.length ? act.join(", ") : "aucun"} ; catalogue servi : ${cat.length} modèle(s))`,
+    );
+    this.name = "ModelNotServedError";
+    this.code = "MODEL_NOT_SERVED";
+    this.model = model || null;
+    this.provider = provider || null;
+    this.activeProviders = act;
+    this.catalog = cat;
+    this.reason = detail;
+  }
+}
+
+// Fonction PURE : décide si `model` est servable au regard des fournisseurs à
+// clé active et du catalogue servi. Distingue les causes (fournisseur sans clé
+// active vs modèle absent du catalogue). Quand le catalogue est VIDE (CLI
+// injoignable), on ne se fie QU'AU fournisseur — jamais de faux blocage.
+export function checkModelServable({ model, activeProviders, catalog }) {
+  const act = activeProviders instanceof Set ? activeProviders : new Set(activeProviders || []);
+  const cat = Array.isArray(catalog) ? catalog : [];
+  const m = String(model || "").trim();
+  if (!m) return { servable: false, provider: null, reason: "aucun modèle déclaré" };
+  const slash = m.indexOf("/");
+  const provider = slash > 0 ? m.slice(0, slash) : null;
+
+  if (!cat.length) {
+    // Catalogue indisponible : repli NON bloquant sur la présence d'une clé active.
+    if (!provider) {
+      return { servable: true, provider: null, reason: "catalogue indisponible — modèle sans fournisseur : non vérifiable" };
+    }
+    return act.has(provider)
+      ? { servable: true, provider, reason: `catalogue indisponible — clé active présente pour « ${provider} »` }
+      : { servable: false, provider, reason: `aucune clé active pour le fournisseur « ${provider} »` };
+  }
+
+  if (!provider) {
+    return cat.includes(m)
+      ? { servable: true, provider: null, reason: "modèle servi (sans fournisseur identifié)" }
+      : { servable: false, provider: null, reason: `modèle « ${m} » absent du catalogue servi` };
+  }
+  if (!act.has(provider)) {
+    return { servable: false, provider, reason: `aucune clé active pour le fournisseur « ${provider} »` };
+  }
+  if (!cat.includes(m)) {
+    return {
+      servable: false,
+      provider,
+      reason: `le modèle « ${m} » n'est pas servi par le fournisseur « ${provider} » (clé active)`,
+    };
+  }
+  return { servable: true, provider, reason: `modèle « ${m} » servi par « ${provider} » (clé active)` };
+}
+
+// Résout le modèle d'un agent AVANT tout spawn (politique A par défaut).
+// Politique B (fallback compatible) UNIQUEMENT si `allowFallback` est vrai :
+// même fournisseur d'abord, sinon 1er modèle du catalogue ∩ providers actifs.
+// Retour : { model, fallback, reason } — ou `ModelNotServedError` levée.
+export function resolveAgentModel(agent, { activeProviders, catalog, allowFallback = false, fallbackModel = null } = {}) {
+  const model = readAgentModel(agent);
+  if (!model) return { model: null, fallback: false, reason: "aucun modèle déclaré par l'agent" };
+
+  const act = activeProviders instanceof Set ? activeProviders : getActiveProviderIds();
+  const cat = Array.isArray(catalog) ? catalog : listServedModels();
+  const check = checkModelServable({ model, activeProviders: act, catalog: cat });
+  if (check.servable) return { model, fallback: false, reason: check.reason };
+
+  if (!allowFallback) {
+    // Politique A : échec explicite (jamais de `--model` non servi).
+    throw new ModelNotServedError({ model, provider: check.provider, activeProviders: act, catalog: cat, reason: check.reason });
+  }
+
+  // Politique B — opt-in explicite et tracé : choisir un modèle COMPATIBLE.
+  let chosen = null;
+  if (fallbackModel && checkModelServable({ model: fallbackModel, activeProviders: act, catalog: cat }).servable) {
+    chosen = fallbackModel;
+  } else if (check.provider) {
+    chosen = cat.find((x) => x.startsWith(check.provider + "/") && act.has(x.slice(0, x.indexOf("/")))) || null;
+  }
+  if (!chosen) chosen = cat.find((x) => act.has(x.slice(0, x.indexOf("/")))) || null;
+  if (!chosen) {
+    throw new ModelNotServedError({
+      model,
+      provider: check.provider,
+      activeProviders: act,
+      catalog: cat,
+      reason: `${check.reason} — aucun modèle de repli compatible (politique B)`,
+    });
+  }
+  return { model: chosen, fallback: true, reason: `${check.reason} → repli sur « ${chosen} » (politique B, opt-in explicite)` };
+}
+
+// Extrait borné de `stderr` pour un message d'erreur exploitable (diagnostic).
+function stderrTail(stderr, max = 2000) {
+  const t = String(stderr || "").trim();
+  if (!t) return " (aucune sortie d'erreur opencode)";
+  return ` — sortie d'erreur opencode : ${t.length > max ? t.slice(t.length - max) : t}`;
+}
+
 // --- Primitives bas-niveau ------------------------------------------------
 
 // Liste les sessions (tableau trié, plus récente en premier). `dir` restreint au
@@ -116,20 +279,6 @@ export async function sessionExistsById(sessionId) {
   }
 }
 
-// Résout le sessionId via le titre demandé (fallback en cas d'échec de capture du
-// flux). NE retourne JAMAIS une session arbitraire (`sessions[0]`) : cela risquait
-// de rattacher un cadrage/tâche/test à un ID sans rapport (ghost), cassant le
-// lien de reprise et le deep-link du panneau. Sans correspondance de titre exacte
-// → null (l'appelant échouera proprement au lieu de persister un mauvais ID).
-function latestSessionId(title, dir) {
-  const sessions = listSessions(dir);
-  if (title) {
-    const byTitle = sessions.find((s) => s.title === title);
-    if (byTitle) return byTitle.id;
-  }
-  return null;
-}
-
 // --- Périmètre d'écriture (phase 1 : prompt uniquement) -------------------
 
 /**
@@ -165,7 +314,7 @@ export function buildWriteScopeNotice(role = "cet agent") {
  * NOTE : on ne passe JAMAIS `--auto` (auto-approve des permissions) : les
  * permissions restent soumises à l'humain.
  */
-export function launchSession({ dir, agent = "orchestrator", prompt, title }) {
+export function launchSession({ dir, agent = "orchestrator", prompt, title, allowModelFallback = false, onModelResolved }) {
   return new Promise((resolve, reject) => {
     assertBinary();
     if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
@@ -173,11 +322,30 @@ export function launchSession({ dir, agent = "orchestrator", prompt, title }) {
       return;
     }
 
+    // COHÉRENCE modèle déclaré ↔ clé active AVANT spawn (ADR-005, point
+    // d'étranglement unique de TOUTES les sessions). Politique A : échec
+    // explicite si le modèle n'est pas servi ; politique B seulement si
+    // `allowModelFallback` (tracée via `onModelResolved`).
+    let resolved;
+    try {
+      resolved = resolveAgentModel(agent, { allowFallback: !!allowModelFallback });
+    } catch (e) {
+      reject(e);
+      return;
+    }
+
     const args = ["run", prompt, "--agent", agent, "--format", "json", "--attach", ocServerUrl()];
-    const model = readAgentModel(agent);
-    if (model) args.push("--model", model);
+    if (resolved.model) args.push("--model", resolved.model);
     if (dir) args.push("--dir", dir);
     if (title) args.push("--title", title);
+
+    if (typeof onModelResolved === "function") {
+      try {
+        onModelResolved(resolved);
+      } catch {
+        /* traçage non bloquant */
+      }
+    }
 
     const child = spawn(OPENCODE_BIN, args, {
       detached: true,
@@ -188,6 +356,7 @@ export function launchSession({ dir, agent = "orchestrator", prompt, title }) {
     let sessionId = null;
     let settled = false;
     let buffer = "";
+    let stderr = "";
 
     const finish = (sid) => {
       if (settled) return;
@@ -196,8 +365,17 @@ export function launchSession({ dir, agent = "orchestrator", prompt, title }) {
       resolve({ pid: child.pid, sessionId: sid });
     };
 
+    // TIMEOUT : on ne résout PLUS jamais une session « présumée » (plus de
+    // `latestSessionId` fantôme). Sans `sessionId` capturé, c'est un ÉCHEC
+    // explicite portant la sortie d'erreur opencode.
     const timeout = setTimeout(() => {
-      finish(sessionId || latestSessionId(title, dir));
+      if (settled) return;
+      if (!sessionId) {
+        settled = true;
+        reject(new Error(`délai dépassé (20 s) sans session capturée pour l'agent « ${agent} »${stderrTail(stderr)}`));
+        return;
+      }
+      finish(sessionId);
     }, 20000);
 
     child.stdout.on("data", (chunk) => {
@@ -220,7 +398,28 @@ export function launchSession({ dir, agent = "orchestrator", prompt, title }) {
       }
     });
 
-    child.stderr.on("data", () => {});
+    // Capture de `stderr` (borné 4 Ko) : la VRAIE cause du crash opencode
+    // n'est plus jetée — elle est jointe aux erreurs de timeout/exit.
+    child.stderr.on("data", (chunk) => {
+      if (stderr.length >= 4096) return;
+      stderr += chunk.toString().slice(0, 4096 - stderr.length);
+    });
+
+    // EXIT AVANT capture d'un `sessionId` avec code non nul : échec IMMÉDIAT
+    // et CAUSAL (plus d'attente aveugle de 20 s). Code 0 sans session : on
+    // laisse le timeout trancher (pas de session à résoudre).
+    child.on("exit", (code, signal) => {
+      if (settled || sessionId) return;
+      if (code === 0) return;
+      settled = true;
+      clearTimeout(timeout);
+      reject(
+        new Error(
+          `opencode a quitté (code ${code == null ? signal : code}) avant la capture de la session pour l'agent « ${agent} »${stderrTail(stderr)}`,
+        ),
+      );
+    });
+
     child.on("error", (e) => {
       clearTimeout(timeout);
       if (!settled) {

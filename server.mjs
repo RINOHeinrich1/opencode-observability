@@ -3491,7 +3491,24 @@ const server = createServer(async (req, res) => {
     if (batchSessionMatch && req.method === "POST") {
       let sb = {};
       try { sb = await readBody(req); } catch {}
-      return sendJson(res, 200, await pilot.launchBatchSession({ batchId: batchSessionMatch[1], force: !!(sb && sb.force) }));
+      // La cause RÉELLE du lancement (ex. modèle déclaré non servi par la clé
+      // fournisseur active, ADR-005) doit remonter STRUCTURÉE à l'UI — jamais
+      // aplatie en 500 générique.
+      try {
+        return sendJson(res, 200, await pilot.launchBatchSession({ batchId: batchSessionMatch[1], force: !!(sb && sb.force) }));
+      } catch (e) {
+        if (e && e.code === "MODEL_NOT_SERVED") {
+          return sendJson(res, 400, {
+            error: String((e && e.message) || e),
+            code: e.code,
+            model: e.model || null,
+            provider: e.provider || null,
+            activeProviders: Array.isArray(e.activeProviders) ? e.activeProviders : [],
+            catalog: Array.isArray(e.catalog) ? e.catalog : [],
+          });
+        }
+        return sendJson(res, 500, { error: String((e && e.message) || e) });
+      }
     }
     const batchStatusMatch = path.match(/^\/api\/batches\/([^/]+)\/status$/);
     if (batchStatusMatch && req.method === "POST") {
@@ -3738,6 +3755,18 @@ const server = createServer(async (req, res) => {
     return serveFile(res, path.slice(1));
   } catch (e) {
     const msg = String((e && e.message) || e);
+    // Erreur de cohérence modèle ↔ clé active (ADR-005) : statut 400 + détail
+    // STRUCTURÉ (code/model/provider/activeProviders/catalog), jamais aplati.
+    if (e && e.code === "MODEL_NOT_SERVED") {
+      return sendJson(res, 400, {
+        error: msg,
+        code: e.code,
+        model: e.model || null,
+        provider: e.provider || null,
+        activeProviders: Array.isArray(e.activeProviders) ? e.activeProviders : [],
+        catalog: Array.isArray(e.catalog) ? e.catalog : [],
+      });
+    }
     let status = 500;
     if (/timeout/i.test(msg)) status = 504;
     else if (/projet inconnu/i.test(msg)) status = 409;

@@ -2887,7 +2887,7 @@ const server = createServer(async (req, res) => {
       // (pas de conversion en tâches). Refus explicite.
       if (user.role === "evaluateur") return sendJson(res, 403, { error: "conversion d'un cadrage en tâches interdite au rôle évaluateur (ADR-001/002)" });
       const b = await readBody(req);
-      return sendJson(res, 200, await pilot.finishCadrage({ cadrageId: cadrageAction[1], items: b.items, by: user.username, launchMode: b.launchMode, createTasks: b.createTasks !== false }));
+      return sendJson(res, 200, await pilot.finishCadrage({ cadrageId: cadrageAction[1], items: b.items, by: user.username, launchMode: b.launchMode, createTasks: b.createTasks !== false, maxParallel: b.maxParallel }));
     }
     const cadrageTaskAdd = path.match(/^\/api\/cadrages\/([^/]+)\/tasks$/);
     if (cadrageTaskAdd && req.method === "POST") {

@@ -1955,8 +1955,11 @@ export async function updateCadrageItem({ cadrageId, itemId, fields = {} }) {
 // `createTasks: false` clôt le cadrage SANS générer de tâche (les éléments relevés
 // restent consultables dans le détail) — les corrections éventuelles des éléments
 // ont déjà été persistées via updateCadrageItem.
-export async function finishCadrage({ cadrageId, items, by, launchMode = "batch", createTasks = true }) {
+export async function finishCadrage({ cadrageId, items, by, launchMode = "batch", createTasks = true, maxParallel = 2 }) {
   if (!cadrageId) throw new Error("cadrageId requis");
+  // Garde serveur : plafond de parallélisme borné 1..8 (défaut 2). Le registre
+  // re-clampe de toute façon (batch_register → db.mjs).
+  const maxParallelSafe = Math.max(1, Math.min(8, Number(maxParallel) || 2));
   const r = await taskOrchestrator("cadrage_get", { cadrageId });
   const rec = r && r.cadrage;
   if (!rec) throw new Error(`cadrage inconnu : ${cadrageId}`);
@@ -2057,7 +2060,7 @@ export async function finishCadrage({ cadrageId, items, by, launchMode = "batch"
   const confirmed = await taskOrchestrator("cadrage_confirm", { cadrageId, confirmedBy: by || "human" });
   // Batch d'orchestration (v0.9.0) : les tâches créées par ce cadrage forment
   // UN batch naturel — une session d'orchestration unique pour les séquencer sans
-  // conflit. maxParallel = 2 (défaut sûr).
+  // conflit. maxParallel = valeur saisie à la terminaison (bornée 1..8, défaut 2).
   let batch = null;
   if (created.length) {
     try {
@@ -2071,7 +2074,7 @@ export async function finishCadrage({ cadrageId, items, by, launchMode = "batch"
         title: `Cadrage ${rec.title || cadrageId}`,
         cadrageId,
         taskIds: created.map((c) => c.taskId),
-        maxParallel: 2,
+        maxParallel: maxParallelSafe,
         launchMode: mode,
         createdBy: by || "human",
       });

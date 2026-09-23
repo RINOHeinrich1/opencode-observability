@@ -4581,6 +4581,10 @@ async function cadrageItemsModal(cadrageId, mode = 'finish') {
       <label class="filter-check" style="display:flex;gap:6px;align-items:flex-start;margin-bottom:4px"><input type="radio" name="rec-launch-mode" value="batch" checked style="margin-top:2px"><span><strong>Batch</strong> — le worker lance automatiquement les tâches prêtes (≤ maxParallel), chacune avec sa session.</span></label>
       <label class="filter-check" style="display:flex;gap:6px;align-items:flex-start;margin-bottom:4px"><input type="radio" name="rec-launch-mode" value="session" style="margin-top:2px"><span><strong>Session unique</strong> — une session d'orchestration pilote tout le batch (ordonnancement + préparation croisée).</span></label>
       <label class="filter-check" style="display:flex;gap:6px;align-items:flex-start"><input type="radio" name="rec-launch-mode" value="manual" style="margin-top:2px"><span><strong>Manuel</strong> — aucun auto-lancement : tu pilotes chaque tâche toi-même, comme avant.</span></label>
+      <div id="rec-max-parallel-block" style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <label for="rec-max-parallel" style="margin:0"><strong>Parallélisme max</strong> — nombre maximum de tâches lancées en parallèle (1..8).</label>
+        <input type="number" id="rec-max-parallel" name="rec-max-parallel" min="1" max="8" step="1" value="2" style="width:70px">
+      </div>
     </fieldset>`;
   showModal(`
     <div class="modal modal-wide modal-finish" id="finish-modal">
@@ -4718,6 +4722,17 @@ async function cadrageItemsModal(cadrageId, mode = 'finish') {
     });
   };
   wireVigBlock();
+  // Le champ « Parallélisme max » n'a de sens qu'avec un auto-lancement : il est
+  // proposé pour Batch et Session unique, masqué en mode Manuel. Visible par
+  // défaut (Batch coché).
+  const maxParallelBlock = document.getElementById('rec-max-parallel-block');
+  const syncMaxParallelVisibility = () => {
+    if (!maxParallelBlock) return;
+    const lm = (document.querySelector('input[name="rec-launch-mode"]:checked') || {}).value || 'batch';
+    maxParallelBlock.style.display = lm === 'manual' ? 'none' : '';
+  };
+  document.querySelectorAll('input[name="rec-launch-mode"]').forEach((r) => r.addEventListener('change', syncMaxParallelVisibility));
+  syncMaxParallelVisibility();
   // Tant qu'un point de vigilance ADR est OUVERT, la terminaison est BLOQUÉE
   // (le serveur/registre refuse de toute façon — ici on l'affiche et on désactive).
   if (vigList().length) {
@@ -4733,7 +4748,10 @@ async function cadrageItemsModal(cadrageId, mode = 'finish') {
     try {
       const payload = items.map((it) => ({ itemId: it.id, content: it.content, classification: it.classification, title: it.title, acceptance: it.acceptance, scope: it.scope, execOrder: it.execOrder }));
       const launchMode = (document.querySelector('input[name="rec-launch-mode"]:checked') || {}).value || 'batch';
-      const r = await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}/finish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: payload, launchMode, createTasks: true }) });
+      // Garde UI : la valeur est re-clampée côté pilote (finishCadrage) et par le registre.
+      const maxParallelRaw = (document.querySelector('input[name="rec-max-parallel"]') || {}).value;
+      const maxParallel = Math.max(1, Math.min(8, Number(maxParallelRaw) || 2));
+      const r = await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}/finish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: payload, launchMode, maxParallel, createTasks: true }) });
       msg.textContent = r.created && r.created.length
         ? 'Tâches créées : ' + r.created.map((c) => `${c.taskId} (${CADRAGE_CLS_LABEL[c.classification]})`).join(', ')
         : T.doneNoTasks;

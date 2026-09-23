@@ -16,7 +16,8 @@
  *
  *   Scenario (couvert, oracle) : Modèle déclaré non servi par la clé active
  *     Given un batch actif en mode « session unique » sur un projet de l'écosystème
- *     And l'agent orchestrator déclare le modèle deepseek/deepseek-v4-flash dans son frontmatter
+ *     And l'agent orchestrator déclare dans son frontmatter le modèle de référence
+ *         (RÉSOLU dynamiquement via GET /api/ecosystem ; ex. deepseek/deepseek-v4-pro)
  *     And la clé active du fournisseur ne sert pas ce modèle
  *     When l'administrateur lance la session d'orchestration du batch depuis le panneau
  *     Then le panneau affiche une erreur explicite mentionnant le modèle demandé ET le fournisseur de la clé active
@@ -75,8 +76,34 @@ const ADMIN_PASSWORD =
 
 // Contexte produit « sous test » : ce que le panneau DOIT dire quand la clé
 // active du fournisseur ne sert pas le modèle déclaré de l'agent orchestrator.
-const REQUESTED_MODEL = process.env.E2E_REQUESTED_MODEL || "deepseek/deepseek-v4-flash";
+//
+// Le modèle de référence n'est JAMAIS figé : il est RÉSOLU dynamiquement depuis
+// le frontmatter réel de l'agent `orchestrator` exposé par GET /api/ecosystem
+// (`agents[].model`) — la même source que le serveur (`agentsModelCoherence()`
+// lit `scanEcosystem().agents`). Surcharge au run : E2E_REQUESTED_MODEL.
+// Repli documenté si l'API est indisponible (401/403/réseau) : DECLARED_MODEL_FALLBACK.
+const DECLARED_MODEL_FALLBACK = "deepseek/deepseek-v4-pro";
 const ACTIVE_PROVIDER = process.env.E2E_ACTIVE_PROVIDER || "deepseek";
+
+/**
+ * Résout le modèle DÉCLARÉ par un agent (frontmatter) via GET /api/ecosystem —
+ * source de vérité du serveur (aucune version de modèle codée en dur).
+ * Priorité : surcharge explicite E2E_REQUESTED_MODEL > modèle déclaré > repli documenté.
+ */
+async function resolveDeclaredModel(page: Page, agent = "orchestrator"): Promise<string> {
+  if (process.env.E2E_REQUESTED_MODEL) return process.env.E2E_REQUESTED_MODEL;
+  try {
+    const resp = await page.request.get(`${BASE_URL}/api/ecosystem`);
+    if (resp.ok()) {
+      const body = (await resp.json()) as { agents?: Array<{ name?: string; model?: string | null }> };
+      const model = String((body.agents || []).find((a) => a.name === agent)?.model || "").trim();
+      if (model) return model;
+    }
+  } catch {
+    // API indisponible : repli documenté (le run se poursuit avec la valeur par défaut).
+  }
+  return DECLARED_MODEL_FALLBACK;
+}
 
 // Batch cible : laissé vide → premier batch actif en mode « session » du projet.
 const TARGET_BATCH_ID = process.env.E2E_BATCH_ID || "";
@@ -106,6 +133,10 @@ test("Dans l'écosystème admin, créer un batch en mode session unique avec un 
   );
 
   await login(page);
+
+  // Modèle de référence RÉSOLU dynamiquement depuis le frontmatter réel de
+  // l'agent orchestrator (GET /api/ecosystem) — jamais figé.
+  const requestedModel = await resolveDeclaredModel(page);
 
   // --- Given : un batch actif en mode « session unique » (surface UI) --------
   // Sélection du batch via l'API (mêmes cookies que la page) puis vérification
@@ -169,7 +200,7 @@ test("Dans l'écosystème admin, créer un batch en mode session unique avec un 
     // Ni erreur explicite, ni session démarrée : blocage silencieux (constat 13).
     throw new Error(
       `Blocage silencieux : aucune erreur explicite ni session démarrée dans les ${SILENT_TIMEOUT_MS} ms ` +
-        `au lancement du batch ${batch.batchId} (modèle déclaré ${REQUESTED_MODEL}, fournisseur ${ACTIVE_PROVIDER}).`,
+        `au lancement du batch ${batch.batchId} (modèle déclaré ${requestedModel}, fournisseur ${ACTIVE_PROVIDER}).`,
     );
   }
 
@@ -191,8 +222,8 @@ test("Dans l'écosystème admin, créer un batch en mode session unique avec un 
   expect(message, "message d'erreur non vide attendu").not.toHaveLength(0);
   expect(
     message.toLowerCase(),
-    `l'erreur doit mentionner le modèle demandé « ${REQUESTED_MODEL} » — reçu : ${message}`,
-  ).toContain(REQUESTED_MODEL.toLowerCase());
+    `l'erreur doit mentionner le modèle demandé « ${requestedModel} » — reçu : ${message}`,
+  ).toContain(requestedModel.toLowerCase());
   expect(
     message.toLowerCase(),
     `l'erreur doit mentionner le fournisseur de la clé active « ${ACTIVE_PROVIDER} » — reçu : ${message}`,

@@ -2954,7 +2954,7 @@ async function openRecetteSession(recetteId, force, btn) {
   }
 }
 
-function cadrageCard(r) {
+function cadrageCard(r, coh = null) {
   const T = cadrageTerms();
   const canSession = r.status === 'pending' || r.status === 'in_progress';
   const canFinish = r.status === 'in_progress';
@@ -2968,6 +2968,7 @@ function cadrageCard(r) {
       <div class="project-kv"><span class="lbl">Créée par</span><span>${esc(r.created_by || '—')}</span></div>
     </div>
     <div class="project-card-actions">
+      ${coherenceLaunchBadge(coh, { source: 'cadrage-card' })}
       <button class="ghost" data-rec-docs="${esc(r.cadrage_id)}">Documents (${r.documents_count || 0})</button>
       ${canSession ? `<button class="launch-btn" data-rec-session="${esc(r.cadrage_id)}" title="${r.session_id ? T.sessionResume : T.sessionHint}">${T.session}</button>` : ''}
       ${canFinish ? `<button class="approve" data-rec-finish="${esc(r.cadrage_id)}">${T.finish}</button>` : ''}
@@ -2979,9 +2980,12 @@ function cadrageCard(r) {
 
 async function renderCadrages() {
   const T = cadrageTerms();
-  const [data, bdata] = await Promise.all([
+  const [data, bdata, coherence] = await Promise.all([
     api(cadragesApiBase() + (currentProject ? `?project=${encodeURIComponent(currentProject)}` : '')),
     api('/api/batches' + (currentProject ? `?project=${encodeURIComponent(currentProject)}` : '')).catch(() => ({ batches: [] })),
+    // A005 — pré-contrôle de cohérence chargé UNE fois par rendu (admin-safe,
+    // non bloquant : `null` si indisponible/refusé ⇒ aucun badge).
+    fetchLaunchCoherence(),
   ]);
   let recs = data.cadrages || [];
   const batches = (bdata.batches || []).filter((b) => b.status === 'active');
@@ -3011,7 +3015,7 @@ async function renderCadrages() {
   document.getElementById('pane-cadrages').innerHTML = `
     <h2>${T.entities}</h2>
     <p class="muted-sm">Cadrages techniques — chaque cadrage couvre UN projet (produit) et 0..N tâches de ce projet ; les repos transverses du projet sont sa portée réelle. Titre et session dédiée.</p>
-    ${batches.length ? `<div class="actions-section"><h3>Batches d'orchestration actifs <span class="muted-sm">(${batches.length})</span></h3><div class="project-cards">${batches.map(batchCard).join('')}</div></div>` : ''}
+    ${batches.length ? `<div class="actions-section"><h3>Batches d'orchestration actifs <span class="muted-sm">(${batches.length})</span></h3><div class="project-cards">${batches.map((b) => batchCard(b, coherence)).join('')}</div></div>` : ''}
     <div class="filters">
       ${IS_EVALUATEUR ? '' : `<div class="status-tagfilter" id="rec-user-tagfilter" title="Afficher les ${T.entitiesLower} des utilisateurs sélectionnés (multi)">
         <span class="tagfilter-label">Créateurs :</span>
@@ -3027,7 +3031,7 @@ async function renderCadrages() {
       </select>
       <button id="new-cadrage-btn" class="launch-btn">+ ${T.newEntity}</button>
     </div>
-    <div class="project-cards">${recs.map(cadrageCard).join('') || `<p class="muted">${T.empty}</p>`}</div>`;
+    <div class="project-cards">${recs.map((r) => cadrageCard(r, coherence)).join('') || `<p class="muted">${T.empty}</p>`}</div>`;
   renderUserUI();
   const sel = document.getElementById('rec-user-add');
   if (sel) sel.addEventListener('change', () => {
@@ -3061,6 +3065,8 @@ async function renderCadrages() {
   document.querySelectorAll('#pane-cadrages [data-rec-del]').forEach((b) => b.addEventListener('click', () => deleteCadrageFlow(b.dataset.recDel, b.dataset.recTitle, refreshActive, b)));
   document.querySelectorAll('#pane-cadrages [data-batch-session]').forEach((b) => b.addEventListener('click', () => openBatchSession(b.dataset.batchSession, b)));
   document.querySelectorAll('#pane-cadrages [data-batch-detail]').forEach((b) => b.addEventListener('click', () => batchDetailModal(b.dataset.batchDetail)));
+  // A005 — câblage DRY du bouton « Corriger » des badges rendus (cartes cadrage + batch).
+  wireCoherenceLaunchBadges(document.getElementById('pane-cadrages'), coherence);
 }
 
 // ===========================================================================
@@ -3936,7 +3942,7 @@ async function recetteFinishConfirm(recetteId, btn) {
 }
 
 // --- Batches d'orchestration (v0.9.41) : mode session unique / manuel ---------
-function batchCard(b) {
+function batchCard(b, coh = null) {
   const modeLabel = b.launchMode === 'session' ? 'Session unique' : b.launchMode === 'manual' ? 'Manuel' : 'Batch';
   const modeBadge = `<span class="badge ${b.launchMode === 'session' ? 'awaiting' : b.launchMode === 'manual' ? 'queued' : 'in_progress'}">${modeLabel}</span>`;
   const canSession = b.launchMode === 'session' || b.launchMode === 'batch';
@@ -3948,6 +3954,7 @@ function batchCard(b) {
       ${b.sessionId ? `<div class="project-kv"><span class="lbl">Session</span><span class="muted-sm">${esc(b.sessionId)}</span></div>` : ''}
     </div>
     <div class="project-card-actions">
+      ${coherenceLaunchBadge(coh, { source: 'batch-card' })}
       ${canSession ? `<button class="launch-btn" data-batch-session="${esc(b.batchId)}" title="${b.sessionId ? 'Reprendre la session d\'orchestration du batch' : 'Lancer la session d\'orchestration unique (pilote toutes les tâches)'}">${b.sessionId ? 'Reprendre la session' : 'Lancer la session d\'orchestration'}</button>` : ''}
       <button class="ghost" data-batch-detail="${esc(b.batchId)}">Détail</button>
     </div>
@@ -4020,7 +4027,19 @@ function showCoherenceWarning(coherence, ctx = {}) {
     'provider-add': 'la création de la clé',
     'agent-model': 'l\'édition du modèle',
     'providers': 'l\'onglet Fournisseurs',
+    'cadrage-card': 'la carte du cadrage',
+    'cadrage-detail': 'le détail du cadrage',
+    'batch-card': 'la carte du batch',
+    'batch-detail': 'le détail du batch',
   }[ctx.source] || 'le contrôle de cohérence';
+  // A004 — Usage PRÉ-LANCEMENT : la modale est ouverte depuis un badge situé au
+  // point de lancement (carte/détail cadrage ou batch). L'introduction et le pied
+  // sont alors rédigés « avant le lancement de la session » (au lieu d'« après
+  // l'action ») sans rien changer au reste du diagnostic ni au geste de correction.
+  const prelaunch = ctx.mode === 'prelaunch';
+  const intro = prelaunch
+    ? `Avant le lancement de la session, <strong>${affected.length}</strong> agent(s) déclarent un modèle <strong>non servi</strong> par la clé active`
+    : `Après ${esc(sourceLabel)}, <strong>${affected.length}</strong> agent(s) déclarent un modèle <strong>non servi</strong> par la clé active`;
   const rows = affected.map((a) => `<div class="recette-item">
       <code class="chip-project">${esc(a.agent)}</code> <span class="muted-sm">→</span> <code>${esc(a.model)}</code>
       <span class="muted-sm">${esc(a.reason || '')}</span>
@@ -4029,11 +4048,13 @@ function showCoherenceWarning(coherence, ctx = {}) {
   showModal(`
     <div class="modal modal-wide">
       <h2>Cohérence des modèles d'agents</h2>
-      <p class="muted">Après ${esc(sourceLabel)}, <strong>${affected.length}</strong> agent(s) déclarent un modèle <strong>non servi</strong> par la clé active${activeProviders.length ? ` (clés actives : ${esc(activeProviders.join(', '))})` : ' <span class="muted-sm">(aucune clé active)</span>'}.</p>
+      <p class="muted">${intro}${activeProviders.length ? ` (clés actives : ${esc(activeProviders.join(', '))})` : ' <span class="muted-sm">(aucune clé active)</span>'}.</p>
       ${partial ? '<p class="msg error">Catalogue des modèles indisponible (CLI opencode injoignable) — vérification <strong>partielle</strong>, repli sur les frontmatters. Aucun blocage.</p>' : ''}
       ${rows ? `<div class="recette-list">${rows}</div>` : '<p class="muted-sm">Aucun agent affecté.</p>'}
       ${partial && fallback.length ? `<div class="actions-section"><h3>Modèles déclarés (frontmatters, repli)</h3><div class="recette-list"><div class="recette-item">${esc(fallback.join(', '))}</div></div></div>` : ''}
-      <p class="muted-sm">Avertissement <strong>non bloquant</strong> : l'action a bien été appliquée. Corrigez les modèles pour éviter un échec au prochain lancement de session.</p>
+      <p class="muted-sm">${prelaunch
+        ? 'Avertissement <strong>non bloquant</strong> : corrigez les modèles <strong>avant de lancer la session</strong> pour éviter un échec explicite au démarrage (politique A, ADR-005).'
+        : 'Avertissement <strong>non bloquant</strong> : l\'action a bien été appliquée. Corrigez les modèles pour éviter un échec au prochain lancement de session.'}</p>
       <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
@@ -4046,8 +4067,15 @@ function showCoherenceWarning(coherence, ctx = {}) {
 }
 
 async function batchDetailModal(batchId) {
-  let d;
-  try { d = await api(`/api/batches/${encodeURIComponent(batchId)}`); } catch (e) { alert('Erreur : ' + (e.message || e)); return; }
+  // A009 — chargement PARALLÈLE du batch et du pré-contrôle de cohérence
+  // (admin-safe, non bloquant : `null` ⇒ aucun badge).
+  let d, coherence;
+  try {
+    [d, coherence] = await Promise.all([
+      api(`/api/batches/${encodeURIComponent(batchId)}`),
+      fetchLaunchCoherence(),
+    ]);
+  } catch (e) { alert('Erreur : ' + (e.message || e)); return; }
   const b = d.batch || {};
   const modeLabel = { session: 'Session unique', manual: 'Manuel', batch: 'Batch' }[b.launchMode] || b.launchMode;
   const rd = b.readiness || [];
@@ -4062,12 +4090,15 @@ async function batchDetailModal(batchId) {
       <p class="muted">${badge(b.status)} · ${modeLabel} · projet ${esc(b.project)} · parallélisme max ${b.maxParallel || 2}${b.sessionId ? ` · session ${esc(b.sessionId)}` : ''}</p>
       <div class="actions-section"><h3>Readiness (${rd.length})</h3><div class="recette-list">${rd.map(row).join('') || '<p class="muted-sm">Aucune tâche.</p>'}</div></div>
       ${b.conflictMatrix && b.conflictMatrix.length ? `<div class="actions-section"><h3>Conflits fichiers (${b.conflictMatrix.length})</h3><div class="recette-list">${b.conflictMatrix.map((c) => `<div class="recette-item"><code class="muted-sm">${esc(c.taskA)}</code> ↔ <code class="muted-sm">${esc(c.taskB)}</code><span class="muted-sm">${(c.stepConflicts || []).length} étape(s) en conflit</span></div>`).join('')}</div></div>` : ''}
+      ${coherenceLaunchBadge(coherence, { source: 'batch-detail' })}
       <div class="modal-actions">
         ${b.launchMode !== 'manual' && b.status === 'active' ? `<button class="launch-btn" id="batch-modal-session">${b.sessionId ? 'Reprendre la session' : 'Lancer la session d\'orchestration'}</button>` : ''}
         <button class="ghost" id="modal-cancel">Fermer</button>
       </div>
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
+  // A009 — câblage DRY du bouton « Corriger » du badge de pré-lancement.
+  wireCoherenceLaunchBadges(document.getElementById('modal-backdrop'), coherence);
   const btn = document.getElementById('batch-modal-session');
   if (btn) btn.onclick = async () => {
     closeModal();
@@ -4078,8 +4109,15 @@ async function batchDetailModal(batchId) {
 // Détail d'un cadrage en modale (titre court + description longue + périmètre).
 async function cadrageDetailModal(cadrageId) {
   const T = cadrageTerms();
-  let d;
-  try { d = await api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}`); } catch (e) { alert(`Impossible de charger ${T.theEntity} : ` + (e.message || e)); return; }
+  // A008 — chargement PARALLÈLE du cadrage et du pré-contrôle de cohérence
+  // (admin-safe, non bloquant : `null` ⇒ aucun badge).
+  let d, coherence;
+  try {
+    [d, coherence] = await Promise.all([
+      api(`${cadragesApiBase()}/${encodeURIComponent(cadrageId)}`),
+      fetchLaunchCoherence(),
+    ]);
+  } catch (e) { alert(`Impossible de charger ${T.theEntity} : ` + (e.message || e)); return; }
   const rec = d.cadrage || {};
   const tasks = rec.tasks || [];
   const items = rec.items || [];
@@ -4150,9 +4188,11 @@ async function cadrageDetailModal(cadrageId) {
           ${genTasks.length ? genTasks.map((g) => `<div class="recette-item">${badge(g.status || 'queued')}<code class="muted-sm">${esc(g.taskId)}</code>${g.project ? `<code class="chip-project">${esc(g.project)}</code>` : ''}<span>${esc(g.title || g.itemTitle || g.taskId)}</span></div>`).join('') : '<p class="muted-sm">Aucune tâche générée depuis les éléments de ce cadrage.</p>'}
         </div>
       </div>
-      <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
+      <div class="modal-actions">${coherenceLaunchBadge(coherence, { source: 'cadrage-detail' })}<button class="ghost" id="modal-cancel">Fermer</button></div>
     </div>`);
   document.getElementById('modal-cancel').onclick = closeModal;
+  // A008 — câblage DRY du bouton « Corriger » du badge de pré-lancement.
+  wireCoherenceLaunchBadges(document.getElementById('cadrage-detail-modal'), coherence);
   // A007 — « Regarder » d'une ADR du cadrage → modale de lecture du contenu
   // (motif `data-*-view` + `viewRefDoc`, réutilisé tel quel — non modifié ici).
   document.querySelectorAll('#cadrage-detail-modal [data-cadr-adr-view]').forEach((b) => b.addEventListener('click', () => viewRefDoc(b.getAttribute('data-cadr-adr-view'))));
@@ -5415,6 +5455,52 @@ function providerCoherenceBanner(coh) {
       <span class="muted-sm">${shown}${affected.length > 8 ? ' …' : ''}${partial}</span>
       <button class="ghost tiny" id="prov-coh-fix">Corriger</button>
     </div>`;
+}
+
+// ===========================================================================
+// Pré-contrôle de cohérence « clé active fournisseur ↔ modèle déclaré des
+// agents » exposé AU POINT DE LANCEMENT (carte/détail d'un cadrage ou d'un
+// batch, à côté du bouton de session d'orchestration). ADR-005 §a : le contrôle
+// est PRÉVENTIF et NON bloquant ; il ne remplace jamais la politique A réactive
+// (`showSessionModelError`, au lancement de session).
+// ===========================================================================
+
+// A001 — Accès UNIQUE et SÛR à l'état de cohérence hors de l'onglet Fournisseurs.
+// La route `GET /api/providers/coherence` est « admin + organisation par défaut » :
+// pour tout autre rôle on renvoie `null` SANS requête (aucun 403 parasite).
+// Toute indisponibilité (réseau, 4xx/5xx, corps inexploitable) ⇒ `null` :
+// l'appelant n'affiche alors AUCUN badge — jamais de faux blocage (ADR-005).
+async function fetchLaunchCoherence() {
+  if (!IS_ADMIN) return null;
+  try {
+    const coh = await api('/api/providers/coherence');
+    return coh && typeof coh.ok === 'boolean' ? coh : null;
+  } catch {
+    return null;
+  }
+}
+
+// A002 — Badge COMPACT « modèle non servi » réutilisable aux points de
+// lancement. Renvoie `''` si le rapport est absent/inexploitable, s'il n'y a
+// aucun agent affecté ou si la cohérence est OK : seul un état RÉELLEMENT
+// incohérent affiche le badge. Le bouton « Corriger » est câblé par
+// `wireCoherenceLaunchBadges` (accès direct à la correction).
+function coherenceLaunchBadge(coh, ctx = {}) {
+  if (!coh || typeof coh.ok !== 'boolean' || coh.ok) return '';
+  const affected = Array.isArray(coh.affected) ? coh.affected : [];
+  if (!affected.length) return '';
+  const partial = coh.catalogAvailable === false ? ' <span class="muted-sm">(vérification partielle)</span>' : '';
+  return `<div class="coh-launch-badge"><span class="badge awaiting" title="Contrôle préventif de cohérence (ADR-005) — avertissement non bloquant">⚠ ${affected.length} agent(s) sur un modèle non servi</span>${partial}<button type="button" class="ghost tiny" data-coh-launch="1" data-coh-source="${esc(ctx.source || 'launch')}">Corriger</button></div>`;
+}
+
+// A003 — Câblage DRY du/des bouton(s) « Corriger » rendus sous `rootEl` → modale
+// de cohérence en mode pré-lancement. No-op si `rootEl`/`coh` absents (aucun
+// badge rendu ⇒ aucun faux blocage).
+function wireCoherenceLaunchBadges(rootEl, coh) {
+  if (!rootEl || !coh) return;
+  rootEl.querySelectorAll('[data-coh-launch]').forEach((btn) => btn.addEventListener('click', () => {
+    showCoherenceWarning(coh, { mode: 'prelaunch', source: btn.dataset.cohSource });
+  }));
 }
 
 async function renderEcosystemProviders() {

@@ -43,6 +43,12 @@
  *          affichée (agents/modèles affectés + proposition de mise à jour)
  *     And, si l'état est cohérent, aucune modale de cohérence n'est affichée
  *
+ *   Scenario 4 (fournisseur par défaut SANS clé) : opencode/* jamais « non servi »
+ *     Given un agent déclare un modèle `opencode/*` (fournisseur par défaut sans clé)
+ *     When l'état de cohérence est lu
+ *     Then aucun modèle `opencode/*` n'est signalé « non servi par la clé active »
+ *     And `opencode` n'apparaît jamais dans `activeProviders` (ce n'est pas une clé)
+ *
  * ---------------------------------------------------------------------------
  * Politique d'état non reproduit : le spec DÉTECTE l'état via
  * `GET /api/providers/coherence` (jamais de mutation réelle de la clé
@@ -327,4 +333,52 @@ test("Onglet Fournisseurs — édition du modèle d'un agent : le contrôle de c
       "un avertissement de cohérence doit être affiché après l'édition quand le rapport est incohérent",
     ).toBe(true);
   }
+});
+
+test("Onglet Fournisseurs — fournisseur par défaut « opencode » (sans clé) : aucun modèle opencode/* n'est signalé « non servi » par la clé active.", async ({
+  page,
+}) => {
+  test.skip(!ADMIN_EMAIL || !ADMIN_PASSWORD, "Identifiants E2E absents (ECOSYSTEM_E2E_ADMIN_EMAIL / ECOSYSTEM_E2E_ADMIN_PASSWORD).");
+
+  await login(page);
+
+  // --- Given : état de cohérence lu depuis l'API (sans mutation) -------------
+  const coherence = await fetchCoherence(page);
+  test.skip(
+    coherence === null,
+    `Comportement préventif non déployé : GET ${COHERENCE_PATH} absent (404) — nécessite le Plan A (T-20260923-073508-d3i9).`,
+  );
+
+  const affected = coherence!.affected || [];
+
+  // --- Then : `opencode` est un fournisseur par DÉFAUT SANS clé ---------------
+  // Aucune entrée affectée dont le modèle appartient au fournisseur par défaut :
+  // exiger `act.has("opencode")` produirait un faux positif (bug corrigé).
+  expect(
+    affected.filter((a) => String(a.model || "").startsWith("opencode/")),
+    "aucun modèle opencode/* ne doit être signalé « non servi » (fournisseur par défaut sans clé)",
+  ).toEqual([]);
+
+  // Les DEUX agents déclarant `opencode/*` ne doivent JAMAIS être affectés.
+  for (const agent of ["clean-arch-detector-react", "hexagonal-architecture-auditor"]) {
+    expect(
+      affected.some((a) => a.agent === agent),
+      `l'agent « ${agent} » (modèle opencode/*) ne doit pas être signalé non servi`,
+    ).toBe(false);
+  }
+
+  // Véracité : `opencode` n'est PAS une clé active (ce n'est pas un fournisseur à
+  // clé — il ne doit donc jamais apparaître dans `activeProviders`).
+  expect(
+    (coherence!.activeProviders || []).includes("opencode"),
+    "« opencode » (fournisseur par défaut sans clé) ne doit pas figurer dans activeProviders",
+  ).toBe(false);
+
+  // Vérification produit : la bannière de cohérence éventuelle (autre incohérence
+  // RÉELLE) ne cite jamais un modèle du fournisseur par défaut.
+  await openProvidersTab(page);
+  await expect(
+    coherenceBanner(page).getByText(/opencode\//),
+    "aucun modèle opencode/* ne doit apparaître dans la bannière de cohérence",
+  ).toHaveCount(0);
 });

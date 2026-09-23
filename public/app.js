@@ -6313,6 +6313,63 @@ function adrFullContentHtml(d) {
   return `<div class="adr-detail" style="padding:10px 12px;background:#15171c;border-radius:6px">${body}</div>`;
 }
 
+// A001 — Lecture COMPLÈTE d'une ADR sur UNE modal unique (item 33) : fusionne
+// les deux mécanismes concurrents (« Regarder » = lecture ; « ▸ Complet » =
+// dépliage en place, supprimé par A002-A006). La modal est SCROLLABLE (réutilise
+// `modal-doc-fullscreen` + `doc-view-body` déjà `overflow:auto`, cf. style.css)
+// et affiche le titre, le statut (adrStatusBadge), les pièces jointes
+// (adrAttSourceBadge + lecture/téléchargement) et le contenu INTÉGRAL
+// (adrFullContentHtml) construit depuis les données déjà chargées par
+// GET /api/docs — AUCUNE requête réseau dans le cas nominal. Repli sur
+// `viewRefDoc` quand l'ADR n'a aucun champ structuré (ni description / contexte /
+// décision / conséquences) : la lecture du fichier référencé (ou des champs du
+// registre) reste possible, jamais d'échec silencieux.
+function adrReadModal(adr) {
+  const d = adr || {};
+  const filled = (v) => v !== undefined && v !== null && String(v).trim() !== '';
+  const hasStructured = [d.description, d.context, d.decision, d.consequences].some(filled);
+  if (!hasStructured) { viewRefDoc(d.docId); return; }
+  const list = Array.isArray(d.attachments) ? d.attachments : [];
+  const attItems = list.map((a) => {
+    const name = a.title || a.path || a.targetDocId || 'pièce';
+    const badge = adrAttSourceBadge(a.source);
+    let link;
+    if (a.source === 'registry') {
+      link = `<a href="#" data-adr-read-att-view="${esc(a.targetDocId || '')}" title="Voir le document du registre">${esc(name)}</a>`;
+    } else {
+      const href = `/api/docs/${encodeURIComponent(d.docId)}/attachments/${encodeURIComponent(a.attachmentId)}/download`;
+      link = `<a href="${esc(href)}" title="Télécharger ${esc(name)}">${esc(name)}</a>`;
+    }
+    return `<div style="display:flex;gap:6px;align-items:center;margin:2px 0">${badge} ${link}</div>`;
+  }).join('');
+  const attHtml = list.length ? attItems : '<span class="muted-sm">—</span>';
+  showModal(`
+    <div class="modal modal-doc-fullscreen">
+      <div class="doc-view-head">
+        <div class="doc-view-title">
+          <h3>${esc(d.title || d.docId || 'ADR')}</h3>
+          <p class="muted-sm">${adrStatusBadge(d.status)} ${esc(d.path || '')}</p>
+        </div>
+        <div class="doc-view-actions">
+          <button class="ghost" id="modal-cancel">Fermer</button>
+        </div>
+      </div>
+      <div class="doc-view-body">
+        <div style="margin-bottom:12px">
+          <div class="muted-sm" style="font-weight:600;margin-bottom:4px">Pièces jointes</div>
+          ${attHtml}
+        </div>
+        ${adrFullContentHtml(d)}
+      </div>
+    </div>`);
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.querySelectorAll('[data-adr-read-att-view]').forEach((b) => b.addEventListener('click', (e) => {
+    e.preventDefault();
+    const id = b.getAttribute('data-adr-read-att-view');
+    if (id) viewRefDoc(id);
+  }));
+}
+
 // Badge de source d'une pièce jointe d'ADR (item 122).
 function adrAttSourceBadge(source) {
   const map = {
@@ -6458,14 +6515,10 @@ function adrTableHtml(ctx = {}) {
     // GET /api/docs) ; inchangé sinon (aucune régression pour les ADR lisibles).
     const viewBtn = d.contentAvailable === false
       ? `<button type="button" class="ghost tiny" disabled title="Aucun contenu disponible (ni fichier ni champs structurés)">Regarder</button>`
-      : `<button type="button" class="ghost tiny" data-${prefix}-view="${esc(d.docId)}" title="Voir le document">Regarder</button>`;
-    // A002 — ligne de DÉTAIL repliée, immédiatement après la ligne principale :
-    // contenu structuré INTÉGRAL déjà chargé (adrFullContentHtml), aucune
-    // requête réseau, aucune dépendance au fichier `path`. Pas de `data-status`
-    // ⇒ exclue du filtrage et du compteur (colspan = 8 colonnes d'en-tête).
-    const detailRow = `<tr class="adr-detail-row" data-detail-for="${esc(d.docId)}" hidden>
-      <td colspan="8" style="padding:0">${adrFullContentHtml(d)}</td>
-    </tr>`;
+      : `<button type="button" class="ghost tiny" data-${prefix}-view="${esc(d.docId)}" title="Voir le document complet">Regarder</button>`;
+    // A002-A003 — plus de ligne de DÉTAIL en place ni de bouton « ▸ Complet » :
+    // la lecture complète passe par l'action UNIQUE « Regarder » (adrReadModal),
+    // donc la table reste stable (aucune ligne insérée/décalée).
     return `<tr data-status="${esc(attrs.status)}" data-repos="${esc(attrs.repos)}" data-search="${esc(attrs.search)}" data-missing="${isMissingFeature ? '1' : '0'}"${show ? '' : ' hidden'}>
       <td><strong>${esc(d.title || d.docId)}</strong>${d.description ? `<div class="muted-sm">${esc(d.description)}</div>` : ''}</td>
       <td>${adrStatusBadge(d.status)}</td>
@@ -6476,12 +6529,10 @@ function adrTableHtml(ctx = {}) {
       <td>${adrAttachmentsCell(d, prefix)}</td>
       <td class="adr-actions">
         <button type="button" class="ghost tiny" data-${prefix}-edit="${esc(d.docId)}" title="Éditer l'ADR">Éditer</button>
-        <button type="button" class="ghost tiny" data-${prefix}-full="${esc(d.docId)}" aria-expanded="false" title="Afficher le contenu complet (contexte / décision / conséquences)">▸ Complet</button>
         ${viewBtn}
         <button type="button" class="ghost tiny danger-text" data-${prefix}-del="${esc(d.docId)}" title="Supprimer l'ADR">Supprimer</button>
       </td>
-    </tr>
-    ${detailRow}`;
+    </tr>`;
   }).join('');
   return `
     <div class="adr-pane-filters">
@@ -6528,19 +6579,15 @@ function bindAdrTable(rootEl, ctx = {}) {
     if (!adr) return;
     adrFormModal(project, repos, adr, onChange);
   }));
-  root.querySelectorAll(`[data-${prefix}-view]`).forEach((b) => b.addEventListener('click', () => viewRefDoc(attr(b, 'view'))));
-  // A003 — bascule « Complet » : déplie / replie la ligne de détail adjacente
-  // EN PLACE (contenu déjà rendu, aucune requête réseau). Libellé et
-  // `aria-expanded` synchronisés avec l'état `hidden` de la ligne de détail.
-  root.querySelectorAll(`[data-${prefix}-full]`).forEach((b) => b.addEventListener('click', () => {
-    const tr = b.closest('tr');
-    const detail = tr && tr.nextElementSibling;
-    if (!detail || !detail.classList.contains('adr-detail-row')) return;
-    const willShow = detail.hidden;
-    detail.hidden = !willShow;
-    b.textContent = willShow ? '▾ Complet' : '▸ Complet';
-    b.setAttribute('aria-expanded', willShow ? 'true' : 'false');
+  // A005 — action UNIQUE de lecture : « Regarder » ouvre la modal unifiée
+  // (titre + statut + pièces jointes + contenu intégral) depuis les données déjà
+  // chargées (`docs()`), repli viewRefDoc géré par adrReadModal.
+  root.querySelectorAll(`[data-${prefix}-view]`).forEach((b) => b.addEventListener('click', () => {
+    const d = docs().find((x) => x.docId === attr(b, 'view'));
+    if (d) adrReadModal(d);
   }));
+  // A004 — le handler d'accordéon « ▸ Complet » est supprimé (plus de ligne de
+  // détail à basculer : la lecture complète passe par adrReadModal).
   root.querySelectorAll(`[data-${prefix}-del]`).forEach((b) => b.addEventListener('click', async () => {
     if (!confirm('Supprimer cette ADR ?')) return;
     const original = b.innerHTML;
@@ -6598,13 +6645,8 @@ function bindAdrTable(rootEl, ctx = {}) {
       row.hidden = !show;
       if (show) visible++;
     }
-    // A004 — replier toutes les lignes de détail ouvertes : évite qu'une ligne
-    // de détail reste affichée sous une ligne principale masquée par un filtre.
-    root.querySelectorAll('.adr-detail-row').forEach((r) => { r.hidden = true; });
-    root.querySelectorAll(`[data-${prefix}-full]`).forEach((b) => {
-      b.textContent = '▸ Complet';
-      b.setAttribute('aria-expanded', 'false');
-    });
+    // A006 — plus de ligne de détail en place à replier : le filtrage ne
+    // manipule que les lignes principales (data-status), aucune ligne orpheline.
     if (countEl) countEl.textContent = `${visible} / ${rows.length} ADR`;
   };
   if (searchEl) searchEl.addEventListener('input', apply);

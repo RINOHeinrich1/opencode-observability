@@ -70,7 +70,15 @@ const AGENTS_BY_TYPE = {
 async function api(path, opts) {
   const r = await fetch(path, opts);
   if (r.status === 401) { window.location.href = '/login'; throw new Error('unauthorized'); }
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
+  if (!r.ok) {
+    // Conserve le corps structuré de l'erreur (code/model/provider/…) : certaines
+    // routes renvoient un détail exploitable (ex. MODEL_NOT_SERVED, ADR-005).
+    const body = await r.json().catch(() => ({}));
+    const err = new Error(body.error || r.status);
+    err.status = r.status;
+    err.body = body;
+    throw err;
+  }
   return r.json();
 }
 
@@ -3929,12 +3937,46 @@ async function openBatchSession(batchId, btn) {
   try {
     const r = await api(`/api/batches/${encodeURIComponent(batchId)}/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: false }) });
     if (r.sessionId && /^ses_/.test(r.sessionId)) window.open(sessionHref(r.sessionId), '_blank');
+    else if (r.code === 'MODEL_NOT_SERVED') showSessionModelError(r);
     else alert(r.error || 'Impossible de lancer la session d\'orchestration du batch.');
     refreshActive();
   } catch (e) {
+    const body = e && e.body;
+    if ((body && body.code === 'MODEL_NOT_SERVED') || e.code === 'MODEL_NOT_SERVED') {
+      showSessionModelError(body || e);
+    } else {
+      alert('Échec : ' + (e.message || e));
+    }
+  } finally {
+    // Jamais laisser le bouton croire à un « chargement » : on le réactive
+    // SYSTÉMATIQUEMENT (échec comme succès), le message d'erreur restant affiché.
     if (btn && original != null) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = original; }
-    alert('Échec : ' + (e.message || e));
   }
+}
+
+// Affiche un message d'erreur EXPLICITE et PERSISTANT (modale) quand le modèle
+// déclaré n'est pas servi par la clé active d'un fournisseur (ADR-005) : modèle
+// demandé, fournisseur (clé active) et catalogue servi par ce fournisseur.
+function showSessionModelError(payload) {
+  const p = payload || {};
+  const catalog = Array.isArray(p.catalog) ? p.catalog : [];
+  const activeProviders = Array.isArray(p.activeProviders) ? p.activeProviders : [];
+  const sameProvider = p.provider ? catalog.filter((m) => m.startsWith(p.provider + '/')) : [];
+  const shown = (sameProvider.length ? sameProvider : catalog).slice(0, 40);
+  showModal(`
+    <div class="modal">
+      <h2>Lancement de session impossible</h2>
+      <p class="muted">${esc(p.error || p.message || 'Le modèle déclaré n\'est pas servi par la clé active du fournisseur.')}</p>
+      <div class="recette-list">
+        <div class="recette-item"><strong>Modèle demandé</strong> <code class="chip-project">${esc(p.model || '—')}</code>(absent du catalogue servi)</div>
+        <div class="recette-item"><strong>Fournisseur (clé active)</strong> <code class="muted-sm">${esc(p.provider || '—')}</code>${activeProviders.length ? ` · clés actives : ${esc(activeProviders.join(', '))}` : ''}</div>
+        <div class="recette-item"><strong>Catalogue servi</strong> ${catalog.length ? `${catalog.length} modèle(s)` : '<span class="muted-sm">indisponible (CLI opencode injoignable)</span>'}</div>
+      </div>
+      ${shown.length ? `<div class="actions-section"><h3>Modèles disponibles${p.provider ? ` — fournisseur ${esc(p.provider)}` : ''} (${shown.length}/${catalog.length})</h3><div class="recette-list"><div class="recette-item">${esc(shown.join(', '))}${catalog.length > shown.length ? ' …' : ''}</div></div></div>` : ''}
+      <div class="modal-actions"><button class="ghost" id="modal-cancel">Fermer</button></div>
+    </div>`);
+  const c = document.getElementById('modal-cancel');
+  if (c) c.onclick = closeModal;
 }
 
 async function batchDetailModal(batchId) {

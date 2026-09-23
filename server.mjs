@@ -15,7 +15,7 @@ import { scanEcosystem, updateAgentModel } from "./ecosystem.mjs";
 // Cohérence « clé active fournisseur ↔ modèle déclaré » (ADR-005) : helpers
 // UNIQUES déployés par wcbc (session-bridge.mjs) — source de vérité du
 // catalogue servi, réutilisée sans logique divergente.
-import { getActiveProviderIds, listServedModels, checkModelServable } from "./session-bridge.mjs";
+import { getActiveProviderIds, getActiveProvidersStatus, isDefaultProvider, listServedModels, checkModelServable } from "./session-bridge.mjs";
 import { loadEnv } from "./env.mjs";
 import * as pilot from "./pilot.mjs";
 import { closeAllMcpClients } from "./mcp-client.mjs";
@@ -164,6 +164,59 @@ async function getDefaultOrgId() {
 // le même catalogue — plus de cache dupliqué pouvant diverger (ADR-005).
 function listModels() {
   return listServedModels();
+}
+
+// Catalogue ENRICHI des modèles pour le sélecteur d'agent : groupement par
+// fournisseur + statut de clé + servabilité, construit à partir des MÊMES
+// helpers uniques que le contrôle de cohérence ADR-005 (§a) — aucune logique de
+// catalogue divergente :
+//   - « clé active »  : `getActiveProvidersStatus()` (clés RÉELLES de auth.json) ;
+//   - « défaut sans clé » : prédicat PARTAGÉ `isDefaultProvider()` (ex. opencode,
+//     jamais présenté comme « aucune clé », cf. correctif T-20260923-143326-591g) ;
+//   - « servi / non servi » : `checkModelServable()` (source unique).
+//
+// Retour :
+//   { models, catalogAvailable, activeProviders, totalModels,
+//     providers: [{ provider, keyStatus, keyLabel, modelCount,
+//                   models: [{ id, served, reason }] }] }
+// `models` (liste plate `provider/modèle`) est CONSERVÉE pour la rétrocompat de
+// GET /api/models (contrat historique `{ models: [...] }`).
+function modelsCatalog() {
+  const models = listModels();
+  const catalogAvailable = Array.isArray(models) && models.length > 0;
+  const authStatus = getActiveProvidersStatus();
+  const activeProviders = [...(authStatus.providers || [])];
+
+  // Groupement par fournisseur (préfixe avant le 1er « / »).
+  const byProvider = new Map();
+  for (const m of models) {
+    const id = String(m);
+    const slash = id.indexOf("/");
+    const provider = slash > 0 ? id.slice(0, slash) : "(sans fournisseur)";
+    if (!byProvider.has(provider)) byProvider.set(provider, []);
+    byProvider.get(provider).push(id);
+  }
+
+  const providers = [...byProvider.keys()].sort().map((provider) => {
+    const hasKey = activeProviders.includes(provider);
+    const keyStatus = hasKey ? "active" : (isDefaultProvider(provider) ? "default_no_key" : "no_key");
+    const keyLabel = keyStatus === "active"
+      ? "clé active ✓"
+      : (keyStatus === "default_no_key" ? "défaut sans clé" : "aucune clé");
+    const providerModels = byProvider.get(provider).map((id) => {
+      const check = checkModelServable({ model: id, activeProviders: authStatus.providers, catalog: models, authStatus });
+      return { id, served: !!check.servable, reason: check.reason || "" };
+    });
+    return { provider, keyStatus, keyLabel, modelCount: providerModels.length, models: providerModels };
+  });
+
+  return {
+    models,
+    catalogAvailable,
+    activeProviders: activeProviders.sort(),
+    totalModels: models.length,
+    providers,
+  };
 }
 
 // --- Consommation (usage) par session et par tâche --------------------------
@@ -1913,7 +1966,9 @@ const server = createServer(async (req, res) => {
       if (await providerRouteDenied(user, res)) return;
       return sendJson(res, 200, { ...agentsModelCoherence(), authPath: SHARED_AUTH });
     }
-    if (path === "/api/models" && req.method === "GET") return sendJson(res, 200, { models: listModels() });
+    // Catalogue enrichi (groupement fournisseur + statut de clé + servabilité) ;
+    // la clé `models` (liste plate) est CONSERVÉE pour la rétrocompatibilité.
+    if (path === "/api/models" && req.method === "GET") return sendJson(res, 200, modelsCatalog());
     const agentModelMatch = path.match(/^\/api\/agents\/([^/]+)\/model$/);
     if (agentModelMatch && req.method === "POST") {
       if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });

@@ -408,6 +408,19 @@ button.restore-btn { background: var(--green); }
 }
 .eco-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .eco-card-head strong { font-size: 14px; }
+/* Fournisseurs LLM (onglet Écosystème, admin) : lignes de clés + badge « actif ».
+   La VALEUR d'une clé n'est jamais affichée (seule une empreinte non réversible). */
+.prov-card .eco-card-head { justify-content: space-between; }
+.prov-key-list { display: flex; flex-direction: column; gap: 6px; }
+.prov-key-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; }
+.prov-key-label { color: var(--text); }
+.prov-key-row code { color: var(--muted); }
+.prov-key-actions { margin-left: auto; display: flex; gap: 6px; }
+.prov-key-badge {
+  display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 10px;
+  font-size: 11px; background: var(--bg); border: 1px solid var(--border); color: var(--muted);
+}
+.prov-key-badge.active { background: #1f4d2b; border-color: #2e7d46; color: #b6f0c6; }
 .eco-desc { margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
 .eco-more {
   background: transparent;

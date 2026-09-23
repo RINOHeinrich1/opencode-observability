@@ -7,6 +7,9 @@ let IS_SUPERVISOR = false; // vrai si rôle « superviseur » (ADR-002 : lecture
 let REFRESH_S = 10;      // intervalle (s), surchargé par /api/config (min 10)
 let refreshTimer = null;
 let activeTab = 'overview';
+// Sous-onglet de la page Écosystème : 'agents' (contenu historique) | 'providers'
+// (fournisseurs LLM, admin uniquement). Persistant (rechargement).
+let ecosystemTab = localStorage.getItem('panel_eco_tab') || 'agents';
 let lastUpdated = null;
 let taskFilter = '';     // tâche sélectionnée comme filtre ('' = aucune)
 let SESSION_BASE_URL = 'https://dev.madatalk.fr'; // base des liens de session opencode
@@ -5230,13 +5233,30 @@ function pluginCard(p) {
   </article>`;
 }
 
+// Page Écosystème — 2 sous-onglets : « Agents » (contenu historique : Agents,
+// Serveurs MCP, Skills, Plugins + redémarrage global) et « Fournisseurs »
+// (gestion multi-clés LLM, ADMIN uniquement). Le sous-onglet actif est persisté.
 async function renderEcosystem() {
+  const pane = document.getElementById('pane-ecosystem');
+  const isAdmin = !!(ME && ME.is_admin);
+  if (ecosystemTab === 'providers' && !isAdmin) ecosystemTab = 'agents'; // jamais l'onglet admin pour un non-admin
+  const tabBtn = (id, label) => `<button class="pd-tab${ecosystemTab === id ? ' active' : ''}" data-eco-tab="${id}">${label}</button>`;
+  pane.innerHTML = `
+    <div class="pd-tabs" id="eco-tabs">${tabBtn('agents', 'Agents')}${isAdmin ? tabBtn('providers', 'Fournisseurs') : ''}</div>
+    <div id="eco-tab-content"></div>`;
+  pane.querySelectorAll('#eco-tabs [data-eco-tab]').forEach((b) => b.addEventListener('click', () => {
+    ecosystemTab = b.dataset.ecoTab;
+    localStorage.setItem('panel_eco_tab', ecosystemTab);
+    renderEcosystem();
+  }));
+  if (ecosystemTab === 'providers') return renderEcosystemProviders();
+
   const e = await api('/api/ecosystem');
   const section = (title, count, cards) =>
     `<section class="eco-section"><h2>${esc(title)} <span class="muted-sm">${count}</span></h2><div class="eco-grid">${cards}</div></section>`;
-  document.getElementById('pane-ecosystem').innerHTML = `
+  document.getElementById('eco-tab-content').innerHTML = `
     <div class="eco-summary muted-sm">Écosystème découvert dynamiquement depuis <code>${esc(e.dir || '~/.config/opencode')}</code></div>
-    ${ME && ME.is_admin ? `<div class="eco-restart-bar"><button class="launch-btn" id="eco-restart-all" title="Redémarre chaque instance systemd opencode@&lt;user&gt;.service (+ opencode.service) pour recharger la config des agents">Redémarrer toutes les sessions opencode</button><span id="eco-restart-msg"></span></div>` : ''}
+    ${isAdmin ? `<div class="eco-restart-bar"><button class="launch-btn" id="eco-restart-all" title="Redémarre chaque instance systemd opencode@&lt;user&gt;.service (+ opencode.service) pour recharger la config des agents">Redémarrer toutes les sessions opencode</button><span id="eco-restart-msg"></span></div>` : ''}
     ${section('Agents', e.agents.length, e.agents.map(agentCard).join('') || '<p class="muted">Aucun agent</p>')}
     ${section('Serveurs MCP', e.mcp.length, e.mcp.map(mcpCard).join('') || '<p class="muted">Aucun serveur MCP</p>')}
     ${section('Skills', e.skills.length, e.skills.map(skillCard).join('') || '<p class="muted">Aucun skill</p>')}
@@ -5245,6 +5265,143 @@ async function renderEcosystem() {
   document.querySelectorAll('#pane-ecosystem [data-edit-model]').forEach((b) => b.addEventListener('click', () => editAgentModelModal(b.dataset.editModel, b.dataset.model)));
   const ecoRestartBtn = document.getElementById('eco-restart-all');
   if (ecoRestartBtn) ecoRestartBtn.onclick = restartAllOpencodeSessions;
+}
+
+// --- Onglet « Fournisseurs » (admin) : multi-clés LLM par fournisseur --------
+// Les valeurs de clés ne sont JAMAIS affichées (l'API n'en renvoie aucune).
+function providerKeyRow(k) {
+  return `<div class="prov-key-row">
+    <span class="prov-key-badge ${k.isActive ? 'active' : ''}">${k.isActive ? 'actif' : 'inactif'}</span>
+    <span class="prov-key-label">${esc(k.label || 'sans libellé')}</span>
+    <code class="muted-sm" title="empreinte non réversible">${esc(k.fingerprint || '')}</code>
+    <span class="prov-key-actions">
+      ${k.isActive ? '' : `<button class="ghost tiny" data-prov-activate="${k.id}">Activer</button>`}
+      <button class="ghost tiny" data-prov-delete="${k.id}">Supprimer</button>
+    </span>
+  </div>`;
+}
+
+function providerCard(p) {
+  const rows = (p.keys || []).map(providerKeyRow).join('') || '<p class="muted-sm">Aucune clé</p>';
+  return `<article class="eco-card prov-card">
+    <div class="eco-card-head"><strong class="code">${esc(p.provider)}</strong><span class="muted-sm">${(p.keys || []).length} clé(s)</span></div>
+    <div class="prov-key-list">${rows}</div>
+    <button class="ghost tiny" data-prov-add="${esc(p.provider)}">Ajouter une clé</button>
+  </article>`;
+}
+
+async function renderEcosystemProviders() {
+  const el = document.getElementById('eco-tab-content');
+  if (!el) return;
+  el.innerHTML = '<p class="muted">Chargement…</p>';
+  let data;
+  try { data = await api('/api/providers'); }
+  catch (e) { el.innerHTML = `<p class="msg error">${esc(e.message || String(e))}</p>`; return; }
+  const providers = data.providers || [];
+  el.innerHTML = `
+    <div class="eco-summary muted-sm">Clés fournisseurs LLM stockées <strong>chiffrées (AES-256-GCM)</strong>. La valeur n'est <strong>jamais</strong> affichée. Fichier généré : <code>${esc(data.authPath || '')}</code></div>
+    <div class="eco-restart-bar">
+      <button class="launch-btn" id="prov-add-btn">Ajouter une clé</button>
+      <button class="launch-btn" id="prov-apply-btn" title="Régénère l'auth.json de toutes les instances et redémarre les sessions opencode">Appliquer &amp; redémarrer</button>
+      <span id="prov-msg" class="muted-sm"></span>
+    </div>
+    <section class="eco-section"><h2>Fournisseurs <span class="muted-sm">${providers.length}</span></h2>
+      <div class="eco-grid">${providers.map(providerCard).join('') || '<p class="muted">Aucun fournisseur enregistré</p>'}</div>
+    </section>`;
+  const refresh = () => renderEcosystemProviders();
+  const addBtn = document.getElementById('prov-add-btn');
+  if (addBtn) addBtn.addEventListener('click', () => providerKeyAddModal(''));
+  el.querySelectorAll('[data-prov-add]').forEach((b) => b.addEventListener('click', () => providerKeyAddModal(b.dataset.provAdd)));
+  el.querySelectorAll('[data-prov-activate]').forEach((b) => b.addEventListener('click', () => providerKeyActivate(Number(b.dataset.provActivate), b, refresh)));
+  el.querySelectorAll('[data-prov-delete]').forEach((b) => b.addEventListener('click', () => providerKeyDelete(Number(b.dataset.provDelete), b, refresh)));
+  const applyBtn = document.getElementById('prov-apply-btn');
+  if (applyBtn) applyBtn.addEventListener('click', () => providerApply(applyBtn, refresh));
+}
+
+// Modale d'ajout d'une clé. `provider` pré-rempli (et figé) depuis une carte ;
+// vide → champ libre (fournisseur saisi à la main).
+function providerKeyAddModal(provider = '') {
+  const fixed = !!provider;
+  showModal(`<div class="modal">
+    <h2>Ajouter une clé fournisseur</h2>
+    <form id="prov-add-form" class="modal-form">
+      <label>Fournisseur<input id="prov-add-provider" value="${esc(provider)}" ${fixed ? 'readonly' : ''} placeholder="deepinfra, deepseek, opencode-go…"></label>
+      <label>Libellé (optionnel)<input id="prov-add-label" placeholder="ex. clé perso, clé équipe"></label>
+      <label>Clé API<input id="prov-add-key" type="password" autocomplete="off" placeholder="collée ici, jamais réaffichée"></label>
+      <p id="prov-add-msg" class="muted-sm"></p>
+      <div class="modal-actions"><button type="button" class="ghost" id="prov-add-cancel">Annuler</button><button type="submit" class="launch-btn">Enregistrer</button></div>
+    </form>
+  </div>`);
+  document.getElementById('prov-add-cancel').onclick = closeModal;
+  document.getElementById('prov-add-form').onsubmit = async (ev) => {
+    ev.preventDefault();
+    const btn = ev.target.querySelector('button[type="submit"]');
+    const m = document.getElementById('prov-add-msg');
+    const p = document.getElementById('prov-add-provider').value.trim();
+    const label = document.getElementById('prov-add-label').value.trim();
+    const key = document.getElementById('prov-add-key').value.trim();
+    if (!p || !key) { m.textContent = 'Fournisseur et clé requis.'; m.className = 'msg error'; return; }
+    setBtnBusy(btn, 'Enregistrement');
+    try {
+      await api('/api/providers/keys', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: p, label, key }) });
+      closeModal();
+      renderEcosystemProviders();
+    } catch (e) {
+      m.textContent = e.message || String(e); m.className = 'msg error';
+      btn.disabled = false; btn.classList.remove('ws-busy'); btn.textContent = 'Enregistrer';
+    }
+  };
+}
+
+function providerMsg(html, isError) {
+  const m = document.getElementById('prov-msg');
+  if (!m) return;
+  m.innerHTML = html;
+  m.className = isError ? 'msg error' : 'msg';
+}
+
+async function providerKeyActivate(id, btn, refresh) {
+  if (!confirm('Activer cette clé pour son fournisseur ?\nL\'auth.json sera régénéré et TOUTES les instances opencode redémarrées.')) return;
+  setBtnBusy(btn, 'Activation');
+  try {
+    const d = await api(`/api/providers/keys/${id}/activate`, { method: 'POST' });
+    const restarted = (d.restarted || []).join(', ') || 'aucune';
+    const nbFail = (d.failed || []).length;
+    providerMsg(`Clé activée. auth.json régénéré (${(d.propagation && d.propagation.providers) || 0} fournisseur(s)). Redémarrées : <code>${esc(restarted)}</code>${nbFail ? ` <span class="error">(${nbFail} échec(s))</span>` : ''}`, nbFail > 0);
+    refresh();
+  } catch (e) {
+    providerMsg(esc(e.message || String(e)), true);
+    if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.textContent = 'Activer'; }
+  }
+}
+
+async function providerKeyDelete(id, btn, refresh) {
+  if (!confirm('Supprimer cette clé ?\nSi c\'était la clé active, une autre clé du fournisseur sera réactivée.')) return;
+  setBtnBusy(btn, 'Suppression');
+  try {
+    const d = await api(`/api/providers/keys/${id}`, { method: 'DELETE' });
+    providerMsg(`Clé supprimée${d.deleted && d.deleted.wasActive ? ' (était active — auth.json régénéré)' : ''}.`, false);
+    refresh();
+  } catch (e) {
+    providerMsg(esc(e.message || String(e)), true);
+    if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.textContent = 'Supprimer'; }
+  }
+}
+
+async function providerApply(btn, refresh) {
+  if (!confirm('Appliquer les clés actives et redémarrer TOUTES les instances opencode ?\nLes sessions en cours seront interrompues.')) return;
+  setBtnBusy(btn, 'Application');
+  try {
+    const d = await api('/api/providers/apply', { method: 'POST' });
+    const restarted = (d.restarted || []).join(', ') || 'aucune';
+    const nbFail = (d.failed || []).length;
+    providerMsg(`auth.json régénéré (${(d.propagation && d.propagation.providers) || 0} fournisseur(s)). Redémarrées : <code>${esc(restarted)}</code>${nbFail ? ` <span class="error">(${nbFail} échec(s))</span>` : ''}`, nbFail > 0);
+    refresh();
+  } catch (e) {
+    providerMsg(esc(e.message || String(e)), true);
+  } finally {
+    if (btn) { btn.disabled = false; btn.classList.remove('ws-busy'); btn.innerHTML = 'Appliquer &amp; redémarrer'; }
+  }
 }
 
 // --- Workspaces Coder (admin) ------------------------------------------------

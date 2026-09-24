@@ -3169,10 +3169,6 @@ const EVAL_ITEM_STATUS_LABELS = { open: 'ouvert', treated: 'traité', dismissed:
 // DÉCISION ADMIN (distincte du statut de suivi) : l'admin marque « à traiter »
 // ou « non retenu » ; l'exécuteur n'accède qu'aux éléments « à traiter ».
 const EVAL_ITEM_DECISION_LABELS = { pending: 'non décidé', a_traiter: 'à traiter', non_retenu: 'non retenu' };
-function evalDecisionBadge(d) {
-  const cls = d === 'a_traiter' ? 'in_progress' : d === 'non_retenu' ? 'rejected' : 'queued';
-  return `<span class="badge ${cls}" title="Décision admin (à traiter / non retenu)">${esc(EVAL_ITEM_DECISION_LABELS[d] || d || '—')}</span>`;
-}
 function evalCategoryBadge(c) { return `<span class="badge ${c === 'probleme' ? 'danger' : 'awaiting'}">${esc(EVAL_CATEGORY_LABELS[c] || c || '—')}</span>`; }
 function evalSeverityBadge(s) { return `<span class="badge eval-sev-${esc(s || 'medium')}" title="Sévérité">${esc(EVAL_SEVERITY_LABELS[s] || s || '—')}</span>`; }
 function evalVerdictBadge(v) {
@@ -3481,26 +3477,58 @@ async function recetteDetailModal(recetteId) {
       .map((v) => `<option value="${v}" ${selected === v ? 'selected' : ''}>${esc(EVAL_ITEM_DECISION_LABELS[v])}</option>`)
       .join('');
   };
+  // STATUT DE SUIVI d'un élément : combo à 3 valeurs (ouvert | traité | écarté),
+  // à l'image d'`evalDecisionOptions`. Modifiable en ligne via la route PATCH
+  // existante `PATCH …/items/:itemId` (`updateRecetteItem`, champ `status`) —
+  // axe DISTINCT de la décision admin.
+  const evalStatusOptions = (cur) => {
+    const selected = cur || 'open';
+    return ['open', 'treated', 'dismissed']
+      .map((v) => `<option value="${v}" ${selected === v ? 'selected' : ''}>${esc(EVAL_ITEM_STATUS_LABELS[v])}</option>`)
+      .join('');
+  };
   showModal(`
     <div class="modal modal-wide">
       <h2>Détail de la recette</h2>
       <p class="muted">${esc(ev.title || recetteId)} — <code>${esc(ev.project || '')}</code> ${recetteStatusBadge(ev.status)}</p>
       ${ev.description ? `<div class="eval-block"><span class="lbl">Parcours évalué</span><div class="muted-sm" style="white-space:pre-wrap">${esc(ev.description)}</div></div>` : ''}
       <h3>Éléments <span class="muted-sm">(recommandations / problèmes)</span></h3>
+      <div class="eval-strip">
+        <span class="stat">À traiter (visible exécuteur) : <b>${items.filter((it) => it.decision === 'a_traiter' && it.status !== 'treated').length}</b></span>
+        <span class="stat">Traités : <b>${items.filter((it) => it.status === 'treated').length}</b></span>
+        <span class="stat">Total : <b>${items.length}</b></span>
+      </div>
+      <div class="eval-legend">
+        <span><b>Décision admin</b> (ADR-001/002 — l'admin décide, l'évaluateur informe)</span>
+        <span><b>Statut de suivi</b> (avancement du traitement)</span>
+      </div>
       <div class="recette-list" id="eval-items-list">
         ${items.map((it) => {
           const repris = (it.reprisPar || []).map((x) => `<span class="badge awaiting" title="Repris par le cadrage ${esc(x.cadrageId)}${x.takenBy ? ` (${esc(x.takenBy)})` : ''}">repris par ${esc(x.title || x.cadrageId)}</span>`).join(' ');
           const pieces = docsByItem.get(Number(it.itemId)) || [];
           const pieceLine = pieces.length ? `<div class="muted-sm eval-item-pieces">${pieces.map((doc) => `<span>${evalNatureIcon(doc.nature)} ${esc(doc.title || (doc.path || '').split('/').pop())}</span>`).join(' · ')}</div>` : '';
-          const decideSelect = IS_ADMIN ? `<select class="eval-decision-sel" data-eval-item-decision="${it.itemId}" title="Décision admin (à traiter / non retenu / non décidé)">${evalDecisionOptions(it.decision)}</select>` : '';
-          return `<div class="recette-item eval-item">
-          ${evalCategoryBadge(it.category)} ${evalSeverityBadge(it.severity)} ${evalDecisionBadge(it.decision)}
+          // DÉCISION ADMIN : combo 3 valeurs SI admin, sinon lecture seule — la
+          // décision est admin-only (route POST …/items/:itemId/decision, garde 403).
+          const decisionControl = IS_ADMIN
+            ? `<select class="eval-decision-sel d-${esc(it.decision || 'pending')}" data-eval-item-decision="${it.itemId}" title="Décision admin (à traiter / non retenu / non décidé)">${evalDecisionOptions(it.decision)}</select>`
+            : `<span class="readonly-note">${esc(EVAL_ITEM_DECISION_LABELS[it.decision] || it.decision || '—')} (admin uniquement)</span>`;
+          // STATUT DE SUIVI : combo modifiable (évaluateur/admin) appelant la route
+          // PATCH existante ; badge en lecture seule pour l'exécuteur/superviseur.
+          const statusControl = canWrite
+            ? `<select class="eval-status-sel s-${esc(it.status || 'open')}" data-eval-item-status="${it.itemId}" title="Statut de suivi (ouvert / traité / écarté) — PATCH …/items/:itemId">${evalStatusOptions(it.status)}</select>`
+            : `<span class="badge ${it.status === 'treated' ? 'done' : it.status === 'dismissed' ? 'queued' : 'in_progress'}">${esc(EVAL_ITEM_STATUS_LABELS[it.status] || it.status)}</span>`;
+          return `<div class="recette-item eval-item${it.status === 'treated' ? ' done' : ''}">
+          <div class="eval-item-head">
+            ${evalCategoryBadge(it.category)} ${evalSeverityBadge(it.severity)}
+            ${repris}
+          </div>
           <span class="eval-item-content">${esc(it.content)}</span>
-          <span class="badge ${it.status === 'treated' ? 'done' : it.status === 'dismissed' ? 'queued' : 'in_progress'}">${esc(EVAL_ITEM_STATUS_LABELS[it.status] || it.status)}</span>
-          ${repris}
-          ${decideSelect}
-          ${canWrite ? `<button class="ghost" data-eval-item-piece="${it.itemId}" title="Joindre une pièce à cet élément">+ pièce</button>` : ''}
-          ${canWrite ? `<button class="ghost" data-eval-item-edit="${it.itemId}">Éditer</button><button class="danger" data-eval-item-del="${it.itemId}">Retirer</button>` : ''}
+          <div class="eval-item-foot">
+            <span class="ctrl"><span class="lbl">Décision admin</span>${decisionControl}</span>
+            <span class="ctrl"><span class="lbl">Statut de suivi</span>${statusControl}</span>
+            ${canWrite ? `<button class="ghost" data-eval-item-piece="${it.itemId}" title="Joindre une pièce à cet élément">+ pièce</button>` : ''}
+            ${canWrite ? `<button class="ghost" data-eval-item-edit="${it.itemId}">Éditer</button><button class="danger" data-eval-item-del="${it.itemId}">Retirer</button>` : ''}
+          </div>
           ${pieceLine}
         </div>`;
         }).join('') || '<p class="muted-sm">Aucun élément.</p>'}
@@ -3612,9 +3640,8 @@ async function recetteDetailModal(recetteId) {
       alert('Échec : ' + (e.message || e));
     }
   }));
-  // Décision ADMIN via COMBO unique (non décidé | à traiter | non retenu) — route
-  // admin-only côté serveur (403 hors admin). AUCUN appel PATCH sur le statut de
-  // suivi (`updateRecetteItem`) : seul `POST …/items/:itemId/decision` est émis.
+  // AXE 1 — DÉCISION ADMIN via COMBO unique (non décidé | à traiter | non retenu) :
+  // route admin-only côté serveur (403 hors admin), `POST …/items/:itemId/decision`.
   document.querySelectorAll('#modal-backdrop [data-eval-item-decision]').forEach((sel) => {
     const prevValue = sel.value;
     sel.addEventListener('change', async () => {
@@ -3626,6 +3653,24 @@ async function recetteDetailModal(recetteId) {
         sel.disabled = false;
         sel.value = prevValue;
         alert('Échec de la décision : ' + (e.message || e));
+      }
+    });
+  });
+  // AXE 2 — STATUT DE SUIVI via COMBO (ouvert | traité | écarté) : route PATCH
+  // existante `updateRecetteItem` (`PATCH …/items/:itemId`, champ `status`),
+  // ouverte à l'évaluateur/admin ; select désactivé pendant l'appel, revert +
+  // alerte en erreur, rechargement de la modale au succès.
+  document.querySelectorAll('#modal-backdrop [data-eval-item-status]').forEach((sel) => {
+    const prevValue = sel.value;
+    sel.addEventListener('change', async () => {
+      sel.disabled = true;
+      try {
+        await api(`${recettesApiBase()}/${encodeURIComponent(recetteId)}/items/${sel.dataset.evalItemStatus}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: sel.value }) });
+        recetteDetailModal(recetteId);
+      } catch (e) {
+        sel.disabled = false;
+        sel.value = prevValue;
+        alert('Échec du statut : ' + (e.message || e));
       }
     });
   });

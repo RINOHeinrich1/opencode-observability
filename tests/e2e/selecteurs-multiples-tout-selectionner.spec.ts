@@ -190,7 +190,12 @@ async function exerciseBulk(page: Page, scopeSel: string, name: string): Promise
     await checkedHidden(scope),
     `${name} : les lignes MASQUÉES sont toujours inchangées (2e clic)`,
   ).toBe(hiddenCheckedBefore);
-  await expect(btn, `${name} : libellé après 2e clic`).toHaveText("Tout sélectionner");
+  // Après le 2e clic, l'état des visibles revient à l'état initial : si l'on
+  // avait coché (makeChecked), toutes les visibles sont désormais cochées →
+  // « Tout désélectionner » ; sinon → « Tout sélectionner ».
+  await expect(btn, `${name} : libellé après 2e clic`).toHaveText(
+    nVisible > 0 && !makeChecked ? "Tout désélectionner" : "Tout sélectionner",
+  );
 
   // -- Compteur toujours cohérent après les bascules ------------------------
   if ((await countEl.count()) > 0) {

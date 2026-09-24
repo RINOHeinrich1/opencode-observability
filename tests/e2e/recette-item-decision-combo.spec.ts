@@ -23,7 +23,7 @@
  *          valeurs « non décidé », « à traiter », « non retenu »
  *     And plus aucun bouton data-eval-item-decide n'est rendu
  *     And je peux sélectionner une décision puis revenir à « non décidé »
- *     And le badge de décision reflète la valeur choisie après rafraîchissement
+ *     And le combo de décision reflète la valeur choisie après rafraîchissement
  *     And le statut de suivi de l'élément reste inchangé (aucun PATCH/POST /items/:itemId)
  *
  *   Scenario: Le combo de décision est réservé à l'admin
@@ -83,8 +83,6 @@ const DECISION_LABELS: Record<string, string> = {
   a_traiter: "à traiter",
   non_retenu: "non retenu",
 };
-
-const DECISION_BADGE = 'span.badge[title="Décision admin (à traiter / non retenu)"]';
 
 async function login(page: Page, username: string, password: string): Promise<void> {
   await page.goto(`${BASE_URL}/login`, { waitUntil: "domcontentloaded" });
@@ -170,9 +168,10 @@ test("Recette : la décision admin d'un élément est un SEUL combo à 3 valeurs
     "non retenu",
   ]);
 
-  // Statut de suivi (badge adjacent au contenu) — capturé pour non-régression.
-  const statusBadge = item.locator(".eval-item-content + span.badge");
-  const statusBefore = ((await statusBadge.textContent()) || "").trim();
+  // Statut de suivi (désormais COMBO `select[data-eval-item-status]`) — capturé
+  // pour non-régression : l'axe décision ne doit pas l'altérer.
+  const statusSelect = item.locator("select[data-eval-item-status]");
+  const statusBefore = await statusSelect.inputValue();
 
   // --- When / Then : choisir une décision puis revenir à « non décidé » -----
   const current = await select.inputValue();
@@ -181,16 +180,16 @@ test("Recette : la décision admin d'un élément est un SEUL combo à 3 valeurs
   requests.length = 0;
   await select.selectOption(target);
   await expect(
-    item.locator(DECISION_BADGE),
-    `le badge de décision doit refléter « ${DECISION_LABELS[target]} »`,
-  ).toHaveText(DECISION_LABELS[target], { timeout: 15_000 });
+    item.locator("select[data-eval-item-decision]"),
+    `le combo de décision doit refléter « ${DECISION_LABELS[target]} »`,
+  ).toHaveValue(target, { timeout: 15_000 });
 
   // Retour explicite à « non décidé » (pending) — impossible avec les 2 boutons.
   await item.locator("select[data-eval-item-decision]").selectOption("pending");
   await expect(
-    item.locator(DECISION_BADGE),
+    item.locator("select[data-eval-item-decision]"),
     "le retour à « non décidé » doit être possible et reflété",
-  ).toHaveText(DECISION_LABELS.pending, { timeout: 15_000 });
+  ).toHaveValue("pending", { timeout: 15_000 });
 
   // --- Then : la décision passe par la route dédiée -------------------------
   const decisionPosts = requests.filter(
@@ -213,9 +212,9 @@ test("Recette : la décision admin d'un élément est un SEUL combo à 3 valeurs
   ).toHaveLength(0);
 
   await expect(
-    item.locator(".eval-item-content + span.badge"),
+    item.locator("select[data-eval-item-status]"),
     "le statut de suivi de l'élément reste inchangé",
-  ).toHaveText(statusBefore);
+  ).toHaveValue(statusBefore);
 });
 
 test("Recette : le combo de décision admin est réservé à l'administrateur (aucun combo pour un non-admin ; POST direct → 403).", async ({

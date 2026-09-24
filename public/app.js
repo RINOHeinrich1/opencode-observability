@@ -8408,6 +8408,61 @@ async function cardinalitySignalsModal() {
 }
 
 // ===========================================================================
+// Helpers communs « tout sélectionner / tout désélectionner » des sélecteurs
+// multiples basés sur le pattern `.adr-pick` (ADR, Fonctionnalités/Règles,
+// Éléments de recette). L'action porte EXCLUSIVEMENT sur les lignes FILTRÉES
+// VISIBLES (`row.hidden === false`) — jamais sur les lignes masquées par un
+// filtre. L'état du bouton `.adr-pick-all` reflète la sélection des visibles.
+// ===========================================================================
+// Lignes visibles (non masquées par le filtre courant) d'un sélecteur `root`.
+function adrPickVisibleRows(root) {
+  return [...root.querySelectorAll('.adr-pick-row')].filter((r) => !r.hidden);
+}
+
+// Recalcule l'état du bouton `.adr-pick-all` selon la sélection des lignes
+// VISIBLES : toutes cochées → « Tout désélectionner », sinon « Tout sélectionner ».
+function adrPickSyncAllBtn(root, cbSelector) {
+  const btn = root.querySelector('.adr-pick-all');
+  if (!btn) return;
+  const boxes = adrPickVisibleRows(root)
+    .map((r) => r.querySelector(cbSelector))
+    .filter(Boolean);
+  const allChecked = boxes.length > 0 && boxes.every((b) => b.checked);
+  btn.textContent = allChecked ? 'Tout désélectionner' : 'Tout sélectionner';
+  btn.dataset.allChecked = allChecked ? '1' : '0';
+}
+
+// Coche/décoche EN MASSE les lignes VISIBLES, puis resynchronise le bouton.
+function adrPickToggleAll(root, cbSelector) {
+  const boxes = adrPickVisibleRows(root)
+    .map((r) => r.querySelector(cbSelector))
+    .filter(Boolean);
+  const allChecked = boxes.length > 0 && boxes.every((b) => b.checked);
+  boxes.forEach((b) => { b.checked = !allChecked; });
+  adrPickSyncAllBtn(root, cbSelector);
+}
+
+// Injecte (une seule fois) le bouton `.adr-pick-all` dans la barre de filtres,
+// câble le clic (bascule en masse) et resynchronise le libellé sur `change`
+// délégué (coche/décoche manuelle d'une case).
+function adrPickBindAll(root, cbSelector) {
+  if (!root) return;
+  const filters = root.querySelector('.adr-pick-filters');
+  if (!filters || root.querySelector('.adr-pick-all')) return;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'ghost tiny adr-pick-all';
+  btn.textContent = 'Tout sélectionner';
+  btn.dataset.allChecked = '0';
+  btn.addEventListener('click', () => adrPickToggleAll(root, cbSelector));
+  filters.appendChild(btn);
+  root.addEventListener('change', (e) => {
+    if (e.target && e.target.matches(cbSelector)) adrPickSyncAllBtn(root, cbSelector);
+  });
+  adrPickSyncAllBtn(root, cbSelector);
+}
+
+// ===========================================================================
 // Sélecteur ADR multi-lignes (item 125) — remplace l'ancienne liste BRUTE de
 // documents (.as-doc / .ea-doc / .rm-refdoc). Lignes COMPACTES et structurées :
 // case à cocher + titre + badge de statut + chips repos + badge globale +
@@ -8487,6 +8542,7 @@ function bindAdrSelector(prefix = 'adr-pick') {
       if (show) visible++;
     }
     if (count) count.textContent = `${visible} / ${rows.length} ADR`;
+    adrPickSyncAllBtn(root, '.adr-pick-cb');
   };
   [search, status, repo].forEach((el) => {
     if (!el) return;
@@ -8494,6 +8550,7 @@ function bindAdrSelector(prefix = 'adr-pick') {
     el.addEventListener('change', apply);
   });
   apply();
+  adrPickBindAll(root, '.adr-pick-cb');
 }
 
 // ===========================================================================
@@ -8596,6 +8653,7 @@ function bindFrSelector(prefix, opts = {}) {
       if (show) visible++;
     }
     if (count) count.textContent = `${visible} / ${total} ${unit}`.trim();
+    adrPickSyncAllBtn(root, '.adr-pick-cb');
   };
   [search, role].forEach((el) => {
     if (!el) return;
@@ -8642,6 +8700,7 @@ function bindFrSelector(prefix, opts = {}) {
     });
   }
   apply();
+  adrPickBindAll(root, '.adr-pick-cb');
 }
 
 // ===========================================================================
@@ -8703,9 +8762,11 @@ function bindEvalItemSelector(prefix = 'eval-item-pick') {
       if (show) visible++;
     }
     if (count) count.textContent = `${visible} / ${rows.length} élément(s)`;
+    adrPickSyncAllBtn(root, '.eval-item-cb');
   };
   if (search) search.addEventListener('input', apply);
   apply();
+  adrPickBindAll(root, '.eval-item-cb');
 }
 
 // ===========================================================================

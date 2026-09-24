@@ -61,6 +61,25 @@ const ADMIN_PASSWORD =
   process.env.E2E_USER_PASSWORD ||
   "";
 
+/**
+ * Écran « Choisir une organisation » (utilisateur multi-organisations, sans
+ * organisation active dans la session) : il précède tout accès au panneau et
+ * intercepte les clics tant qu'aucune org n'est choisie. On sélectionne
+ * l'organisation PAR DÉFAUT (★) — périmètre du projet testé.
+ */
+async function selectOrganizationIfPrompted(page: Page): Promise<void> {
+  const firstPick = page.locator("#modal-backdrop [data-org-pick]").first();
+  const appeared = await firstPick
+    .waitFor({ state: "visible", timeout: 8_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!appeared) return; // utilisateur mono-organisation : aucun écran de choix
+  const star = page.locator("#modal-backdrop [data-org-pick]", { hasText: "★" }).first();
+  const button = (await star.count()) ? star : firstPick;
+  await button.click();
+  await expect(page.locator("#modal-backdrop")).toBeHidden({ timeout: 15_000 });
+}
+
 async function login(page: Page, username: string, password: string): Promise<void> {
   await page.goto(`${BASE_URL}/login`, { waitUntil: "domcontentloaded" });
   await page.fill("#username", username);
@@ -70,6 +89,7 @@ async function login(page: Page, username: string, password: string): Promise<vo
     page.click(".login-submit"),
   ]);
   await expect(page.locator("#tabs")).toBeVisible({ timeout: 15_000 });
+  await selectOrganizationIfPrompted(page);
 }
 
 /** Ouvre le premier projet listé (si nécessaire) puis l'onglet « Cadrage technique ». */

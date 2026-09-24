@@ -179,7 +179,7 @@ async function exerciseBulk(page: Page, scopeSel: string, name: string): Promise
   }
 }
 
-test("Sélecteurs multiples du cadrage : option « tout sélectionner / tout désélectionner » limitée aux éléments FILTRÉS (visibles).", async ({
+test("Sélecteurs multiples (ADR / Fonctionnalités / Règles / Éléments de recette) — « tout sélectionner / tout désélectionner » s'applique uniquement aux éléments filtrés visibles (row.hidden === false)", async ({
   page,
 }) => {
   test.skip(

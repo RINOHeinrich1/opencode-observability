@@ -3,6 +3,7 @@
 // - Authentification par formulaire (session cookie) + gestion d'utilisateurs.
 import { createServer } from "node:http";
 import { readFileSync, existsSync, statSync, createReadStream, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join, dirname, extname, normalize, basename, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
@@ -261,6 +262,32 @@ function isPublicAsset(path) {
   return PUBLIC_EXT.some((e) => path.toLowerCase().endsWith(e));
 }
 
+// Assets critiques du panneau : on n'y met JAMAIS de cache (le panneau n'a aucun
+// besoin de cache pour ces 3 fichiers). Combiné au cache-busting par version
+// (hash de contenu injecté dans les URL d'`index.html`), tout navigateur déjà
+// passé récupère immédiatement la version courante : fin de la « page blanche »
+// due à un ancien `app.js` resté en cache.
+const NO_STORE_ASSETS = new Set(["index.html", "app.js", "style.css"]);
+
+// Version de contenu (sha1 tronqué) d'un asset, mémoïsée par (chemin, mtime, taille)
+// → recalculée seulement si le fichier change. Sert de validateur de fait : tout
+// changement de contenu change l'URL référencée par `index.html`.
+const _assetVersionCache = new Map();
+function assetVersion(rel) {
+  const file = join(PUBLIC_DIR, rel);
+  try {
+    const st = statSync(file);
+    const key = `${st.mtimeMs}:${st.size}`;
+    const hit = _assetVersionCache.get(file);
+    if (hit && hit.key === key) return hit.version;
+    const version = createHash("sha1").update(readFileSync(file)).digest("hex").slice(0, 12);
+    _assetVersionCache.set(file, { key, version });
+    return version;
+  } catch {
+    return "0";
+  }
+}
+
 function serveFile(res, rel) {
   const safe = normalize(rel).replace(/^(\.\.[/\\])+/, "");
   const file = join(PUBLIC_DIR, safe);
@@ -268,7 +295,19 @@ function serveFile(res, rel) {
     res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
     return res.end("Not found");
   }
-  res.writeHead(200, { "Content-Type": MIME[extname(file).toLowerCase()] || "application/octet-stream", "Cache-Control": "no-cache" });
+  const ext = extname(file).toLowerCase();
+  const headers = { "Content-Type": MIME[ext] || "application/octet-stream" };
+  headers["Cache-Control"] = NO_STORE_ASSETS.has(safe) ? "no-store, must-revalidate" : "no-cache";
+  res.writeHead(200, headers);
+  if (safe === "index.html") {
+    // Cache-busting par version : `/app.js` → `/app.js?v=<hash>`, `/style.css` →
+    // `/style.css?v=<hash>`. Le HTML n'étant jamais mis en cache (no-store),
+    // toute nouvelle version de contenu produit une URL inédite côté client.
+    const html = readFileSync(file, "utf8")
+      .replace(/\/app\.js(\?[^"']*)?/g, `/app.js?v=${assetVersion("app.js")}`)
+      .replace(/\/style\.css(\?[^"']*)?/g, `/style.css?v=${assetVersion("style.css")}`);
+    return res.end(html);
+  }
   res.end(readFileSync(file));
 }
 

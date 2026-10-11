@@ -5,7 +5,9 @@ import { createServer } from "node:http";
 import { readFileSync, existsSync, statSync, createReadStream, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join, dirname, extname, normalize, basename, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
+// Exécution externe NON BLOQUANTE et bornée (+ redaction des secrets, D5).
+import { runExternal, redactSecrets } from "./exec-async.mjs";
 import pg from "pg";
 import { openDb, getUserByUsername, verifyPassword, createUser, updateUserRole, updateUserOrganization, listUsers, listUserOrganizations, setUserOrganizations, listUsersByOrganization, listUserProjects, setUserProjects, listUsersByProject, getUserOpencode, setUserOpencode, listUsersOpencode, updatePassword, setUserNotifyEmail, deleteUser, createSession, deleteSession, setSessionOrganization, pruneSessions, listArchives, archivedTaskIds, archiveTask, restoreTask, getArchive, removeArchive, listProviderKeys, getActiveProviderKeys, addProviderKey, setActiveProviderKey, deleteProviderKey } from "./panel-db.mjs";
 // Fournisseurs LLM : génération/propagation de l'auth.json (clé ACTIVE par fournisseur).
@@ -224,6 +226,10 @@ function modelsCatalog() {
 
 // --- helpers HTTP ----------------------------------------------------------
 function sendJson(res, code, obj) {
+  // D4 — idempotence : si une réponse a DÉJÀ été émise (ex. un stream démarré
+  // puis une erreur tardive), on ne réécrit pas les en-têtes (sinon
+  // ERR_HTTP_HEADERS_SENT niveau process). Aucun crash, aucune double réponse.
+  if (res.headersSent || res.writableEnded) return;
   const body = JSON.stringify(obj);
   res.writeHead(code, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
   res.end(body);
@@ -1008,15 +1014,14 @@ async function handleUserAction(req, res, user, path) {
       if (!oc) return sendJson(res, 404, { error: "utilisateur inconnu" });
       const port = oc.port || (4200 + id);
       const password = oc.password || randomBytes(18).toString("base64url");
-      try {
-        execFileSync("node", ["/root/.config/opencode/scripts/opencode-user-provision.mjs", "--user", oc.username, "--port", String(port), "--password", password], { encoding: "utf8", timeout: 120000 });
-      } catch (e) { return sendJson(res, 500, { error: String((e && e.stderr) || (e && e.message) || e).slice(0, 500) }); }
+      const prov = await runExternal("node", ["/root/.config/opencode/scripts/opencode-user-provision.mjs", "--user", oc.username, "--port", String(port), "--password", password], { timeout: 120000 });
+      if (prov.code !== 0) return sendJson(res, 500, { error: redactSecrets(String(prov.stderr || prov.stdout || (prov.error && prov.error.message) || `exit ${prov.code}`)).slice(0, 500) });
       await setUserOpencode(id, { port, password });
       return sendJson(res, 200, { ok: true, username: oc.username, port, password, url: `https://${oc.username.toLowerCase()}.dev.madatalk.fr` });
     }
     if (req.method === "DELETE") {
       const oc = await getUserOpencode(id);
-      if (oc) { try { execFileSync("node", ["/root/.config/opencode/scripts/opencode-user-provision.mjs", "--user", oc.username, "--deprovision"], { encoding: "utf8", timeout: 60000 }); } catch {} }
+      if (oc) { const dep = await runExternal("node", ["/root/.config/opencode/scripts/opencode-user-provision.mjs", "--user", oc.username, "--deprovision"], { timeout: 60000 }); if (dep.code !== 0) console.error(`[orchestrator-panel] déprovision opencode (non bloquant) : ${redactSecrets(String(dep.stderr || dep.error && dep.error.message || `exit ${dep.code}`)).slice(0, 300)}`); }
       await setUserOpencode(id, { port: null, password: null });
       return sendJson(res, 200, { ok: true });
     }
@@ -1129,8 +1134,8 @@ async function deriveRepoGitUrl({ gitUrl, repoDir }) {
   if (gitUrl) return String(gitUrl).trim().replace(/^(https?:\/\/)[^@/]+@/, "$1");
   if (repoDir && existsSync(join(repoDir, ".git"))) {
     try {
-      const out = execFileSync("git", ["-C", repoDir, "remote", "get-url", "origin"], { encoding: "utf8", timeout: 20000 });
-      const u = String(out || "").trim();
+      const r = await runExternal("git", ["-C", repoDir, "remote", "get-url", "origin"], { timeout: 20000 });
+      const u = String(r.stdout || "").trim();
       if (u) return u.replace(/^(https?:\/\/)[^@/]+@/, "$1");
     } catch {}
   }
@@ -1183,9 +1188,11 @@ async function provisionRepoWorkspace({ repoId, org, body, username }) {
   ];
   let out;
   try {
-    out = JSON.parse(execFileSync("node", args, { encoding: "utf8", timeout: 900000 }));
+    const r = await runExternal("node", args, { timeout: 900000 });
+    if (r.code !== 0) throw Object.assign(new Error(`exit ${r.code}`), { stdout: r.stdout, stderr: r.stderr });
+    out = JSON.parse(r.stdout);
   } catch (e) {
-    throw new ProvisionError("Échec de création du workspace : " + String(e && (e.stdout || e.stderr || e.message) || e).slice(0, 500), "provision-failed");
+    throw new ProvisionError("Échec de création du workspace : " + redactSecrets(String((e && (e.stdout || e.stderr || e.message)) || e)).slice(0, 500), "provision-failed");
   }
   if (!out || !out.ok) {
     throw new ProvisionError("Échec de création du workspace : " + String((out && out.error) || JSON.stringify(out)).slice(0, 400), "provision-failed");
@@ -1195,7 +1202,8 @@ async function provisionRepoWorkspace({ repoId, org, body, username }) {
   let hostRepoDir = prev(body && body.repoDir) || `/home/coder/${wsName}`;
   if (out.container) {
     try {
-      const src = execFileSync("docker", ["inspect", "-f", '{{range .Mounts}}{{if eq .Destination "/home/coder"}}{{.Source}}{{end}}{{end}}', out.container], { encoding: "utf8" }).trim();
+      const dr = await runExternal("docker", ["inspect", "-f", '{{range .Mounts}}{{if eq .Destination "/home/coder"}}{{.Source}}{{end}}{{end}}', out.container], { timeout: 20000 });
+      const src = String(dr.stdout || "").trim();
       if (src) hostRepoDir = join(src, wsName);
     } catch {}
   }
@@ -1674,62 +1682,62 @@ async function handleE2EIncoherent(res, id, b, user) {
 const OPENCODE_SHARED_UNIT = "opencode.service";
 
 // L'unité existe-t-elle ? (fichier d'unité présent OU instance chargée/démarrée)
-function opencodeUnitExists(unit) {
+// ASYNC (D1) : plus de blocage de l'event loop HTTP sur `systemctl`.
+async function opencodeUnitExists(unit) {
   if (!/^opencode@[a-zA-Z0-9_-]+\.service$/.test(unit) && unit !== OPENCODE_SHARED_UNIT) return false;
   try {
-    execFileSync("systemctl", ["list-unit-files", unit], { encoding: "utf8", timeout: 10000 });
-    return true;
+    const r = await runExternal("systemctl", ["list-unit-files", unit], { timeout: 10000 });
+    if (r.code === 0) return true;
+  } catch { /* on tente le repli ci-dessous */ }
+  // Instance non installée sur disque mais chargée/démarrée (démarrée à la volée).
+  try {
+    const r2 = await runExternal("systemctl", ["list-units", unit, "--all", "--no-legend", "--no-pager"], { timeout: 10000 });
+    return String(r2.stdout || "").split("\n").some((l) => l.trim().split(/\s+/)[0] === unit);
   } catch {
-    // Instance non installée sur disque mais chargée/démarrée (démarrée à la volée).
-    try {
-      const out = execFileSync("systemctl", ["list-units", unit, "--all", "--no-legend", "--no-pager"], { encoding: "utf8", timeout: 10000 });
-      return out.split("\n").some((l) => l.trim().split(/\s+/)[0] === unit);
-    } catch {
-      return false;
-    }
+    return false;
   }
 }
 
 // Liste des instances opencode@<user>.service (fichiers + instance chargée) + opencode.service.
-function listOpencodeUnits() {
+async function listOpencodeUnits() {
   const units = new Set();
   const collect = (out) => {
-    for (const line of out.split("\n")) {
+    for (const line of String(out || "").split("\n")) {
       const name = line.trim().split(/\s+/)[0];
       // Exclut le template nu (opencode@.service) : non redémarrable sans instance.
       if (name && name.endsWith(".service") && !name.endsWith("@.service")) units.add(name);
     }
   };
   try {
-    collect(execFileSync("systemctl", ["list-unit-files", "opencode@*.service", "--no-legend", "--no-pager"], { encoding: "utf8", timeout: 10000 }));
+    const r = await runExternal("systemctl", ["list-unit-files", "opencode@*.service", "--no-legend", "--no-pager"], { timeout: 10000 });
+    if (r.code === 0) collect(r.stdout);
   } catch { /* aucun fichier d'unité template — on continue avec les instances chargées */ }
   try {
-    collect(execFileSync("systemctl", ["list-units", "opencode@*.service", "--all", "--no-legend", "--no-pager"], { encoding: "utf8", timeout: 10000 }));
+    const r2 = await runExternal("systemctl", ["list-units", "opencode@*.service", "--all", "--no-legend", "--no-pager"], { timeout: 10000 });
+    if (r2.code === 0) collect(r2.stdout);
   } catch { /* idem */ }
-  if (opencodeUnitExists(OPENCODE_SHARED_UNIT)) units.add(OPENCODE_SHARED_UNIT);
+  if (await opencodeUnitExists(OPENCODE_SHARED_UNIT)) units.add(OPENCODE_SHARED_UNIT);
   return [...units].sort();
 }
 
 // Redémarre toutes les unités opencode (instances dédiées + service partagé).
 // Réutilisé par l'application des clés fournisseurs (A009/A011) : un changement
 // de clé ACTIVE ne prend effet qu'après redémarrage des instances.
-function restartOpencodeUnits() {
+// ASYNC (D1) : boucle `systemctl restart` bornée (60 s/appel) non bloquante.
+async function restartOpencodeUnits() {
   let units;
   try {
-    units = listOpencodeUnits();
+    units = await listOpencodeUnits();
   } catch (e) {
-    throw new Error(`liste des services impossible : ${String((e && e.message) || e).slice(0, 500)}`);
+    throw new Error(`liste des services impossible : ${redactSecrets(String((e && e.message) || e)).slice(0, 500)}`);
   }
   if (!units.length) return { restarted: [], failed: [], notice: "aucune instance opencode trouvée" };
   const restarted = [];
   const failed = [];
   for (const unit of units) {
-    try {
-      execFileSync("systemctl", ["restart", unit], { encoding: "utf8", timeout: 60000 });
-      restarted.push(unit);
-    } catch (e) {
-      failed.push({ unit, error: String((e && e.stderr) || (e && e.message) || e).slice(0, 300) });
-    }
+    const r = await runExternal("systemctl", ["restart", unit], { timeout: 60000 });
+    if (r.code === 0) restarted.push(unit);
+    else failed.push({ unit, error: redactSecrets(String(r.stderr || (r.error && r.error.message) || `exit ${r.code}`)).slice(0, 300) });
   }
   return { restarted, failed };
 }
@@ -1789,6 +1797,23 @@ function agentsModelCoherence({ forceCatalog = false } = {}) {
     fallbackCatalog: catalogAvailable ? [] : [...frontmatterModels].sort(),
   };
 }
+
+// --- Gardes globales anti-crash (D2) ---------------------------------------
+// Une exception non capturée ou une promesse rejetée non gérée (typiquement un
+// process/réseau externe en panne : Coder, git, docker, systemctl, provisioning)
+// NE DOIT PAS tuer le panneau : on journalise (sortie redactée, D5) et on
+// poursuit sans `process.exit`. PM2 n'est plus sollicité pour un incident
+// transitoire — la dégradation reste locale à la requête concernée.
+process.on("uncaughtException", (err) => {
+  try {
+    console.error(`[orchestrator-panel] uncaughtException (process maintenu) : ${redactSecrets(String((err && err.stack) || err)).slice(0, 2000)}`);
+  } catch { /* le log ne doit jamais relancer une exception */ }
+});
+process.on("unhandledRejection", (reason) => {
+  try {
+    console.error(`[orchestrator-panel] unhandledRejection (process maintenu) : ${redactSecrets(String((reason && reason.stack) || reason)).slice(0, 2000)}`);
+  } catch { /* idem */ }
+});
 
 // --- Router ----------------------------------------------------------------
 const server = createServer(async (req, res) => {
@@ -1930,7 +1955,7 @@ const server = createServer(async (req, res) => {
       try {
         await setActiveProviderKey(Number(providerActivateMatch[1]));
         const propagation = await regenerateAndPropagate();
-        const { restarted, failed, notice } = restartOpencodeUnits();
+        const { restarted, failed, notice } = await restartOpencodeUnits();
         // Contrôle proactif (ADR-005 §a) : à l'ACTIVATION, signaler les agents
         // dont le modèle déclaré n'est pas servi par la (nouvelle) clé active.
         return sendJson(res, 200, { ok: true, propagation, restarted, failed, ...(notice ? { notice } : {}), coherence: agentsModelCoherence({ forceCatalog: true }) });
@@ -1953,7 +1978,7 @@ const server = createServer(async (req, res) => {
       if (await providerRouteDenied(user, res)) return;
       try {
         const propagation = await regenerateAndPropagate();
-        const { restarted, failed, notice } = restartOpencodeUnits();
+        const { restarted, failed, notice } = await restartOpencodeUnits();
         return sendJson(res, 200, { ok: true, propagation, restarted, failed, ...(notice ? { notice } : {}) });
       } catch (e) {
         return sendJson(res, 500, { error: String((e && e.message) || e) });
@@ -1995,34 +2020,27 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 400, { error: "username invalide (uniquement [a-zA-Z0-9_-])" });
       }
       const unit = `opencode@${username}.service`;
-      if (!opencodeUnitExists(unit)) return sendJson(res, 404, { error: `service inconnu : ${unit}` });
-      try {
-        execFileSync("systemctl", ["restart", unit], { encoding: "utf8", timeout: 60000 });
-        return sendJson(res, 200, { ok: true, service: unit });
-      } catch (e) {
-        const err = String((e && e.stderr) || (e && e.message) || e).slice(0, 500);
-        return sendJson(res, 500, { ok: false, error: `redémarrage de ${unit} impossible : ${err}` });
-      }
+      if (!(await opencodeUnitExists(unit))) return sendJson(res, 404, { error: `service inconnu : ${unit}` });
+      const rr = await runExternal("systemctl", ["restart", unit], { timeout: 60000 });
+      if (rr.code === 0) return sendJson(res, 200, { ok: true, service: unit });
+      const err = redactSecrets(String(rr.stderr || (rr.error && rr.error.message) || `exit ${rr.code}`)).slice(0, 500);
+      return sendJson(res, 500, { ok: false, error: `redémarrage de ${unit} impossible : ${err}` });
     }
     if (path === "/api/opencode/restart-all" && req.method === "POST") {
       if (!user.is_admin) return sendJson(res, 403, { error: "réservé aux administrateurs" });
       let units;
       try {
-        units = listOpencodeUnits();
+        units = await listOpencodeUnits();
       } catch (e) {
-        return sendJson(res, 500, { ok: false, error: `liste des services impossible : ${String((e && e.message) || e).slice(0, 500)}` });
+        return sendJson(res, 500, { ok: false, error: `liste des services impossible : ${redactSecrets(String((e && e.message) || e)).slice(0, 500)}` });
       }
       if (!units.length) return sendJson(res, 200, { ok: true, restarted: [], failed: [], notice: "aucune instance opencode trouvée" });
       const restarted = [];
       const failed = [];
       for (const unit of units) {
-        try {
-          execFileSync("systemctl", ["restart", unit], { encoding: "utf8", timeout: 60000 });
-          restarted.push(unit);
-        } catch (e) {
-          const err = String((e && e.stderr) || (e && e.message) || e).slice(0, 300);
-          failed.push({ unit, error: err });
-        }
+        const r = await runExternal("systemctl", ["restart", unit], { timeout: 60000 });
+        if (r.code === 0) restarted.push(unit);
+        else failed.push({ unit, error: redactSecrets(String(r.stderr || (r.error && r.error.message) || `exit ${r.code}`)).slice(0, 300) });
       }
       return sendJson(res, 200, { ok: true, restarted, failed });
     }
@@ -2941,9 +2959,10 @@ const server = createServer(async (req, res) => {
           ...(b.repo ? ["--repo", String(b.repo)] : []),
           ...((Array.isArray(b.params) ? b.params : []).flatMap((p) => ["--param", String(p)])),
         ];
-        const out = execFileSync("node", args, { encoding: "utf8", timeout: 900000 });
-        return sendJson(res, 200, JSON.parse(out));
-      } catch (e) { return sendJson(res, 500, { error: String((e && e.stdout) || (e && e.stderr) || (e && e.message) || e).slice(0, 800) }); }
+        const r = await runExternal("node", args, { timeout: 900000 });
+        if (r.code !== 0) return sendJson(res, 500, { error: redactSecrets(String(r.stderr || r.stdout || (r.error && r.error.message) || `exit ${r.code}`)).slice(0, 800) });
+        return sendJson(res, 200, JSON.parse(r.stdout));
+      } catch (e) { return sendJson(res, 500, { error: redactSecrets(String((e && e.message) || e)).slice(0, 800) }); }
     }
     // Masque le token git d'un dépôt DANS un workspace Coder (retire le token de
     // l'URL du remote + installe un credential helper qui lit le token 0600).
@@ -2953,15 +2972,16 @@ const server = createServer(async (req, res) => {
       const b = await readBody(req);
       if (!b.repo) return sendJson(res, 400, { error: "repo (chemin dans le workspace) requis" });
       try {
-        const out = execFileSync("node", [
+        const r = await runExternal("node", [
           "/root/.config/opencode/scripts/workspace-git-setup.mjs",
           "--container", decodeURIComponent(gitSetupMatch[1]),
           "--repo", String(b.repo),
           ...(b.remote ? ["--remote", String(b.remote)] : []),
           ...(b.token ? ["--token", String(b.token)] : []),
-        ], { encoding: "utf8", timeout: 120000 });
-        return sendJson(res, 200, JSON.parse(out));
-      } catch (e) { return sendJson(res, 500, { error: String((e && e.stderr) || (e && e.message) || e).slice(0, 500) }); }
+        ], { timeout: 120000 });
+        if (r.code !== 0) return sendJson(res, 500, { error: redactSecrets(String(r.stderr || r.stdout || (r.error && r.error.message) || `exit ${r.code}`)).slice(0, 500) });
+        return sendJson(res, 200, JSON.parse(r.stdout));
+      } catch (e) { return sendJson(res, 500, { error: redactSecrets(String((e && e.message) || e)).slice(0, 500) }); }
     }
     // Provisionne un workspace Coder pour un repo (ADR 09) : crée le workspace
     // via workspace-create.mjs (clone du remote + masquage du token), dérive le
@@ -3060,7 +3080,8 @@ const server = createServer(async (req, res) => {
         if (!rows.length) return sendJson(res, 404, { error: "aucune vidéo" });
         const tmp = `/tmp/opencode/e2e-zip-${Date.now()}.zip`;
         try {
-          execFileSync("zip", ["-j", "-q", tmp, ...rows.map((x) => x.video_url)], { timeout: 120000 });
+          const zr = await runExternal("zip", ["-j", "-q", tmp, ...rows.map((x) => x.video_url)], { timeout: 120000 });
+          if (zr.code !== 0) throw new Error(redactSecrets(String(zr.stderr || (zr.error && zr.error.message) || `exit ${zr.code}`)).slice(0, 500));
           const st = statSync(tmp);
           res.statusCode = 200;
           res.setHeader("Content-Type", "application/zip");

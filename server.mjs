@@ -1857,6 +1857,19 @@ const server = createServer(async (req, res) => {
       return redirect(res, "/login");
     }
 
+    // Diagnostics CLIENT (best-effort) : le front remonte ses erreurs
+    // (`window.onerror` / `unhandledrejection` / échec d'`init()`) pour faciliter
+    // le support. Authentifié uniquement (pas de spam anonyme), corps BORNÉ, une
+    // seule ligne de log assainie (pas d'injection). Jamais bloquant côté client.
+    if (path === "/api/client-error" && req.method === "POST") {
+      const declared = Number(req.headers["content-length"] || 0);
+      if (declared > 8192) return sendJson(res, 413, { error: "payload trop volumineux" });
+      const b = await readBody(req).catch(() => ({}));
+      const oneLine = (v, max) => String(v == null ? "" : v).replace(/[\r\n\t]+/g, " ").slice(0, max);
+      console.error(`[client-error] user=${user.username} ctx=${oneLine(b.context, 60)} msg=${oneLine(b.message, 300)} url=${oneLine(b.url, 300)}`);
+      return sendJson(res, 200, { ok: true });
+    }
+
     // ACL rôles restreints (ADR-002) : refus 403 FAIL-CLOSED AVANT toute route
     // (`evaluateur`, `executeur` — dispatcher unique `enforceRoleAcl`).
     if (enforceRoleAcl(user, path, req.method, res)) return;

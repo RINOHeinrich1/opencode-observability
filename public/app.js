@@ -1,4 +1,114 @@
 // app.js — Logique du panneau de supervision.
+
+// --- Accès STOCKAGE SÉCURISÉ (anti-`SecurityError`) -------------------------
+// Certains navigateurs/contextes (mode privé mobile, cookies bloqués, réglages
+// de confidentialité) font LEVER `window.localStorage` DÈS SON ACCÈS
+// (« SecurityError: The operation is insecure. »). Un accès direct au niveau
+// module interrompt alors TOUT app.js avant `init()` → page MUETTE après
+// connexion (aucun onglet, combo d'organisation vide, bouton Déconnexion
+// inerte). `safeStorage` encapsule chaque accès en try/catch et retombe sur un
+// stockage EN MÉMOIRE quand le stockage réel est indisponible : l'application
+// reste fonctionnelle, seule la persistance entre rechargements est perdue.
+const safeStorage = (() => {
+  const mem = new Map();
+  let real = null;
+  try { real = window.localStorage || null; } catch { real = null; }
+  // Sonde : un stockage PRÉSENT mais INUTILISABLE (quota, politique) bascule
+  // lui aussi en mémoire.
+  let usable = false;
+  if (real) {
+    try { const probe = '__panel_probe__'; real.setItem(probe, '1'); real.removeItem(probe); usable = true; }
+    catch { usable = false; }
+  }
+  const store = usable ? real : null;
+  return {
+    getItem(key) {
+      try { if (store) return store.getItem(key); } catch { /* repli mémoire */ }
+      return mem.has(key) ? mem.get(key) : null;
+    },
+    setItem(key, value) {
+      const v = String(value);
+      try { if (store) { store.setItem(key, v); return; } } catch { /* repli mémoire */ }
+      mem.set(key, v);
+    },
+    removeItem(key) {
+      try { if (store) { store.removeItem(key); } } catch { /* repli mémoire */ }
+      mem.delete(key);
+    },
+    clear() {
+      try { if (store) store.clear(); } catch { /* repli mémoire */ }
+      mem.clear();
+    },
+  };
+})();
+
+// --- Erreur FATALE visible (jamais de page muette) --------------------------
+// En cas d'échec du chargement/`init()`, affiche un bandeau dans la page avec
+// deux actions (« Recharger » / « Se reconnecter ») : l'utilisateur n'est
+// JAMAIS laissé devant une page inerte et sans explication.
+function showFatalError(message) {
+  try {
+    let el = document.getElementById('panel-fatal-error');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'panel-fatal-error';
+      el.className = 'panel-fatal-error';
+      el.setAttribute('role', 'alert');
+      el.innerHTML = '<div class="panel-fatal-error-inner">'
+        + "<strong>Le panneau n'a pas pu se charger correctement.</strong>"
+        + '<p id="panel-fatal-error-msg" class="muted-sm"></p>'
+        + '<div class="panel-fatal-error-actions">'
+        + '<button type="button" id="panel-fatal-reload" class="ghost">Recharger</button>'
+        + '<button type="button" id="panel-fatal-logout" class="ghost">Se reconnecter</button>'
+        + '</div></div>';
+      document.body.prepend(el);
+      const reloadBtn = document.getElementById('panel-fatal-reload');
+      if (reloadBtn) reloadBtn.addEventListener('click', () => window.location.reload());
+      const logoutBtn = document.getElementById('panel-fatal-logout');
+      if (logoutBtn) logoutBtn.addEventListener('click', () => { window.location.href = '/login'; });
+    }
+    const msg = document.getElementById('panel-fatal-error-msg');
+    if (msg) msg.textContent = message ? String(message) : '';
+    el.hidden = false;
+  } catch { /* ne jamais re-échouer en affichant l'erreur */ }
+}
+
+// --- Remontée d'erreurs CLIENT (diagnostic, best-effort) --------------------
+// Optionnel et NON bloquant : une erreur d'exécution est remontée à
+// `/api/client-error` (authentifié, corps borné, une ligne de log serveur) pour
+// faciliter le support. Aucun échec n'est jamais propagé à la page.
+function reportClientError(context, err) {
+  try {
+    const payload = {
+      context: String(context || 'client'),
+      message: err && err.message ? String(err.message) : String(err),
+      stack: err && err.stack ? String(err.stack) : '',
+      url: String(window.location.href || ''),
+      ts: new Date().toISOString(),
+    };
+    fetch('/api/client-error', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      keepalive: true,
+    }).catch(() => {});
+  } catch { /* best-effort */ }
+}
+window.addEventListener('error', (e) => reportClientError('window.onerror', (e && e.error) || (e && e.message)));
+window.addEventListener('unhandledrejection', (e) => reportClientError('unhandledrejection', e && e.reason));
+
+// --- Déconnexion ROBUSTE (délégation d'événement) ---------------------------
+// Câblée AU NIVEAU MODULE, avant tout appel réseau : le bouton « Déconnexion »
+// doit rester fonctionnel même si `init()` échoue plus loin (stockage bloqué,
+// API en erreur…). La délégation sur `document` survit aux re-rendus du header.
+document.addEventListener('click', async (ev) => {
+  const btn = ev.target && ev.target.closest ? ev.target.closest('#logout-btn') : null;
+  if (!btn) return;
+  ev.preventDefault();
+  try { await fetch('/api/logout', { method: 'POST' }); } catch { /* on redirige quand même */ }
+  window.location.href = '/login';
+});
+
 let ME = null;
 let IS_ADMIN = false;    // vrai si l'utilisateur courant est admin (écritures)
 let IS_EVALUATEUR = false; // vrai si rôle « évaluateur » (ADR-002 : périmètre restreint)
@@ -9,7 +119,7 @@ let refreshTimer = null;
 let activeTab = 'overview';
 // Sous-onglet de la page Écosystème : 'agents' (contenu historique) | 'providers'
 // (fournisseurs LLM, admin uniquement). Persistant (rechargement).
-let ecosystemTab = localStorage.getItem('panel_eco_tab') || 'agents';
+let ecosystemTab = safeStorage.getItem('panel_eco_tab') || 'agents';
 let lastUpdated = null;
 let taskFilter = '';     // tâche sélectionnée comme filtre ('' = aucune)
 let SESSION_BASE_URL = 'https://dev.madatalk.fr'; // base des liens de session opencode (FALLBACK ADR-006)
@@ -17,42 +127,42 @@ let SESSION_BASE_URL = 'https://dev.madatalk.fr'; // base des liens de session o
 // (`https://<user>.dev.madatalk.fr`), servie par `GET /api/me` (`user.opencodeUrl`).
 // `null` si aucune instance n'est provisionnée → repli sur `SESSION_BASE_URL`.
 let OPENCODE_INSTANCE_URL = null;
-let groupCadrageEnabled = localStorage.getItem('panel_group_cadrage') === '1'; // persistant (onglets + rechargement)
-let groupParallelEnabled = localStorage.getItem('panel_group_parallel') === '1'; // grouper par ordre/parallèle
-let groupUserEnabled = localStorage.getItem('panel_group_user') === '1'; // grouper par utilisateur (créateur)
-let tasksProjectFilter = localStorage.getItem('panel_task_project') || ''; // filtre projet de l'onglet Tâches (persistant re-rendu)
-let tasksSprintFilter = localStorage.getItem('panel_task_sprint') || ''; // filtre sprint Tâches (exécuteur : '' = sprint actif ; sinon traçage lecture seule)
-let tasksStatusFilter = (() => { try { const v = JSON.parse(localStorage.getItem('panel_task_status') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })(); // statuts affichés (multi-valeurs, persistant re-rendu)
-const persistTasksStatus = () => localStorage.setItem('panel_task_status', JSON.stringify(tasksStatusFilter));
-let tasksUserFilter = (() => { try { const v = JSON.parse(localStorage.getItem('panel_task_users') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })(); // créateurs sélectionnés (multi-valeurs)
-const persistTasksUsers = () => localStorage.setItem('panel_task_users', JSON.stringify(tasksUserFilter));
-let cadragesUserFilter = (() => { try { const v = JSON.parse(localStorage.getItem('panel_cadrage_users') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })();
-const persistCadragesUsers = () => localStorage.setItem('panel_cadrage_users', JSON.stringify(cadragesUserFilter));
-let e2eUserFilter = (() => { try { const v = JSON.parse(localStorage.getItem('panel_e2e_users') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })();
-const persistE2EUsers = () => localStorage.setItem('panel_e2e_users', JSON.stringify(e2eUserFilter));
-let tasksNeedCadrage = localStorage.getItem('panel_task_recette') === '1'; // pré-filtre « À cadrer » (cadrage_status != done)
-let tasksActifOnly = localStorage.getItem('panel_task_actif') === '1';      // pré-filtre « Actif » (hors TASK_INACTIVE_STATES : done, aborted, failed, blocked, crashed, rejected)
-let tasksDateFrom = localStorage.getItem('panel_task_date_from') || '';      // filtre date de création — borne basse (YYYY-MM-DD)
-let tasksDateTo = localStorage.getItem('panel_task_date_to') || '';          // filtre date de création — borne haute (YYYY-MM-DD)
+let groupCadrageEnabled = safeStorage.getItem('panel_group_cadrage') === '1'; // persistant (onglets + rechargement)
+let groupParallelEnabled = safeStorage.getItem('panel_group_parallel') === '1'; // grouper par ordre/parallèle
+let groupUserEnabled = safeStorage.getItem('panel_group_user') === '1'; // grouper par utilisateur (créateur)
+let tasksProjectFilter = safeStorage.getItem('panel_task_project') || ''; // filtre projet de l'onglet Tâches (persistant re-rendu)
+let tasksSprintFilter = safeStorage.getItem('panel_task_sprint') || ''; // filtre sprint Tâches (exécuteur : '' = sprint actif ; sinon traçage lecture seule)
+let tasksStatusFilter = (() => { try { const v = JSON.parse(safeStorage.getItem('panel_task_status') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })(); // statuts affichés (multi-valeurs, persistant re-rendu)
+const persistTasksStatus = () => safeStorage.setItem('panel_task_status', JSON.stringify(tasksStatusFilter));
+let tasksUserFilter = (() => { try { const v = JSON.parse(safeStorage.getItem('panel_task_users') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })(); // créateurs sélectionnés (multi-valeurs)
+const persistTasksUsers = () => safeStorage.setItem('panel_task_users', JSON.stringify(tasksUserFilter));
+let cadragesUserFilter = (() => { try { const v = JSON.parse(safeStorage.getItem('panel_cadrage_users') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })();
+const persistCadragesUsers = () => safeStorage.setItem('panel_cadrage_users', JSON.stringify(cadragesUserFilter));
+let e2eUserFilter = (() => { try { const v = JSON.parse(safeStorage.getItem('panel_e2e_users') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })();
+const persistE2EUsers = () => safeStorage.setItem('panel_e2e_users', JSON.stringify(e2eUserFilter));
+let tasksNeedCadrage = safeStorage.getItem('panel_task_recette') === '1'; // pré-filtre « À cadrer » (cadrage_status != done)
+let tasksActifOnly = safeStorage.getItem('panel_task_actif') === '1';      // pré-filtre « Actif » (hors TASK_INACTIVE_STATES : done, aborted, failed, blocked, crashed, rejected)
+let tasksDateFrom = safeStorage.getItem('panel_task_date_from') || '';      // filtre date de création — borne basse (YYYY-MM-DD)
+let tasksDateTo = safeStorage.getItem('panel_task_date_to') || '';          // filtre date de création — borne haute (YYYY-MM-DD)
 // Filtres CIBLES « sans lien » (id-set de la cardinalité) — pré-appliqués par un
 // clic sur une carte de la Vue d'ensemble, valeur du <select> visible de la page.
-let tasksMissingFilter = localStorage.getItem('panel_task_missing') || '';    // '' | tache_sans_adr | tache_sans_fonctionnalite | tache_sans_sprint | emergents
-let cadragesMissingFilter = localStorage.getItem('panel_cadrage_missing') || ''; // '' | cadrage_sans_adr | cadrage_sans_fonctionnalite | cadrage_sans_sprint
-let sprintsMissingFilter = localStorage.getItem('panel_sprint_missing') || '';   // '' | sprint_sans_fonctionnalite | sprint_sans_regle
+let tasksMissingFilter = safeStorage.getItem('panel_task_missing') || '';    // '' | tache_sans_adr | tache_sans_fonctionnalite | tache_sans_sprint | emergents
+let cadragesMissingFilter = safeStorage.getItem('panel_cadrage_missing') || ''; // '' | cadrage_sans_adr | cadrage_sans_fonctionnalite | cadrage_sans_sprint
+let sprintsMissingFilter = safeStorage.getItem('panel_sprint_missing') || '';   // '' | sprint_sans_fonctionnalite | sprint_sans_regle
 // Filtre « créateurs » de la page Recette ÉVALUATEUR (masqué pour l'évaluateur :
 // il ne voit que SES recettes, le filtre n'a pas de sens).
-let recettesUserFilter = (() => { try { const v = JSON.parse(localStorage.getItem('panel_recette_users') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })();
-const persistRecettesUsers = () => localStorage.setItem('panel_recette_users', JSON.stringify(recettesUserFilter));
-const persistTasksMissing = () => { if (tasksMissingFilter) localStorage.setItem('panel_task_missing', tasksMissingFilter); else localStorage.removeItem('panel_task_missing'); };
-const persistCadragesMissing = () => { if (cadragesMissingFilter) localStorage.setItem('panel_cadrage_missing', cadragesMissingFilter); else localStorage.removeItem('panel_cadrage_missing'); };
-const persistSprintsMissing = () => { if (sprintsMissingFilter) localStorage.setItem('panel_sprint_missing', sprintsMissingFilter); else localStorage.removeItem('panel_sprint_missing'); };
-const persistAdrMissing = () => { if (adrFilters && adrFilters.missingFeature) localStorage.setItem('panel_adr_missing', adrFilters.missingFeature); else localStorage.removeItem('panel_adr_missing'); };
+let recettesUserFilter = (() => { try { const v = JSON.parse(safeStorage.getItem('panel_recette_users') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })();
+const persistRecettesUsers = () => safeStorage.setItem('panel_recette_users', JSON.stringify(recettesUserFilter));
+const persistTasksMissing = () => { if (tasksMissingFilter) safeStorage.setItem('panel_task_missing', tasksMissingFilter); else safeStorage.removeItem('panel_task_missing'); };
+const persistCadragesMissing = () => { if (cadragesMissingFilter) safeStorage.setItem('panel_cadrage_missing', cadragesMissingFilter); else safeStorage.removeItem('panel_cadrage_missing'); };
+const persistSprintsMissing = () => { if (sprintsMissingFilter) safeStorage.setItem('panel_sprint_missing', sprintsMissingFilter); else safeStorage.removeItem('panel_sprint_missing'); };
+const persistAdrMissing = () => { if (adrFilters && adrFilters.missingFeature) safeStorage.setItem('panel_adr_missing', adrFilters.missingFeature); else safeStorage.removeItem('panel_adr_missing'); };
 // Navigation CENTRÉE PROJET : quand un projet est ouvert, toutes les vues sont
 // scopées à ce projet (bandeau + sous-onglets). Vide = accueil (liste projets).
-let currentProject = localStorage.getItem('panel_current_project') || '';
-const setCurrentProject = (id) => { currentProject = id || ''; if (currentProject) localStorage.setItem('panel_current_project', currentProject); else localStorage.removeItem('panel_current_project'); };
+let currentProject = safeStorage.getItem('panel_current_project') || '';
+const setCurrentProject = (id) => { currentProject = id || ''; if (currentProject) safeStorage.setItem('panel_current_project', currentProject); else safeStorage.removeItem('panel_current_project'); };
 // Organisation active (tenant) : filtre global du panneau.
-let currentOrg = localStorage.getItem('panel_current_org') || '';
+let currentOrg = safeStorage.getItem('panel_current_org') || '';
 let ORGANIZATIONS = [];
 
 // Agents mobilisés par type de tâche (affichage read-only au lancement).
@@ -352,7 +462,7 @@ async function switchOrganization(orgId) {
   try {
     await api('/api/session/organization', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ organizationId: orgId }) });
     currentOrg = orgId;
-    localStorage.setItem('panel_current_org', currentOrg);
+    safeStorage.setItem('panel_current_org', currentOrg);
     await loadOrganizations();
     closeProject();
   } catch (e) { alert('Échec : ' + (e.message || e)); }
@@ -975,15 +1085,15 @@ async function renderTasks() {
   const fProjEl = document.getElementById('f-project');
   if (fProjEl) fProjEl.addEventListener('change', () => {
     tasksProjectFilter = fProjEl.value;
-    localStorage.setItem('panel_task_project', tasksProjectFilter);
+    safeStorage.setItem('panel_task_project', tasksProjectFilter);
     apply();
   });
   // Filtre SPRINT (exécuteur) : change le périmètre CÔTÉ SERVEUR → re-fetch.
   const fSprintEl = document.getElementById('f-sprint');
   if (fSprintEl) fSprintEl.addEventListener('change', () => {
     tasksSprintFilter = fSprintEl.value;
-    if (tasksSprintFilter) localStorage.setItem('panel_task_sprint', tasksSprintFilter);
-    else localStorage.removeItem('panel_task_sprint');
+    if (tasksSprintFilter) safeStorage.setItem('panel_task_sprint', tasksSprintFilter);
+    else safeStorage.removeItem('panel_task_sprint');
     refreshActive();
   });
   // Filtre cible « sans lien » : valeur pré-appliquée (clic carte) + persistance.
@@ -1019,13 +1129,13 @@ async function renderTasks() {
   const needCadrageBox = document.getElementById('f-filter-cadrage');
   if (needCadrageBox) needCadrageBox.addEventListener('change', () => {
     tasksNeedCadrage = needCadrageBox.checked;
-    localStorage.setItem('panel_task_recette', tasksNeedCadrage ? '1' : '0');
+    safeStorage.setItem('panel_task_recette', tasksNeedCadrage ? '1' : '0');
     apply();
   });
   const actifBox = document.getElementById('f-filter-actif');
   if (actifBox) actifBox.addEventListener('change', () => {
     tasksActifOnly = actifBox.checked;
-    localStorage.setItem('panel_task_actif', tasksActifOnly ? '1' : '0');
+    safeStorage.setItem('panel_task_actif', tasksActifOnly ? '1' : '0');
     apply();
   });
   const dateFromEl = document.getElementById('f-date-from');
@@ -1034,40 +1144,40 @@ async function renderTasks() {
   const syncDateClear = () => { if (dateClearEl) dateClearEl.hidden = !(dateFromEl.value || dateToEl.value); };
   if (dateFromEl) dateFromEl.addEventListener('change', () => {
     tasksDateFrom = dateFromEl.value;
-    localStorage.setItem('panel_task_date_from', tasksDateFrom);
+    safeStorage.setItem('panel_task_date_from', tasksDateFrom);
     syncDateClear();
     apply();
   });
   if (dateToEl) dateToEl.addEventListener('change', () => {
     tasksDateTo = dateToEl.value;
-    localStorage.setItem('panel_task_date_to', tasksDateTo);
+    safeStorage.setItem('panel_task_date_to', tasksDateTo);
     syncDateClear();
     apply();
   });
   if (dateClearEl) dateClearEl.addEventListener('click', () => {
     tasksDateFrom = ''; tasksDateTo = '';
-    localStorage.removeItem('panel_task_date_from');
-    localStorage.removeItem('panel_task_date_to');
+    safeStorage.removeItem('panel_task_date_from');
+    safeStorage.removeItem('panel_task_date_to');
     dateFromEl.value = ''; dateToEl.value = '';
     syncDateClear();
     apply();
   });
   document.getElementById('f-group-cadrage').addEventListener('change', () => {
     groupCadrageEnabled = document.getElementById('f-group-cadrage').checked;
-    localStorage.setItem('panel_group_cadrage', groupCadrageEnabled ? '1' : '0');
+    safeStorage.setItem('panel_group_cadrage', groupCadrageEnabled ? '1' : '0');
     if (!groupCadrageEnabled) { groupParallelEnabled = false; document.getElementById('f-group-parallel').checked = false; }
     apply();
   });
   const userBox = document.getElementById('f-group-user');
   if (userBox) userBox.addEventListener('change', () => {
     groupUserEnabled = userBox.checked;
-    localStorage.setItem('panel_group_user', groupUserEnabled ? '1' : '0');
+    safeStorage.setItem('panel_group_user', groupUserEnabled ? '1' : '0');
     apply();
   });
   const parallelBox = document.getElementById('f-group-parallel');
   if (parallelBox) parallelBox.addEventListener('change', () => {
     groupParallelEnabled = parallelBox.checked;
-    localStorage.setItem('panel_group_parallel', groupParallelEnabled ? '1' : '0');
+    safeStorage.setItem('panel_group_parallel', groupParallelEnabled ? '1' : '0');
     apply();
   });
   apply();
@@ -5439,7 +5549,7 @@ async function renderEcosystem() {
     <div id="eco-tab-content"></div>`;
   pane.querySelectorAll('#eco-tabs [data-eco-tab]').forEach((b) => b.addEventListener('click', () => {
     ecosystemTab = b.dataset.ecoTab;
-    localStorage.setItem('panel_eco_tab', ecosystemTab);
+    safeStorage.setItem('panel_eco_tab', ecosystemTab);
     renderEcosystem();
   }));
   if (ecosystemTab === 'providers') return renderEcosystemProviders();
@@ -6940,7 +7050,7 @@ function bindAdrTable(rootEl, ctx = {}) {
 // projet courant + filtres statut/repo + recherche + CRUD + pièces jointes.
 // Mutualise adrTableHtml + bindAdrTable (aucune duplication).
 // ===========================================================================
-let adrFilters = { status: '', repo: '', q: '', missingFeature: localStorage.getItem('panel_adr_missing') || '' };
+let adrFilters = { status: '', repo: '', q: '', missingFeature: safeStorage.getItem('panel_adr_missing') || '' };
 
 async function renderAdrs() {
   const pane = document.getElementById('pane-adr');
@@ -7306,10 +7416,10 @@ async function openSprintSession(sprintId, force, btn) {
 // `adrFilters`) : le sous-onglet actif n'est pas réinitialisé à chaque
 // rafraîchissement. Le sous-onglet est en plus persisté (localStorage) pour
 // survivre à un rechargement de page.
-let frSubTab = localStorage.getItem('panel_fr_subtab') === 'rules' ? 'rules' : 'features';
+let frSubTab = safeStorage.getItem('panel_fr_subtab') === 'rules' ? 'rules' : 'features';
 let frFeatureFilters = { q: '', role: '', sprint: '', emergent: '', link: '', impl: '', dev: '' };
 let frRuleFilters = { q: '', role: '', sprint: '', emergent: '', link: '', impl: '', respect: '' };
-const persistFrSubTab = () => { localStorage.setItem('panel_fr_subtab', frSubTab); };
+const persistFrSubTab = () => { safeStorage.setItem('panel_fr_subtab', frSubTab); };
 
 // Relations affichables/créables depuis une fonctionnalité ou une règle.
 // `side` = position de l'entité courante dans le couple (a,b) du dispatcher.
@@ -10203,7 +10313,7 @@ function startPolling() {
   refreshTimer = setInterval(() => { if (!document.hidden && activeTab !== 'pilot') refreshActive(); }, REFRESH_S * 1000);
 }
 
-async function init() {
+async function initCore() {
   try {
     const me = await api('/api/me');
     ME = me.user;
@@ -10241,7 +10351,13 @@ async function init() {
     if (ME.role === 'evaluateur') {
       document.body.classList.add('evaluateur');
     }
-  } catch { return; }
+  } catch (e) {
+    // 401 : `api()` a déjà déclenché la redirection vers /login — on s'arrête.
+    // Toute AUTRE erreur (5xx, réseau, DOM…) remonte au wrapper `init()` qui
+    // affiche un bandeau visible (jamais de page muette).
+    if (e && e.message === 'unauthorized') return;
+    throw e;
+  }
 
   try {
     const cfg = await api('/api/config');
@@ -10250,7 +10366,7 @@ async function init() {
   } catch {}
 
   const sel = document.getElementById('refresh-select');
-  const saved = localStorage.getItem('panel_refresh');
+  const saved = safeStorage.getItem('panel_refresh');
   if (saved && [...sel.options].some((o) => o.value === saved)) sel.value = saved;
   else if ([...sel.options].some((o) => Number(o.value) === REFRESH_S)) sel.value = String(REFRESH_S);
 
@@ -10263,7 +10379,7 @@ async function init() {
       REFRESH_S = Math.max(10, v);
       startPolling();
     }
-    localStorage.setItem('panel_refresh', sel.value);
+    safeStorage.setItem('panel_refresh', sel.value);
   };
   sel.addEventListener('change', applyInterval);
 
@@ -10273,10 +10389,8 @@ async function init() {
     if (!document.hidden && activeTab !== 'pilot') refreshActive();
   });
 
-  document.getElementById('logout-btn').addEventListener('click', async () => {
-    await fetch('/api/logout', { method: 'POST' });
-    window.location.href = '/login';
-  });
+  // NOTE : la déconnexion est câblée AU NIVEAU MODULE (délégation d'événement,
+  // cf. plus haut) — elle reste fonctionnelle même si `init()` échoue avant ici.
 
   // Organisations : charge la liste, peuple le sélecteur global, câble les actions.
   await loadOrganizations();
@@ -10302,6 +10416,19 @@ async function init() {
 
   applyInterval();   // démarre le polling
   refreshActive();   // premier rendu immédiat
+}
+
+// Enveloppe FAIL-SAFE : toute erreur de chargement/initialisation est capturée
+// et rendue VISIBLE (bandeau + actions). La page ne reste jamais muette.
+async function init() {
+  try {
+    await initCore();
+  } catch (e) {
+    if (e && e.message === 'unauthorized') return; // redirection /login en cours
+    console.error('init() a échoué', e);
+    showFatalError((e && (e.message || e.status)) ? String(e.message || e.status) : String(e));
+    reportClientError('init', e);
+  }
 }
 
 init();

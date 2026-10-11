@@ -91,10 +91,21 @@ function createClient(server, lane) {
   child.on("error", onDead);
   child.on("exit", onDead);
 
+  // D3 — EPIPE : si le process MCP enfant meurt, une écriture sur child.stdin
+  // émet un `error` (EPIPE / ERR_STREAM_DESTROYED) qui, SANS listener, remonte
+  // en exception non capturée → crash du panneau. On marque le client mort
+  // (respawn propre au prochain appel) au lieu de tomber.
+  if (child.stdin) {
+    child.stdin.on("error", () => { onDead(); });
+  }
+
   client.send = (method, params, id) => {
+    // Écriture défensive : client mort ou stdin fermé → on n'écrit pas (aucun
+    // EPIPE synchrone) ; les appels en vol sont rejetés par onDead().
+    if (client.dead || !child.stdin || !child.stdin.writable) return;
     const m = { jsonrpc: "2.0", method, params };
     if (id !== undefined) m.id = id;
-    try { child.stdin.write(JSON.stringify(m) + "\n"); } catch {}
+    try { child.stdin.write(JSON.stringify(m) + "\n"); } catch { onDead(); }
   };
 
   // Requête avec timeout : sur dépassement on TUE le process (partagé) pour ne

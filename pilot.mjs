@@ -46,13 +46,17 @@ export async function listWorkspaces(org) {
       const env = { ...process.env, CODER_URL: cfg.url, CODER_SESSION_TOKEN: cfg.token };
       let list = null;
       try {
-        list = JSON.parse(execFileSync("coder", ["list", "--output", "json"], { encoding: "utf8", env, timeout: 30000 }));
+        // D1 — hot path : `coder list` NON bloquant et borné (30 s). En cas
+        // d'échec, la dégradation gracieuse est préservée (coderUnavailable).
+        const r = await runExternal("coder", ["list", "--output", "json"], { env, timeout: 30000 });
+        if (r.code !== 0) throw Object.assign(new Error(`exit ${r.code}`), { stdout: r.stdout, stderr: r.stderr });
+        list = JSON.parse(r.stdout);
       } catch (e) {
         // Échec d'enrichissement : on le rend visible (statut Coder indisponible)
         // et on poursuit avec la SEULE découverte Docker, enrichie d'une URL IDE
         // de repli (l'accès IDE n'est pas silencieusement retiré).
         coderUnavailable = true;
-        coderError = String((e && e.stderr) || (e && e.message) || e).slice(0, 500);
+        coderError = redactSecrets(String((e && e.stderr) || (e && e.message) || e)).slice(0, 500);
       }
       if (Array.isArray(list)) {
         const sub = (x, k) => (x && x[k]) || null;
@@ -101,7 +105,9 @@ export async function listWorkspaces(org) {
 }
 
 // --- Workspaces Coder : opérations CRUD via coder CLI (admin) ---------------
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
+// Exécution externe NON BLOQUANTE et bornée + redaction des secrets (D1/D5).
+import { runExternal, redactSecrets } from "./exec-async.mjs";
 import { getOrganizationCoderConfig } from "/root/.config/opencode/mcp/task-orchestrator/db.mjs";
 
 // --- Indicateur de santé du token Coder (ADR-008) ---------------------------
@@ -244,12 +250,13 @@ export async function coderTokenHealth(org) {
   };
 }
 
-function coderExec(org, args) {
-  return getOrganizationCoderConfig(org).then((cfg) => {
-    if (!cfg || !cfg.url || !cfg.token) throw new Error(`Config Coder incomplète pour l'org ${org}`);
-    const env = { ...process.env, CODER_URL: cfg.url, CODER_SESSION_TOKEN: cfg.token };
-    return execFileSync("coder", args, { encoding: "utf8", env, timeout: 120000 });
-  });
+async function coderExec(org, args) {
+  const cfg = await getOrganizationCoderConfig(org);
+  if (!cfg || !cfg.url || !cfg.token) throw new Error(`Config Coder incomplète pour l'org ${org}`);
+  const env = { ...process.env, CODER_URL: cfg.url, CODER_SESSION_TOKEN: cfg.token };
+  const r = await runExternal("coder", args, { env, timeout: 120000 });
+  if (r.code !== 0) throw new Error(redactSecrets(String(r.stderr || (r.error && r.error.message) || `exit ${r.code}`)).slice(0, 500));
+  return r.stdout;
 }
 
 export async function showWorkspace(name, org) {
@@ -314,7 +321,7 @@ function coderActionAsync(org, args) {
         const exitCode = code === null || code === undefined ? -1 : code;
         if (exitCode === 0) { resolve({ ok: true, queued: true, exitCode: 0 }); return; }
         const fallback = `coder ${(args || []).join(" ")} a échoué (exit ${exitCode})`;
-        resolve({ ok: false, queued: false, exitCode, error: (stderr.trim() || fallback).slice(0, CODER_STDERR_TRUNC) });
+        resolve({ ok: false, queued: false, exitCode, error: redactSecrets(stderr.trim() || fallback).slice(0, CODER_STDERR_TRUNC) });
       };
       child.on("error", reject);
       // « close » (et non « exit ») garantit que le buffer stderr est vidé avant

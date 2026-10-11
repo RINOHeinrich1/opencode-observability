@@ -1141,3 +1141,15 @@ select.eval-decision-sel.d-a_traiter, select.eval-status-sel.s-treated { border-
 select.eval-decision-sel.d-pending { border-color: #7a5c22; color: #e0a339; }
 select.eval-decision-sel.d-non_retenu, select.eval-status-sel.s-dismissed { color: var(--muted, #9aa4b2); }
 select.eval-status-sel:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ===== Erreur FATALE du panneau (fail-safe app.js) =========================
+   Bandeau VISIBLE affiché quand le chargement échoue (ex. stockage navigateur
+   bloqué, API indisponible) : la page ne reste jamais muette et propose des
+   actions de sortie (« Recharger » / « Se reconnecter »). Additif : aucune
+   classe existante n'est modifiée. */
+.panel-fatal-error { display: block; margin: 0 0 12px; border: 1px solid var(--red, #e5534b); border-radius: 10px; background: #2a1a1a; color: var(--text, #e6ebf5); }
+.panel-fatal-error[hidden] { display: none; }
+.panel-fatal-error-inner { padding: 12px 16px; }
+.panel-fatal-error-inner > strong { color: var(--red, #e5534b); }
+.panel-fatal-error-msg { margin: 6px 0 10px; color: var(--muted, #8b97ad); font-size: 12px; word-break: break-word; }
+.panel-fatal-error-actions { display: flex; gap: 8px; flex-wrap: wrap; }
